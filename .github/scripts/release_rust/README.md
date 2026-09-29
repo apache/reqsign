@@ -5,7 +5,8 @@ These scripts define and publish the crates.io package set for Apache Reqsign.
 ## Publish plan
 
 `plan.py` reads `cargo metadata --no-deps`, selects workspace packages that can
-publish to crates.io, and orders them by non-dev local dependencies.
+publish to crates.io, and orders them by non-dev local dependencies using
+Python's `TopologicalSorter`.
 
 ```bash
 python3 .github/scripts/release_rust/plan.py

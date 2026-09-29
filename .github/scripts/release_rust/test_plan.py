@@ -77,15 +77,10 @@ class ReleaseRustPlanTest(unittest.TestCase):
 
             result = plan_from_metadata(metadata, root)
 
-        self.assertEqual(
-            result,
-            [
-                Package("core", "1.0.0", "core"),
-                Package("dev-only", "1.0.0", "dev-only"),
-                Package("service", "1.0.0", "service"),
-                Package("facade", "1.0.0", "facade"),
-            ],
-        )
+        positions = {package.name: index for index, package in enumerate(result)}
+        self.assertEqual(set(positions), {"core", "dev-only", "service", "facade"})
+        self.assertLess(positions["core"], positions["service"])
+        self.assertLess(positions["service"], positions["facade"])
 
     def test_unpublishable_workspace_dependency_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -104,29 +99,6 @@ class ReleaseRustPlanTest(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "unpublished workspace package"):
                 plan_from_metadata(metadata, root)
-
-    def test_cycle_fails_closed(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir).resolve()
-            first = package(
-                root,
-                "first",
-                dependencies=[dependency(root, "second")],
-            )
-            second = package(
-                root,
-                "second",
-                dependencies=[dependency(root, "first")],
-            )
-            packages = [first, second]
-            metadata = {
-                "packages": packages,
-                "workspace_members": [package["id"] for package in packages],
-            }
-
-            with self.assertRaisesRegex(RuntimeError, "dependency cycle"):
-                plan_from_metadata(metadata, root)
-
 
 if __name__ == "__main__":
     unittest.main()

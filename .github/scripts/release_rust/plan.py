@@ -17,7 +17,7 @@
 # under the License.
 
 import argparse
-import heapq
+from graphlib import TopologicalSorter
 import json
 import subprocess
 from dataclasses import asdict
@@ -92,18 +92,11 @@ def plan_from_metadata(metadata: dict[str, object], project_dir: Path) -> list[P
         missing = sorted(members - set(packages_by_id))
         raise RuntimeError(f"cargo metadata omitted workspace packages: {missing}")
 
-    graph: dict[Path, set[Path]] = {
-        manifest_dir: set() for manifest_dir in publishable_by_dir
-    }
-    indegree = {manifest_dir: 0 for manifest_dir in publishable_by_dir}
-
+    graph: dict[Path, set[Path]] = {path: set() for path in publishable_by_dir}
     for manifest_dir, package in publishable_by_dir.items():
         dependencies = package.get("dependencies")
         if not isinstance(dependencies, list):
-            raise RuntimeError(
-                f"cargo metadata omitted dependencies for {package.get('name')}"
-            )
-
+            raise RuntimeError(f"cargo metadata omitted dependencies for {package.get('name')}")
         for dependency in dependencies:
             if not isinstance(dependency, dict):
                 raise RuntimeError("cargo metadata returned an invalid dependency")
@@ -112,7 +105,6 @@ def plan_from_metadata(metadata: dict[str, object], project_dir: Path) -> list[P
             dependency_path = dependency.get("path")
             if not isinstance(dependency_path, str):
                 continue
-
             dependency_dir = Path(dependency_path).resolve()
             if dependency_dir not in local_by_dir:
                 continue
@@ -121,50 +113,16 @@ def plan_from_metadata(metadata: dict[str, object], project_dir: Path) -> list[P
                     f"{package.get('name')} depends on unpublished workspace package "
                     f"{local_by_dir[dependency_dir].get('name')}"
                 )
-            if manifest_dir in graph[dependency_dir]:
-                continue
-
-            graph[dependency_dir].add(manifest_dir)
-            indegree[manifest_dir] += 1
-
-    queue = [
-        (manifest_dir.relative_to(project_dir).as_posix(), manifest_dir)
-        for manifest_dir, degree in indegree.items()
-        if degree == 0
-    ]
-    heapq.heapify(queue)
+            graph[manifest_dir].add(dependency_dir)
 
     ordered: list[Package] = []
-    while queue:
-        _, manifest_dir = heapq.heappop(queue)
+    for manifest_dir in TopologicalSorter(graph).static_order():
         package = publishable_by_dir[manifest_dir]
         name = package.get("name")
         version = package.get("version")
         if not isinstance(name, str) or not isinstance(version, str):
             raise RuntimeError("cargo metadata returned invalid package metadata")
-
-        ordered.append(
-            Package(
-                name=name,
-                version=version,
-                path=manifest_dir.relative_to(project_dir).as_posix(),
-            )
-        )
-        for dependent in graph[manifest_dir]:
-            indegree[dependent] -= 1
-            if indegree[dependent] == 0:
-                heapq.heappush(
-                    queue,
-                    (dependent.relative_to(project_dir).as_posix(), dependent),
-                )
-
-    if len(ordered) != len(publishable_by_dir):
-        cyclic = sorted(
-            publishable_by_dir[path].get("name")
-            for path, degree in indegree.items()
-            if degree > 0
-        )
-        raise RuntimeError(f"publishable workspace dependency cycle: {cyclic}")
+        ordered.append(Package(name, version, manifest_dir.relative_to(project_dir).as_posix()))
 
     names = [package.name for package in ordered]
     if len(names) != len(set(names)):
