@@ -587,7 +587,7 @@ We will revisit this threat model when any of the following changes:
 
 ## 10. Relationship To OpenDAL And Other Hosts
 
-Apache Reqsign is an independent Apache top-level project. OpenDAL remains the
+Apache Reqsign is a top-level ASF project. OpenDAL remains the
 primary integration this model expects maintainers to consider. Reqsign is a
 reusable library: direct `reqsign` users and other embedding applications get
 the same Reqsign security properties and retain the same host-application

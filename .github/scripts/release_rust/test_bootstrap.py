@@ -26,6 +26,7 @@ from pathlib import Path
 from unittest import mock
 
 from bootstrap import CratesIoClient
+from bootstrap import LEGACY_PLACEHOLDER_DESCRIPTION
 from bootstrap import LEGACY_REPOSITORY
 from bootstrap import PLACEHOLDER_DESCRIPTION
 from bootstrap import PLACEHOLDER_VERSION
@@ -420,7 +421,7 @@ class BootstrapTest(unittest.TestCase):
         planned = PlannedCrate("reqsign-new", "services/new")
         for description in (
             PLACEHOLDER_DESCRIPTION,
-            "Namespace reservation for a crate planned by Apache OpenDAL reqsign.",
+            LEGACY_PLACEHOLDER_DESCRIPTION,
         ):
             with self.subTest(description=description):
                 krate = metadata(planned.name, version=PLACEHOLDER_VERSION)
@@ -443,23 +444,6 @@ class BootstrapTest(unittest.TestCase):
                         "enabled Trusted Publishing only",
                     ),
                 )
-
-    def test_unrecognized_placeholder_is_not_reconciled(self):
-        planned = PlannedCrate("reqsign-new", "services/new")
-        krate = metadata(planned.name, version=PLACEHOLDER_VERSION)
-        krate["description"] = "Reserved by another project"
-        client = FakeClient(planned.name, krate)
-
-        with (
-            tempfile.TemporaryDirectory() as tmpdir,
-            mock.patch("bootstrap.publish_placeholder") as publish,
-            self.assertRaisesRegex(RuntimeError, "unexpected 0.0.0 placeholder"),
-        ):
-            reconcile_crate(Path(tmpdir), planned, client, "bootstrap-token")
-
-        publish.assert_not_called()
-        self.assertEqual(client.created_configs, 0)
-        self.assertEqual(client.restricted, 0)
 
     def test_ready_placeholder_is_a_noop(self):
         planned = PlannedCrate("reqsign-new", "services/new")

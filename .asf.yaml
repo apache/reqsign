@@ -87,7 +87,7 @@ github:
       restrict_deletion: true
       restrict_force_push: true
 notifications:
-  commits: dev@reqsign.apache.org
-  issues: dev@reqsign.apache.org
-  pullrequests: dev@reqsign.apache.org
+  commits: commits@reqsign.apache.org
+  issues: commits@reqsign.apache.org
+  pullrequests: commits@reqsign.apache.org
   discussions: dev@reqsign.apache.org
