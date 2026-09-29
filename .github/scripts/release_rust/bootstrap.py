@@ -271,55 +271,40 @@ PLACEHOLDER_LIB = """// Licensed to the Apache Software Foundation (ASF) under o
 """
 
 
-def write_placeholder_package(
-    project_dir: Path, planned: PlannedCrate, package_dir: Path
-) -> None:
-    source_dir = package_dir / "src"
-    source_dir.mkdir()
+def write_placeholder_package(name: str, package_dir: Path) -> None:
+    (package_dir / "src").mkdir()
     (package_dir / "Cargo.toml").write_text(
-        _placeholder_manifest(planned.name), encoding="utf-8"
+        _placeholder_manifest(name), encoding="utf-8"
     )
-    (package_dir / "README.md").write_text(
-        _placeholder_readme(planned.name), encoding="utf-8"
-    )
-    (source_dir / "lib.rs").write_text(PLACEHOLDER_LIB, encoding="utf-8")
-    shutil.copyfile(project_dir / "LICENSE", package_dir / "LICENSE")
-    shutil.copyfile(project_dir / "NOTICE", package_dir / "NOTICE")
+    (package_dir / "README.md").write_text(_placeholder_readme(name), encoding="utf-8")
+    (package_dir / "src/lib.rs").write_text(PLACEHOLDER_LIB, encoding="utf-8")
+    for filename in ("LICENSE", "NOTICE"):
+        shutil.copyfile(PROJECT_DIR / filename, package_dir / filename)
 
 
-def publish_placeholder(project_dir: Path, planned: PlannedCrate, token: str) -> None:
-    with tempfile.TemporaryDirectory(prefix=f"{planned.name}-bootstrap-") as tmpdir:
+def publish_placeholder(name, token):
+    with tempfile.TemporaryDirectory(prefix=f"{name}-bootstrap-") as tmpdir:
         package_dir = Path(tmpdir)
-        write_placeholder_package(project_dir, planned, package_dir)
-
-        env = os.environ.copy()
-        env["CARGO_REGISTRY_TOKEN"] = token
+        write_placeholder_package(name, package_dir)
         command = ["cargo", "publish", "--manifest-path", "Cargo.toml"]
         while True:
             process = subprocess.run(
                 command,
                 cwd=package_dir,
-                env=env,
                 check=False,
+                env={**os.environ, "CARGO_REGISTRY_TOKEN": token},
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
-            output = process.stdout or ""
-            print(output, end="", flush=True)
+            print(process.stdout, end="", flush=True)
             if process.returncode == 0:
                 return
-            if should_retry(output):
-                delay = parse_retry_after(output)
-                print(
-                    f"crates.io rate limited {planned.name}; sleeping {delay}s",
-                    flush=True,
-                )
-                time.sleep(delay)
-                continue
-            raise subprocess.CalledProcessError(
-                process.returncode, command, output=output
-            )
+            if not should_retry(process.stdout):
+                process.check_returncode()
+            delay = parse_retry_after(process.stdout)
+            print(f"crates.io rate limited {name}; sleeping {delay}s", flush=True)
+            time.sleep(delay)
 
 
 def wait_for_crate(
@@ -377,7 +362,7 @@ def reconcile_crate(
     actions: list[str] = []
     metadata = client.get_crate(planned.name)
     if metadata is None:
-        publish_placeholder(project_dir, planned, token)
+        publish_placeholder(planned.name, token)
         metadata = wait_for_crate(client, planned.name)
         actions.append("created placeholder")
     elif metadata.get("max_version") != PLACEHOLDER_VERSION:

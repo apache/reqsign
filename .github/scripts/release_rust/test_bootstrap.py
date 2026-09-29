@@ -92,35 +92,21 @@ class FakeClient:
 
 
 class BootstrapTest(unittest.TestCase):
-    def test_placeholder_can_be_packaged_offline(self):
-        planned = PlannedCrate("reqsign-new", "services/new")
+    def test_placeholder_can_be_packaged_and_built_offline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             package_dir = Path(tmpdir)
-            write_placeholder_package(PROJECT_DIR, planned, package_dir)
-
+            write_placeholder_package("reqsign-new", package_dir)
             process = subprocess.run(
-                [
-                    "cargo",
-                    "package",
-                    "--manifest-path",
-                    str(package_dir / "Cargo.toml"),
-                    "--no-verify",
-                    "--offline",
-                ],
+                ["cargo", "package", "--offline"],
+                cwd=package_dir,
                 check=False,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
-
             self.assertEqual(process.returncode, 0, process.stdout)
             self.assertTrue(
-                (
-                    package_dir
-                    / "target"
-                    / "package"
-                    / f"{planned.name}-{PLACEHOLDER_VERSION}.crate"
-                ).is_file()
+                (package_dir / "target/package/reqsign-new-0.0.0.crate").is_file()
             )
 
     def test_discovery_does_not_migrate_established_crates(self):
@@ -317,8 +303,8 @@ class BootstrapTest(unittest.TestCase):
         planned = PlannedCrate("reqsign-new", "services/new")
         client = FakeClient(planned.name)
 
-        def publish(project_dir, package, token):
-            self.assertEqual(package, planned)
+        def publish(name, token):
+            self.assertEqual(name, planned.name)
             self.assertEqual(token, "bootstrap-token")
             client.krate = metadata(planned.name, version=PLACEHOLDER_VERSION)
 
