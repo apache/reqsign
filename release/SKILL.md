@@ -21,20 +21,6 @@ Use this skill when preparing or executing an Apache Reqsign release.
 
 ## Release Preparation
 
-Before the first release as an independent project, confirm that ASF Infrastructure
-has provisioned the Reqsign dev and release dist directories and that the Reqsign
-`KEYS` file contains the release manager's signing key. Track the migration in
-[INFRA-28423](https://issues.apache.org/jira/browse/INFRA-28423). Stop release
-preparation if these resources are unavailable; do not upload a new Reqsign release
-under OpenDAL. Historical releases remain in the
-[OpenDAL archive](https://archive.apache.org/dist/opendal/).
-
-```bash
-svn ls https://dist.apache.org/repos/dist/dev/reqsign/
-svn ls https://dist.apache.org/repos/dist/release/reqsign/
-svn cat https://dist.apache.org/repos/dist/release/reqsign/KEYS
-```
-
 1. Sync live state.
 
    ```bash
