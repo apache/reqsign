@@ -44,9 +44,8 @@ Trusted Publishing cannot create the first version of a crate.
   ownership or the exact Trusted Publisher because those APIs require
   authentication.
 
-The protected `rust-bootstrap` workflow always runs the authenticated audit,
-including when discovery finds no missing names. It never changes an
-established crate. Existing crates must be migrated independently before the
+The protected `rust-bootstrap` job audits the complete plan before any write,
+including when no names are missing. It never changes an established crate. Existing crates must be migrated independently before the
 workflow can succeed.
 
 Published crate metadata may still reference the former repository URL or the
