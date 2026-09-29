@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -25,24 +24,17 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
 from pathlib import Path
 
-from plan import PROJECT_DIR
-from plan import plan
-from publish import parse_retry_after
-from publish import should_retry
+from plan import PROJECT_DIR, plan
+from publish import parse_retry_after, should_retry
+from trusted_publishing import REGISTRY_URL, USER_AGENT
 
-
-REGISTRY_URL = "https://crates.io"
 REPOSITORY = "https://github.com/apache/reqsign"
-# Published versions retain their original manifest metadata after a repo rename.
+# Published versions keep their original metadata after a repository rename.
 LEGACY_REPOSITORY = "https://github.com/apache/opendal-reqsign"
 PLACEHOLDER_VERSION = "0.0.0"
-PLACEHOLDER_DESCRIPTION = (
-    "Namespace reservation for a crate planned by Apache Reqsign."
-)
-# Published placeholders retain their original description after a project rename.
+PLACEHOLDER_DESCRIPTION = "Namespace reservation for a crate planned by Apache Reqsign."
 LEGACY_PLACEHOLDER_DESCRIPTION = (
     "Namespace reservation for a crate planned by Apache OpenDAL reqsign."
 )
@@ -52,33 +44,6 @@ PUBLISHER = {
     "workflow_filename": "release.yml",
     "environment": "release",
 }
-USER_AGENT = (
-    "apache-reqsign-release-bootstrap/1.0 "
-    "(https://github.com/apache/reqsign)"
-)
-
-
-@dataclass(frozen=True)
-class PlannedCrate:
-    name: str
-    path: str
-
-
-@dataclass(frozen=True)
-class ReconcileResult:
-    name: str
-    actions: tuple[str, ...]
-
-
-def planned_crates(project_dir: Path = PROJECT_DIR) -> list[PlannedCrate]:
-    packages = [
-        PlannedCrate(name=package.name, path=package.path)
-        for package in plan(project_dir.resolve())
-    ]
-    names = [package.name for package in packages]
-    if len(names) != len(set(names)):
-        raise RuntimeError("duplicate crates.io package name in publish plan")
-    return packages
 
 
 class CratesIoClient:
@@ -131,8 +96,8 @@ class CratesIoClient:
             authenticated=True,
         )["crate"]
 
-def validate_crate_metadata(planned, metadata, client):
-    name = planned.name
+
+def validate_crate(name, metadata):
     assert metadata["id"] == name, f"crate name mismatch for {name}"
     repository = (metadata["repository"] or "").rstrip("/").removesuffix(".git").lower()
     assert repository in {REPOSITORY, LEGACY_REPOSITORY}, (
@@ -145,66 +110,34 @@ def validate_crate_metadata(planned, metadata, client):
         }, f"{name} has an unexpected placeholder"
 
 
-def validate_github_configs(name, configs):
+def validate_publisher(name, configs):
     expected = {"crate": name, **PUBLISHER}
     assert len(configs) == 1 and all(
         configs[0][key] == value for key, value in expected.items()
     ), f"{name} has unexpected Trusted Publishers: {configs}"
 
 
-def preflight_authenticated(
-    packages: list[PlannedCrate],
-    candidate_names: set[str],
-    client: CratesIoClient,
-) -> list[str]:
-    verified: list[str] = []
-    for planned in packages:
-        metadata = client.get_crate(planned.name)
-        is_candidate = planned.name in candidate_names
+def audit(names, client, *, ready=False):
+    """Check every crate before any write; return names eligible for bootstrap."""
+    candidates = []
+    for name in names:
+        metadata = client.get_crate(name)
         if metadata is None:
-            if not is_candidate:
-                raise RuntimeError(
-                    f"{planned.name} is missing but was not selected for bootstrap"
-                )
-            verified.append(planned.name)
+            assert not ready, f"{name} does not exist on crates.io"
+            candidates.append(name)
             continue
-
-        validate_crate_metadata(planned, metadata, client)
-        is_placeholder = metadata.get("max_version") == PLACEHOLDER_VERSION
-        if is_placeholder != is_candidate:
-            state = "a placeholder" if is_placeholder else "an established crate"
-            raise RuntimeError(
-                f"{planned.name} is now {state}, which does not match discovery"
-            )
-
-        configs = client.list_github_configs(planned.name)
-        if is_placeholder:
+        validate_crate(name, metadata)
+        configs = client.list_github_configs(name)
+        if not ready and metadata["max_version"] == PLACEHOLDER_VERSION:
             if configs:
-                validate_github_configs(planned.name, configs)
+                validate_publisher(name, configs)
+            candidates.append(name)
         else:
-            validate_github_configs(planned.name, configs)
-            if metadata.get("trustpub_only") is not True:
-                raise RuntimeError(
-                    f"{planned.name} does not require Trusted Publishing"
-                )
-        verified.append(planned.name)
-    return verified
-
-
-def verify_authenticated(
-    packages: list[PlannedCrate], client: CratesIoClient
-) -> list[str]:
-    verified: list[str] = []
-    for planned in packages:
-        metadata = client.get_crate(planned.name)
-        if metadata is None:
-            raise RuntimeError(f"{planned.name} does not exist on crates.io")
-        validate_crate_metadata(planned, metadata, client)
-        validate_github_configs(planned.name, client.list_github_configs(planned.name))
-        if metadata.get("trustpub_only") is not True:
-            raise RuntimeError(f"{planned.name} does not require Trusted Publishing")
-        verified.append(planned.name)
-    return verified
+            validate_publisher(name, configs)
+            assert metadata["trustpub_only"] is True, (
+                f"{name} does not require Trusted Publishing"
+            )
+    return candidates
 
 
 def _placeholder_manifest(name: str) -> str:
@@ -313,153 +246,62 @@ def wait_for_crate(client, name, *, ready=False):
     while True:
         metadata = client.get_crate(name)
         if metadata is not None and (not ready or metadata["trustpub_only"] is True):
+            validate_crate(name, metadata)
             return metadata
         assert time.monotonic() < deadline, f"timed out waiting for {name} on crates.io"
         time.sleep(2)
 
 
-def reconcile_crate(
-    project_dir: Path,
-    planned: PlannedCrate,
-    client: CratesIoClient,
-    token: str,
-) -> ReconcileResult:
-    actions: list[str] = []
-    metadata = client.get_crate(planned.name)
+def reconcile(name, client):
+    metadata = client.get_crate(name)
     if metadata is None:
-        publish_placeholder(planned.name, token)
-        metadata = wait_for_crate(client, planned.name)
-        actions.append("created placeholder")
-    elif metadata.get("max_version") != PLACEHOLDER_VERSION:
-        raise RuntimeError(
-            f"{planned.name} became an established crate after discovery; "
-            "refusing to modify it in the bootstrap workflow"
-        )
-
-    validate_crate_metadata(planned, metadata, client)
-
-    configs = client.list_github_configs(planned.name)
+        publish_placeholder(name, client.token)
+        metadata = wait_for_crate(client, name)
+    validate_crate(name, metadata)
+    assert metadata["max_version"] == PLACEHOLDER_VERSION, (
+        f"{name} is an established crate; bootstrap must not modify it"
+    )
+    configs = client.list_github_configs(name)
     if not configs:
-        created = client.create_github_config(planned.name)
-        validate_github_configs(planned.name, [created])
-        actions.append("configured Trusted Publishing")
-    else:
-        validate_github_configs(planned.name, configs)
-
-    if metadata.get("trustpub_only") is not True:
-        updated = client.set_trustpub_only(planned.name)
-        if updated.get("trustpub_only") is not True:
-            raise RuntimeError(
-                f"crates.io did not enable Trusted Publishing only for {planned.name}"
-            )
-        actions.append("enabled Trusted Publishing only")
-
-    verified_metadata = wait_for_crate(client, planned.name, ready=True)
-    validate_crate_metadata(planned, verified_metadata, client)
-
-    if not actions:
-        actions.append("verified")
-    return ReconcileResult(planned.name, tuple(actions))
+        configs = [client.create_github_config(name)]
+    validate_publisher(name, configs)
+    if metadata["trustpub_only"] is not True:
+        updated = client.set_trustpub_only(name)
+        assert updated["trustpub_only"] is True, f"failed to restrict {name}"
+    wait_for_crate(client, name, ready=True)
+    print(f"{name}: bootstrapped", flush=True)
 
 
-def discover(
-    project_dir: Path, client: CratesIoClient
-) -> tuple[list[PlannedCrate], list[str], list[str]]:
-    packages = planned_crates(project_dir)
-    missing: list[str] = []
-    placeholders: list[str] = []
-    for planned in packages:
-        metadata = client.get_crate(planned.name)
-        if metadata is None:
-            missing.append(planned.name)
-            continue
-        validate_crate_metadata(planned, metadata, client)
-        if metadata.get("max_version") == PLACEHOLDER_VERSION:
-            placeholders.append(planned.name)
-    return packages, missing, placeholders
+def apply(names, client):
+    candidates = audit(names, client)
+    print(f"Authenticated audit passed; bootstrap candidates: {candidates}", flush=True)
+    for name in candidates:
+        reconcile(name, client)
+    audit(names, client, ready=True)
+    print(f"Verified all {len(names)} crates", flush=True)
 
 
-def verify_public(project_dir: Path, client: CratesIoClient) -> list[str]:
-    verified: list[str] = []
-    for planned in planned_crates(project_dir):
-        metadata = client.get_crate(planned.name)
-        if metadata is None:
-            raise RuntimeError(f"{planned.name} does not exist on crates.io")
-        validate_crate_metadata(planned, metadata, client)
-        if metadata.get("trustpub_only") is not True:
-            raise RuntimeError(f"{planned.name} does not require Trusted Publishing")
-        verified.append(planned.name)
-    return verified
-
-
-def run_discover(args: argparse.Namespace) -> int:
+def main():
+    parser = argparse.ArgumentParser(description="Bootstrap reqsign crates.io names.")
+    parser.add_argument("command", choices=("discover", "apply", "verify"))
+    command = parser.parse_args().command
+    names = [package.name for package in plan()]
+    if command == "apply":
+        apply(names, CratesIoClient(os.environ["CARGO_REGISTRY_BOOTSTRAP_TOKEN"]))
+        return
     client = CratesIoClient()
-    packages, missing, placeholders = discover(PROJECT_DIR, client)
-    candidates = [*missing, *placeholders]
-    result = {
-        "packages": len(packages),
-        "missing": missing,
-        "placeholders": placeholders,
-        "bootstrap_candidates": candidates,
-    }
-    print(json.dumps(result, indent=2))
-    return 0
-
-
-def run_apply(args: argparse.Namespace) -> int:
-    token = os.environ.get("CARGO_REGISTRY_BOOTSTRAP_TOKEN")
-    if not token:
-        raise RuntimeError("CARGO_REGISTRY_BOOTSTRAP_TOKEN is not set")
-
-    client = CratesIoClient(token=token)
-    packages, missing, placeholders = discover(PROJECT_DIR, client)
-    candidate_set = {*missing, *placeholders}
-    candidates = [package for package in packages if package.name in candidate_set]
-
-    preflight_authenticated(packages, candidate_set, client)
-    print(f"authenticated preflight passed for {len(packages)} planned crates", flush=True)
-    print(f"bootstrap candidates: {len(candidates)}", flush=True)
-    for planned in candidates:
-        result = reconcile_crate(PROJECT_DIR, planned, client, token)
-        print(f"{result.name}: {', '.join(result.actions)}", flush=True)
-    authenticated = verify_authenticated(packages, client)
-    print(f"authenticated final audit passed for {len(authenticated)} planned crates", flush=True)
-    return 0
-
-
-def run_verify(args: argparse.Namespace) -> int:
-    verified = verify_public(PROJECT_DIR, CratesIoClient())
-    print(json.dumps({"verified": verified}, indent=2))
-    return 0
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description=(
-            "Create and secure crates.io names in the reqsign Rust publish plan."
-        )
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    discover_parser = subparsers.add_parser(
-        "discover", help="Report missing and placeholder crate names."
-    )
-    discover_parser.set_defaults(run=run_discover)
-
-    apply_parser = subparsers.add_parser(
-        "apply",
-        help="Audit all planned crates and reconcile missing names and placeholders.",
-    )
-    apply_parser.set_defaults(run=run_apply)
-
-    verify_parser = subparsers.add_parser(
-        "verify", help="Verify public crate existence and Trusted Publishing only."
-    )
-    verify_parser.set_defaults(run=run_verify)
-
-    args = parser.parse_args()
-    return args.run(args)
+    for name in names:
+        metadata = client.get_crate(name)
+        if metadata is not None:
+            validate_crate(name, metadata)
+        if command == "verify":
+            assert metadata is not None, f"{name} does not exist on crates.io"
+            assert metadata["trustpub_only"] is True, (
+                f"{name} does not require Trusted Publishing"
+            )
+        version = metadata["max_version"] if metadata else "missing"
+        print(f"{name}: {version}")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
