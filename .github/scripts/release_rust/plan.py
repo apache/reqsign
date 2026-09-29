@@ -37,97 +37,41 @@ class Package:
 
 
 def load_metadata(project_dir: Path = PROJECT_DIR) -> dict[str, object]:
-    process = subprocess.run(
+    return json.loads(subprocess.check_output(
         ["cargo", "metadata", "--no-deps", "--format-version", "1"],
-        cwd=project_dir,
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE,
-    )
-    metadata = json.loads(process.stdout)
-    if not isinstance(metadata, dict):
-        raise RuntimeError("cargo metadata returned an invalid document")
-    return metadata
-
-
-def is_publishable(package: dict[str, object]) -> bool:
-    publish = package.get("publish")
-    if publish is None:
-        return True
-    if not isinstance(publish, list):
-        raise RuntimeError(
-            f"cargo metadata returned invalid publish settings for {package.get('name')}"
-        )
-    return "crates-io" in publish
+        cwd=project_dir, text=True,
+    ))
 
 
 def plan_from_metadata(metadata: dict[str, object], project_dir: Path) -> list[Package]:
-    raw_packages = metadata.get("packages")
-    workspace_members = metadata.get("workspace_members")
-    if not isinstance(raw_packages, list) or not isinstance(workspace_members, list):
-        raise RuntimeError("cargo metadata omitted packages or workspace members")
-
-    members = set(workspace_members)
-    packages_by_id: dict[str, dict[str, object]] = {}
-    publishable_by_dir: dict[Path, dict[str, object]] = {}
-    local_by_dir: dict[Path, dict[str, object]] = {}
-
-    for package in raw_packages:
-        if not isinstance(package, dict):
-            raise RuntimeError("cargo metadata returned an invalid package")
-        package_id = package.get("id")
-        manifest_path = package.get("manifest_path")
-        if not isinstance(package_id, str) or not isinstance(manifest_path, str):
-            raise RuntimeError("cargo metadata returned an invalid package identity")
-        if package_id not in members:
-            continue
-
-        manifest_dir = Path(manifest_path).resolve().parent
-        packages_by_id[package_id] = package
-        local_by_dir[manifest_dir] = package
-        if is_publishable(package):
-            publishable_by_dir[manifest_dir] = package
-
-    if set(packages_by_id) != members:
-        missing = sorted(members - set(packages_by_id))
-        raise RuntimeError(f"cargo metadata omitted workspace packages: {missing}")
-
-    graph: dict[Path, set[Path]] = {path: set() for path in publishable_by_dir}
-    for manifest_dir, package in publishable_by_dir.items():
-        dependencies = package.get("dependencies")
-        if not isinstance(dependencies, list):
-            raise RuntimeError(f"cargo metadata omitted dependencies for {package.get('name')}")
-        for dependency in dependencies:
-            if not isinstance(dependency, dict):
-                raise RuntimeError("cargo metadata returned an invalid dependency")
-            if dependency.get("kind") == "dev":
+    # --no-deps returns workspace members; Cargo validates their identities.
+    local = {
+        Path(package["manifest_path"]).parent: package
+        for package in metadata["packages"]
+    }
+    packages = {
+        path: package
+        for path, package in local.items()
+        if package["publish"] is None or "crates-io" in package["publish"]
+    }
+    graph = {}
+    for path, package in packages.items():
+        dependencies = set()
+        for dependency in package["dependencies"]:
+            if dependency["kind"] == "dev" or "path" not in dependency:
                 continue
-            dependency_path = dependency.get("path")
-            if not isinstance(dependency_path, str):
-                continue
-            dependency_dir = Path(dependency_path).resolve()
-            if dependency_dir not in local_by_dir:
-                continue
-            if dependency_dir not in publishable_by_dir:
-                raise RuntimeError(
-                    f"{package.get('name')} depends on unpublished workspace package "
-                    f"{local_by_dir[dependency_dir].get('name')}"
+            dependency_path = Path(dependency["path"])
+            if dependency_path in local:
+                assert dependency_path in packages, (
+                    f"{package['name']} depends on unpublished workspace package "
+                    f"{local[dependency_path]['name']}"
                 )
-            graph[manifest_dir].add(dependency_dir)
-
-    ordered: list[Package] = []
-    for manifest_dir in TopologicalSorter(graph).static_order():
-        package = publishable_by_dir[manifest_dir]
-        name = package.get("name")
-        version = package.get("version")
-        if not isinstance(name, str) or not isinstance(version, str):
-            raise RuntimeError("cargo metadata returned invalid package metadata")
-        ordered.append(Package(name, version, manifest_dir.relative_to(project_dir).as_posix()))
-
-    names = [package.name for package in ordered]
-    if len(names) != len(set(names)):
-        raise RuntimeError("duplicate crates.io package name in publish plan")
-    return ordered
+                dependencies.add(dependency_path)
+        graph[path] = dependencies
+    return [
+        Package(packages[path]["name"], packages[path]["version"], path.relative_to(project_dir).as_posix())
+        for path in TopologicalSorter(graph).static_order()
+    ]
 
 
 def plan(project_dir: Path = PROJECT_DIR) -> list[Package]:

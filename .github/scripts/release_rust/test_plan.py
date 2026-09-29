@@ -97,7 +97,7 @@ class ReleaseRustPlanTest(unittest.TestCase):
                 "workspace_members": [package["id"] for package in packages],
             }
 
-            with self.assertRaisesRegex(RuntimeError, "unpublished workspace package"):
+            with self.assertRaisesRegex(AssertionError, "unpublished workspace package"):
                 plan_from_metadata(metadata, root)
 
 if __name__ == "__main__":
