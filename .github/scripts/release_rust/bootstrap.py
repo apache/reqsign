@@ -307,49 +307,14 @@ def publish_placeholder(name, token):
             time.sleep(delay)
 
 
-def wait_for_crate(
-    client: CratesIoClient, name: str, timeout: int = 120
-) -> dict[str, object]:
-    deadline = time.monotonic() + timeout
+def wait_for_crate(client, name, *, ready=False):
+    # Public metadata may lag behind a successful publish or settings update.
+    deadline = time.monotonic() + 120
     while True:
         metadata = client.get_crate(name)
-        if metadata is not None:
+        if metadata is not None and (not ready or metadata["trustpub_only"] is True):
             return metadata
-        if time.monotonic() >= deadline:
-            raise RuntimeError(
-                f"timed out waiting for {name} to become visible on crates.io"
-            )
-        time.sleep(2)
-
-
-def wait_for_trustpub_only(
-    client: CratesIoClient, name: str, timeout: int = 120
-) -> dict[str, object]:
-    deadline = time.monotonic() + timeout
-    while True:
-        metadata = client.get_crate(name)
-        if metadata is not None and metadata.get("trustpub_only") is True:
-            return metadata
-        if time.monotonic() >= deadline:
-            raise RuntimeError(
-                f"timed out waiting for {name} to require Trusted Publishing"
-            )
-        time.sleep(2)
-
-
-def wait_for_expected_config(
-    client: CratesIoClient, name: str, timeout: int = 120
-) -> None:
-    deadline = time.monotonic() + timeout
-    while True:
-        configs = client.list_github_configs(name)
-        if configs:
-            validate_github_configs(name, configs)
-            return
-        if time.monotonic() >= deadline:
-            raise RuntimeError(
-                f"timed out waiting for the Trusted Publisher for {name}"
-            )
+        assert time.monotonic() < deadline, f"timed out waiting for {name} on crates.io"
         time.sleep(2)
 
 
@@ -389,9 +354,8 @@ def reconcile_crate(
             )
         actions.append("enabled Trusted Publishing only")
 
-    verified_metadata = wait_for_trustpub_only(client, planned.name)
+    verified_metadata = wait_for_crate(client, planned.name, ready=True)
     validate_crate_metadata(planned, verified_metadata, client)
-    wait_for_expected_config(client, planned.name)
 
     if not actions:
         actions.append("verified")
