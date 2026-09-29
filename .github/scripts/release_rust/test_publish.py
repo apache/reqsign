@@ -30,7 +30,7 @@ def subprocess_result(returncode: int, output: str):
 
 class ReleaseRustPublishTest(unittest.TestCase):
     def test_live_publish_fetches_a_new_token_for_every_attempt(self):
-        package = Package("reqsign-test", "1.0.0", "test")
+        package = Package("reqsign-test", "1.0.0")
         tokens = iter(("first-token", "second-token"))
         revoked: list[str] = []
         cargo_tokens: list[str | None] = []
@@ -74,7 +74,7 @@ class ReleaseRustPublishTest(unittest.TestCase):
         sleep.assert_called_once_with(610)
 
     def test_already_published_package_is_recoverable(self):
-        package = Package("reqsign-test", "1.0.0", "test")
+        package = Package("reqsign-test", "1.0.0")
 
         @contextmanager
         def token_provider():
@@ -95,7 +95,7 @@ class ReleaseRustPublishTest(unittest.TestCase):
         self.assertEqual(result, "already published")
 
     def test_unrelated_already_exists_error_is_not_ignored(self):
-        package = Package("reqsign-test", "1.0.0", "test")
+        package = Package("reqsign-test", "1.0.0")
         self.assertFalse(
             already_published(
                 "crate another@1.0.0 already exists on crates.io index", package
@@ -103,7 +103,7 @@ class ReleaseRustPublishTest(unittest.TestCase):
         )
 
     def test_non_retryable_failure_is_reported(self):
-        package = Package("reqsign-test", "1.0.0", "test")
+        package = Package("reqsign-test", "1.0.0")
 
         @contextmanager
         def token_provider():

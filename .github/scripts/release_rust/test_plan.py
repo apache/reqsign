@@ -15,90 +15,67 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import tempfile
+import json
 import unittest
-from pathlib import Path
+from unittest import mock
 
-from plan import PROJECT_DIR
-from plan import Package
 from plan import plan
-from plan import plan_from_metadata
 
 
-def package(
-    root: Path,
-    name: str,
-    *,
-    dependencies: list[dict[str, object]] | None = None,
-    publish: list[str] | None = None,
-) -> dict[str, object]:
+def package(name, *, dependencies=(), publish=None):
     return {
-        "id": f"path+file://{root / name}#{name}@1.0.0",
         "name": name,
         "version": "1.0.0",
-        "manifest_path": str(root / name / "Cargo.toml"),
         "publish": publish,
-        "dependencies": dependencies or [],
+        "manifest_path": f"/workspace/{name}/Cargo.toml",
+        "dependencies": list(dependencies),
     }
 
 
-def dependency(root: Path, name: str, *, kind: str | None = None):
-    return {
-        "name": name,
-        "kind": kind,
-        "path": str(root / name),
-    }
+def dependency(name, kind=None):
+    return {"path": f"/workspace/{name}", "kind": kind}
 
 
-class ReleaseRustPlanTest(unittest.TestCase):
-    def test_plan_is_topological_and_ignores_dev_dependencies(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir).resolve()
-            core = package(root, "core")
-            service = package(
-                root,
-                "service",
-                dependencies=[dependency(root, "core")],
-            )
-            facade = package(
-                root,
-                "facade",
-                dependencies=[
-                    dependency(root, "service"),
-                    dependency(root, "dev-only", kind="dev"),
-                ],
-            )
-            dev_only = package(root, "dev-only")
-            packages = [facade, service, dev_only, core]
-            metadata = {
-                "packages": packages,
-                "workspace_members": [package["id"] for package in packages],
-            }
+class PublishPlanTest(unittest.TestCase):
+    def test_local_dependencies_precede_dependents_and_dev_cycles_are_ignored(self):
+        metadata = {
+            "packages": [
+                package("facade", dependencies=[dependency("service")]),
+                package(
+                    "service",
+                    dependencies=[
+                        dependency("core"),
+                        dependency("core", "build"),
+                        dependency("internal", "dev"),
+                    ],
+                ),
+                package("core", dependencies=[dependency("facade", "dev")]),
+                package("internal", publish=[]),
+                package("private-registry", publish=["private"]),
+            ]
+        }
+        with mock.patch(
+            "plan.subprocess.check_output", return_value=json.dumps(metadata)
+        ):
+            self.assertEqual([p.name for p in plan()], ["core", "service", "facade"])
 
-            result = plan_from_metadata(metadata, root)
+    def test_unpublishable_local_dependency_is_rejected(self):
+        metadata = {
+            "packages": [
+                package("public", dependencies=[dependency("internal")]),
+                package("internal", publish=[]),
+            ]
+        }
+        with (
+            mock.patch(
+                "plan.subprocess.check_output", return_value=json.dumps(metadata)
+            ),
+            self.assertRaisesRegex(
+                AssertionError, "unpublished workspace package internal"
+            ),
+        ):
+            plan()
 
-        positions = {package.name: index for index, package in enumerate(result)}
-        self.assertEqual(set(positions), {"core", "dev-only", "service", "facade"})
-        self.assertLess(positions["core"], positions["service"])
-        self.assertLess(positions["service"], positions["facade"])
-
-    def test_unpublishable_workspace_dependency_fails_closed(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir).resolve()
-            internal = package(root, "internal", publish=[])
-            public = package(
-                root,
-                "public",
-                dependencies=[dependency(root, "internal")],
-            )
-            packages = [internal, public]
-            metadata = {
-                "packages": packages,
-                "workspace_members": [package["id"] for package in packages],
-            }
-
-            with self.assertRaisesRegex(AssertionError, "unpublished workspace package"):
-                plan_from_metadata(metadata, root)
 
 if __name__ == "__main__":
     unittest.main()
