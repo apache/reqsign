@@ -444,19 +444,6 @@ def verify_public(project_dir: Path, client: CratesIoClient) -> list[str]:
     return verified
 
 
-def _write_summary(title: str, lines: list[str]) -> None:
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if not summary_path:
-        return
-    source_commit = os.environ.get("GITHUB_SHA", "unknown")
-    with Path(summary_path).open("a", encoding="utf-8") as summary:
-        summary.write(f"## {title}\n\n")
-        summary.write(f"Source commit: `{source_commit}`\n\n")
-        for line in lines:
-            summary.write(f"- {line}\n")
-        summary.write("\n")
-
-
 def run_discover(args: argparse.Namespace) -> int:
     client = CratesIoClient(args.registry_url)
     packages, missing, placeholders = discover(args.project_dir, client)
@@ -468,14 +455,6 @@ def run_discover(args: argparse.Namespace) -> int:
         "bootstrap_candidates": candidates,
     }
     print(json.dumps(result, indent=2))
-    _write_summary(
-        "Rust crate bootstrap discovery",
-        [
-            f"Publishable crates: {len(packages)}",
-            f"Missing crates: {', '.join(missing) if missing else 'none'}",
-            f"Placeholder crates: {', '.join(placeholders) if placeholders else 'none'}",
-        ],
-    )
     return 0
 
 
@@ -489,45 +468,14 @@ def run_apply(args: argparse.Namespace) -> int:
     candidate_set = {*missing, *placeholders}
     candidates = [package for package in packages if package.name in candidate_set]
 
-    results: list[ReconcileResult] = []
-    authenticated: list[str] = []
-    try:
-        preflight_authenticated(packages, candidate_set, client)
-        print(
-            f"authenticated preflight passed for {len(packages)} planned crates",
-            flush=True,
-        )
-        print(f"bootstrap candidates: {len(candidates)}", flush=True)
-        for planned in candidates:
-            result = reconcile_crate(args.project_dir, planned, client, token)
-            results.append(result)
-            print(f"{result.name}: {', '.join(result.actions)}", flush=True)
-        authenticated = verify_authenticated(packages, client)
-        print(
-            f"authenticated final audit passed for {len(authenticated)} planned crates",
-            flush=True,
-        )
-    except Exception as error:
-        _write_summary(
-            "Rust crate bootstrap",
-            [
-                *(
-                    f"`{result.name}`: {', '.join(result.actions)}"
-                    for result in results
-                ),
-                f"Failed: {error}",
-            ],
-        )
-        raise
-
-    _write_summary(
-        "Rust crate bootstrap",
-        [
-            f"Authenticated preflight: {len(packages)} planned crates",
-            *(f"`{result.name}`: {', '.join(result.actions)}" for result in results),
-            f"Authenticated final audit: {len(authenticated)} planned crates",
-        ],
-    )
+    preflight_authenticated(packages, candidate_set, client)
+    print(f"authenticated preflight passed for {len(packages)} planned crates", flush=True)
+    print(f"bootstrap candidates: {len(candidates)}", flush=True)
+    for planned in candidates:
+        result = reconcile_crate(args.project_dir, planned, client, token)
+        print(f"{result.name}: {', '.join(result.actions)}", flush=True)
+    authenticated = verify_authenticated(packages, client)
+    print(f"authenticated final audit passed for {len(authenticated)} planned crates", flush=True)
     return 0
 
 
