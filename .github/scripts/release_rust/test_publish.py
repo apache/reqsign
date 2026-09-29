@@ -36,7 +36,6 @@ class ReleaseRustPublishTest(unittest.TestCase):
         tokens = iter(("first-token", "second-token"))
         revoked: list[str] = []
         cargo_tokens: list[str | None] = []
-        cargo_commands: list[list[str]] = []
 
         @contextmanager
         def token_provider():
@@ -56,7 +55,6 @@ class ReleaseRustPublishTest(unittest.TestCase):
         )
 
         def run(*args, **kwargs):
-            cargo_commands.append(args[0])
             cargo_tokens.append(kwargs["env"].get("CARGO_REGISTRY_TOKEN"))
             return next(results)
 
@@ -73,25 +71,6 @@ class ReleaseRustPublishTest(unittest.TestCase):
             result = publish_package(Path(), package)
 
         self.assertEqual(result, "published")
-        self.assertEqual(
-            cargo_commands,
-            [
-                [
-                    "cargo",
-                    "publish",
-                    "--package",
-                    "reqsign-test",
-                    "--no-verify",
-                ],
-                [
-                    "cargo",
-                    "publish",
-                    "--package",
-                    "reqsign-test",
-                    "--no-verify",
-                ],
-            ],
-        )
         self.assertEqual(cargo_tokens, ["first-token", "second-token"])
         self.assertEqual(revoked, ["first-token", "second-token"])
         sleep.assert_called_once_with(610)

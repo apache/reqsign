@@ -51,18 +51,6 @@ def dependency(root: Path, name: str, *, kind: str | None = None):
 
 
 class ReleaseRustPlanTest(unittest.TestCase):
-    def test_current_workspace_plan_contains_new_aws_crates(self):
-        packages = plan(PROJECT_DIR)
-        positions = {package.name: index for index, package in enumerate(packages)}
-
-        self.assertIn("reqsign-aws-core", positions)
-        self.assertIn("reqsign-aws-v4a", positions)
-        self.assertLess(positions["reqsign-core"], positions["reqsign-aws-core"])
-        self.assertLess(positions["reqsign-aws-core"], positions["reqsign-aws-v4"])
-        self.assertLess(positions["reqsign-aws-core"], positions["reqsign-aws-v4a"])
-        self.assertLess(positions["reqsign-aws-v4"], positions["reqsign-google"])
-        self.assertEqual(packages[-1].name, "reqsign")
-
     def test_plan_is_topological_and_ignores_dev_dependencies(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir).resolve()

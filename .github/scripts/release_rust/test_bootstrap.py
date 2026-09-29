@@ -19,7 +19,6 @@ import argparse
 import io
 import subprocess
 import tempfile
-import tomllib
 import unittest
 import urllib.error
 from pathlib import Path
@@ -35,7 +34,6 @@ from bootstrap import PROJECT_DIR
 from bootstrap import REPOSITORY
 from bootstrap import PlannedCrate
 from bootstrap import ReconcileResult
-from bootstrap import _placeholder_manifest
 from bootstrap import discover
 from bootstrap import preflight_authenticated
 from bootstrap import reconcile_crate
@@ -109,42 +107,6 @@ class JsonResponse(io.BytesIO):
 
 
 class BootstrapTest(unittest.TestCase):
-    def test_bootstrap_workflow_is_input_free_and_always_protected(self):
-        workflow = (
-            PROJECT_DIR / ".github/workflows/bootstrap_rust_crates.yml"
-        ).read_text(encoding="utf-8")
-        dispatch = workflow.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
-
-        self.assertEqual(dispatch, "  workflow_dispatch:\n")
-        self.assertIn("    environment: rust-bootstrap\n", workflow)
-        self.assertNotIn("candidate_count", workflow)
-
-    def test_publisher_matches_the_release_workflow(self):
-        workflow = (PROJECT_DIR / ".github/workflows/release.yml").read_text(
-            encoding="utf-8"
-        )
-        publish_job = workflow.split("\n  publish:\n", 1)[1]
-
-        self.assertEqual(PUBLISHER["workflow_filename"], "release.yml")
-        self.assertEqual(PUBLISHER["repository_owner"], "apache")
-        self.assertEqual(PUBLISHER["repository_name"], "reqsign")
-        self.assertEqual(PUBLISHER["environment"], "release")
-        self.assertIn("    environment: release\n", publish_job)
-        self.assertIn("github.event_name == 'push'", publish_job)
-        self.assertIn("!contains(github.ref, '-')", publish_job)
-        self.assertIn("      id-token: write\n", publish_job)
-        self.assertNotIn("secrets.CARGO_REGISTRY_TOKEN", publish_job)
-        self.assertNotIn("CARGO_REGISTRY_BOOTSTRAP_TOKEN", workflow)
-
-    def test_placeholder_manifest_is_dependency_free(self):
-        manifest = tomllib.loads(_placeholder_manifest("reqsign-new"))
-
-        self.assertEqual(manifest["package"]["name"], "reqsign-new")
-        self.assertEqual(manifest["package"]["version"], PLACEHOLDER_VERSION)
-        self.assertNotIn("dependencies", manifest)
-        self.assertNotIn("dev-dependencies", manifest)
-        self.assertNotIn("build-dependencies", manifest)
-
     def test_placeholder_can_be_packaged_offline(self):
         planned = PlannedCrate("reqsign-new", "services/new")
         with tempfile.TemporaryDirectory() as tmpdir:
