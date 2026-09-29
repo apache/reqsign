@@ -60,7 +60,8 @@ software release and contains no implementation.
 These are repository-specific scripts: run them with normal Python (without
 `-O` or `PYTHONOPTIMIZE`, which disable assertions). Cargo and crates.io response
 fields are used directly; unexpected package or publisher state fails an
-assertion.
+assertion. Failed API requests stop the run; rerun after resolving the failure.
+Only Cargo publish rate limits and public metadata propagation are retried.
 
 ## Tests
 

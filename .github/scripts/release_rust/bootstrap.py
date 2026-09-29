@@ -24,7 +24,6 @@ import subprocess
 import tempfile
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,12 +58,6 @@ USER_AGENT = (
 )
 
 
-class ApiError(RuntimeError):
-    def __init__(self, operation: str, status: int, detail: str):
-        super().__init__(f"{operation} failed with HTTP {status}: {detail}")
-        self.status = status
-
-
 @dataclass(frozen=True)
 class PlannedCrate:
     name: str
@@ -88,173 +81,59 @@ def planned_crates(project_dir: Path = PROJECT_DIR) -> list[PlannedCrate]:
     return packages
 
 
-def _api_error_detail(error: urllib.error.HTTPError) -> str:
-    try:
-        response = error.read().decode("utf-8", errors="replace")
-    finally:
-        error.close()
-    try:
-        body = json.loads(response)
-        errors = body.get("errors", [])
-        return "; ".join(item["detail"] for item in errors)
-    except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
-        return response
-
-
 class CratesIoClient:
     def __init__(self, registry_url: str = REGISTRY_URL, token: str | None = None):
         self.registry_url = registry_url.rstrip("/")
         self.token = token
 
-    def _request(
-        self,
-        method: str,
-        path: str,
-        operation: str,
-        body: dict[str, object] | None = None,
-        authenticated: bool = False,
-    ) -> dict[str, object]:
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": USER_AGENT,
-        }
+    def request(self, method, path, body=None, *, authenticated=False):
+        headers = {"User-Agent": USER_AGENT, "Content-Type": "application/json"}
         if authenticated:
-            if not self.token:
-                raise RuntimeError(f"{operation} requires a crates.io API token")
+            assert self.token, "a crates.io bootstrap token is required"
             headers["Authorization"] = self.token
-
-        data = None
-        if body is not None:
-            data = json.dumps(body).encode()
-            headers["Content-Type"] = "application/json"
-
         request = urllib.request.Request(
-            f"{self.registry_url}{path}",
-            data=data,
+            f"{self.registry_url}/api/v1/{path}",
+            data=json.dumps(body).encode() if body is not None else None,
             headers=headers,
             method=method,
         )
-        retryable = method in {"GET", "PATCH"}
-        for attempt in range(5):
-            try:
-                with urllib.request.urlopen(request, timeout=30) as response:
-                    result = json.load(response)
-                if not isinstance(result, dict):
-                    raise RuntimeError(f"{operation} returned an invalid response")
-                return result
-            except urllib.error.HTTPError as error:
-                retry = retryable and error.code in {429, 502, 503, 504}
-                if retry and attempt < 4:
-                    retry_after = (
-                        error.headers.get("Retry-After") if error.headers else None
-                    )
-                    delay = (
-                        int(retry_after)
-                        if retry_after and retry_after.isdigit()
-                        else 2**attempt
-                    )
-                    error.read()
-                    error.close()
-                    print(
-                        f"{operation} returned HTTP {error.code}; retrying in {delay}s",
-                        flush=True,
-                    )
-                    time.sleep(delay)
-                    continue
-                raise ApiError(
-                    operation, error.code, _api_error_detail(error)
-                ) from None
-            except urllib.error.URLError as error:
-                if retryable and attempt < 4:
-                    delay = 2**attempt
-                    print(
-                        f"{operation} failed: {error.reason}; retrying in {delay}s",
-                        flush=True,
-                    )
-                    time.sleep(delay)
-                    continue
-                raise RuntimeError(f"{operation} failed: {error.reason}") from None
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
 
-        raise AssertionError("unreachable")
-
-    def get_crate(self, name: str) -> dict[str, object] | None:
-        encoded_name = urllib.parse.quote(name, safe="")
+    def get_crate(self, name):
         try:
-            response = self._request(
-                "GET",
-                f"/api/v1/crates/{encoded_name}",
-                f"reading crate {name}",
-            )
-        except ApiError as error:
-            if error.status == 404:
-                return None
-            raise
-        krate = response.get("crate")
-        if not isinstance(krate, dict):
-            raise RuntimeError(f"crates.io returned invalid metadata for {name}")
-        return krate
+            return self.request("GET", f"crates/{name}")["crate"]
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+            error.close()
+            return None
 
-    def get_version(self, name: str, version: str) -> dict[str, object]:
-        encoded_name = urllib.parse.quote(name, safe="")
-        encoded_version = urllib.parse.quote(version, safe="")
-        response = self._request(
+    def list_github_configs(self, name):
+        return self.request(
             "GET",
-            f"/api/v1/crates/{encoded_name}/{encoded_version}",
-            f"reading {name} {version}",
-        )
-        version_data = response.get("version")
-        if not isinstance(version_data, dict):
-            raise RuntimeError(
-                f"crates.io returned invalid version metadata for {name} {version}"
-            )
-        return version_data
-
-    def list_github_configs(self, name: str) -> list[dict[str, object]]:
-        query = urllib.parse.urlencode({"crate": name, "per_page": 100})
-        response = self._request(
-            "GET",
-            f"/api/v1/trusted_publishing/github_configs?{query}",
-            f"listing Trusted Publishers for {name}",
+            f"trusted_publishing/github_configs?crate={name}&per_page=100",
             authenticated=True,
-        )
-        configs = response.get("github_configs")
-        if not isinstance(configs, list) or not all(
-            isinstance(config, dict) for config in configs
-        ):
-            raise RuntimeError(
-                f"crates.io returned invalid Trusted Publisher metadata for {name}"
-            )
-        return configs
+        )["github_configs"]
 
-    def create_github_config(self, name: str) -> dict[str, object]:
-        config = {"crate": name, **PUBLISHER}
-        response = self._request(
+    def create_github_config(self, name):
+        return self.request(
             "POST",
-            "/api/v1/trusted_publishing/github_configs",
-            f"creating the Trusted Publisher for {name}",
-            body={"github_config": config},
+            "trusted_publishing/github_configs",
+            {"github_config": {"crate": name, **PUBLISHER}},
             authenticated=True,
-        )
-        created = response.get("github_config")
-        if not isinstance(created, dict):
-            raise RuntimeError(
-                f"crates.io returned invalid Trusted Publisher metadata for {name}"
-            )
-        return created
+        )["github_config"]
 
-    def set_trustpub_only(self, name: str) -> dict[str, object]:
-        encoded_name = urllib.parse.quote(name, safe="")
-        response = self._request(
+    def set_trustpub_only(self, name):
+        return self.request(
             "PATCH",
-            f"/api/v1/crates/{encoded_name}",
-            f"enabling Trusted Publishing only for {name}",
-            body={"crate": {"trustpub_only": True}},
+            f"crates/{name}",
+            {"crate": {"trustpub_only": True}},
             authenticated=True,
-        )
-        krate = response.get("crate")
-        if not isinstance(krate, dict):
-            raise RuntimeError(f"crates.io returned invalid metadata for {name}")
-        return krate
+        )["crate"]
+
+    def get_version(self, name, version):
+        return self.request("GET", f"crates/{name}/{version}")["version"]
 
 
 def _normalized_repository(value: object) -> str:

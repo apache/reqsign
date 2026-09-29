@@ -16,15 +16,12 @@
 # under the License.
 
 import argparse
-import io
 import subprocess
 import tempfile
 import unittest
-import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from bootstrap import CratesIoClient
 from bootstrap import LEGACY_PLACEHOLDER_DESCRIPTION
 from bootstrap import LEGACY_REPOSITORY
 from bootstrap import PLACEHOLDER_DESCRIPTION
@@ -98,14 +95,6 @@ class FakeClient:
             raise AssertionError(f"expected {self.name}, got {name}")
 
 
-class JsonResponse(io.BytesIO):
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
-
-
 class BootstrapTest(unittest.TestCase):
     def test_placeholder_can_be_packaged_offline(self):
         planned = PlannedCrate("reqsign-new", "services/new")
@@ -137,31 +126,6 @@ class BootstrapTest(unittest.TestCase):
                     / f"{planned.name}-{PLACEHOLDER_VERSION}.crate"
                 ).is_file()
             )
-
-    def test_public_read_retries_a_transient_registry_failure(self):
-        error = urllib.error.HTTPError(
-            "https://crates.io/api/v1/crates/reqsign",
-            503,
-            "unavailable",
-            {},
-            io.BytesIO(b""),
-        )
-        response = JsonResponse(
-            b'{"crate":{"id":"reqsign","repository":'
-            b'"https://github.com/apache/reqsign"}}'
-        )
-
-        with (
-            mock.patch(
-                "bootstrap.urllib.request.urlopen",
-                side_effect=(error, response),
-            ),
-            mock.patch("bootstrap.time.sleep") as sleep,
-        ):
-            krate = CratesIoClient().get_crate("reqsign")
-
-        self.assertEqual(krate["id"], "reqsign")
-        sleep.assert_called_once_with(1)
 
     def test_discovery_does_not_migrate_established_crates(self):
         planned = PlannedCrate("reqsign-core", "core")
