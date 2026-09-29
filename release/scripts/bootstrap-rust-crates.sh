@@ -74,62 +74,14 @@ if ! jq -e \
   exit 1
 fi
 
-run_title="Bootstrap Rust crates at ${source_commit}"
-started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-if ! dispatch_output="$(
-  gh workflow run "${workflow}" \
-    --repo "${repo}" \
-    --ref main 2>&1
-)"; then
-  echo "${dispatch_output}" >&2
-  exit 1
-fi
-echo "${dispatch_output}"
-
+# The versioned dispatch API returns the exact run; no polling or title matching.
 run_id="$(
-  sed -nE \
-    's#.*github\.com/apache/reqsign/actions/runs/([0-9]+).*#\1#p' \
-    <<<"${dispatch_output}" |
-    tail -n 1
+  gh api --method POST \
+    -H 'X-GitHub-Api-Version: 2026-03-10' \
+    "repos/${repo}/actions/workflows/${workflow}/dispatches" \
+    -f ref=main |
+    jq -er '.workflow_run_id'
 )"
-deadline=$((SECONDS + 120))
-while [[ -z "${run_id}" && ${SECONDS} -lt ${deadline} ]]; do
-  runs="$(
-    gh run list \
-      --repo "${repo}" \
-      --workflow "${workflow}" \
-      --event workflow_dispatch \
-      --limit 50 \
-      --json databaseId,displayTitle,headSha,createdAt
-  )"
-  run_id="$(
-    jq -r \
-      --arg title "${run_title}" \
-      --arg head_sha "${source_commit}" \
-      --arg started_at "${started_at}" \
-      '[.[]
-        | select(
-            .displayTitle == $title
-            and .headSha == $head_sha
-            and .createdAt >= $started_at
-          )
-       ]
-       | sort_by(.createdAt)
-       | last
-       | .databaseId // empty' \
-      <<<"${runs}"
-  )"
-  if [[ -z "${run_id}" ]]; then
-    sleep 2
-  fi
-done
-
-if [[ -z "${run_id}" ]]; then
-  echo "could not resolve the dispatched ${workflow} run" >&2
-  exit 1
-fi
-
 run_head_sha="$(
   gh run view "${run_id}" --repo "${repo}" --json headSha --jq '.headSha'
 )"

@@ -56,6 +56,9 @@ New placeholders and releases use the current project name and repository URL.
 Version `0.0.0` is an irreversible namespace reservation. It is not an ASF
 software release and contains no implementation.
 
+The local dispatch helper uses GitHub REST API version `2026-03-10` to obtain
+the exact workflow run ID, then checks its commit and waits for completion.
+
 These are repository-specific scripts: run them with normal Python (without
 `-O` or `PYTHONOPTIMIZE`, which disable assertions). Cargo and crates.io response
 fields are used directly; unexpected package or publisher state fails an
