@@ -132,84 +132,25 @@ class CratesIoClient:
             authenticated=True,
         )["crate"]
 
-    def get_version(self, name, version):
-        return self.request("GET", f"crates/{name}/{version}")["version"]
-
-
-def _normalized_repository(value: object) -> str:
-    if not isinstance(value, str):
-        return ""
-    normalized = value.rstrip("/")
-    if normalized.endswith(".git"):
-        normalized = normalized[:-4]
-    return normalized.lower()
-
-
-def validate_crate_metadata(
-    planned: PlannedCrate, metadata: dict[str, object], client: CratesIoClient
-) -> None:
-    if metadata.get("id") != planned.name:
-        raise RuntimeError(
-            f"crate name mismatch for {planned.name}: got {metadata.get('id')!r}"
-        )
-    if _normalized_repository(metadata.get("repository")) not in {
-        _normalized_repository(REPOSITORY),
-        _normalized_repository(LEGACY_REPOSITORY),
-    }:
-        raise RuntimeError(
-            f"{planned.name} already exists with an unexpected repository: "
-            f"{metadata.get('repository')!r}"
-        )
-
-    if metadata.get("max_version") == PLACEHOLDER_VERSION:
-        if metadata.get("description") not in (
+def validate_crate_metadata(planned, metadata, client):
+    name = planned.name
+    assert metadata["id"] == name, f"crate name mismatch for {name}"
+    repository = (metadata["repository"] or "").rstrip("/").removesuffix(".git").lower()
+    assert repository in {REPOSITORY, LEGACY_REPOSITORY}, (
+        f"{name} has an unexpected repository: {repository}"
+    )
+    if metadata["max_version"] == PLACEHOLDER_VERSION:
+        assert metadata["description"] in {
             PLACEHOLDER_DESCRIPTION,
             LEGACY_PLACEHOLDER_DESCRIPTION,
-        ):
-            raise RuntimeError(
-                f"{planned.name} has an unexpected {PLACEHOLDER_VERSION} placeholder"
-            )
-        version = client.get_version(planned.name, PLACEHOLDER_VERSION)
-        if version.get("num") != PLACEHOLDER_VERSION:
-            raise RuntimeError(
-                f"{planned.name} placeholder version could not be verified"
-            )
+        }, f"{name} has an unexpected placeholder"
 
 
-def _is_expected_config(name: str, config: dict[str, object]) -> bool:
-    repository_owner = config.get("repository_owner")
-    repository_name = config.get("repository_name")
-    return all(
-        (
-            config.get("crate") == name,
-            isinstance(repository_owner, str)
-            and repository_owner.lower() == PUBLISHER["repository_owner"],
-            isinstance(repository_name, str)
-            and repository_name.lower() == PUBLISHER["repository_name"],
-            config.get("workflow_filename") == PUBLISHER["workflow_filename"],
-            config.get("environment") == PUBLISHER["environment"],
-        )
-    )
-
-
-def validate_github_configs(name: str, configs: list[dict[str, object]]) -> None:
-    if len(configs) != 1 or not _is_expected_config(name, configs[0]):
-        compact = [
-            {
-                key: config.get(key)
-                for key in (
-                    "repository_owner",
-                    "repository_name",
-                    "workflow_filename",
-                    "environment",
-                )
-            }
-            for config in configs
-        ]
-        raise RuntimeError(
-            f"{name} has unexpected Trusted Publisher configurations: "
-            f"{json.dumps(compact, sort_keys=True)}"
-        )
+def validate_github_configs(name, configs):
+    expected = {"crate": name, **PUBLISHER}
+    assert len(configs) == 1 and all(
+        configs[0][key] == value for key, value in expected.items()
+    ), f"{name} has unexpected Trusted Publishers: {configs}"
 
 
 def preflight_authenticated(
@@ -451,10 +392,7 @@ def reconcile_crate(
     configs = client.list_github_configs(planned.name)
     if not configs:
         created = client.create_github_config(planned.name)
-        if not _is_expected_config(planned.name, created):
-            raise RuntimeError(
-                f"crates.io created an unexpected Trusted Publisher for {planned.name}"
-            )
+        validate_github_configs(planned.name, [created])
         actions.append("configured Trusted Publishing")
     else:
         validate_github_configs(planned.name, configs)

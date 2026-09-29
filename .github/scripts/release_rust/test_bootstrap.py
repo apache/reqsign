@@ -69,10 +69,6 @@ class FakeClient:
         self._assert_name(name)
         return None if self.krate is None else dict(self.krate)
 
-    def get_version(self, name: str, version: str):
-        self._assert_name(name)
-        return {"num": version}
-
     def list_github_configs(self, name: str):
         self._assert_name(name)
         return [dict(config) for config in self.configs]
@@ -177,7 +173,7 @@ class BootstrapTest(unittest.TestCase):
             [unexpected],
         )
 
-        with self.assertRaisesRegex(RuntimeError, "unexpected Trusted Publisher"):
+        with self.assertRaisesRegex(AssertionError, "unexpected Trusted Publisher"):
             preflight_authenticated([planned], set(), client)
 
         self.assertEqual(client.created_configs, 0)
@@ -202,7 +198,7 @@ class BootstrapTest(unittest.TestCase):
         config = {**expected_config(planned.name), "repository_name": "opendal-reqsign"}
         client = FakeClient(planned.name, krate, [config])
 
-        with self.assertRaisesRegex(RuntimeError, "unexpected Trusted Publisher"):
+        with self.assertRaisesRegex(AssertionError, "unexpected Trusted Publisher"):
             preflight_authenticated([planned], set(), client)
 
         self.assertEqual(client.created_configs, 0)
@@ -215,7 +211,7 @@ class BootstrapTest(unittest.TestCase):
 
         with (
             mock.patch("bootstrap.planned_crates", return_value=[planned]),
-            self.assertRaisesRegex(RuntimeError, "unexpected repository"),
+            self.assertRaisesRegex(AssertionError, "unexpected repository"),
         ):
             discover(Path(), client)
 
@@ -242,7 +238,7 @@ class BootstrapTest(unittest.TestCase):
             [unexpected],
         )
 
-        with self.assertRaisesRegex(RuntimeError, "unexpected Trusted Publisher"):
+        with self.assertRaisesRegex(AssertionError, "unexpected Trusted Publisher"):
             verify_authenticated([planned], client)
 
     def test_apply_preflights_the_complete_plan_before_reconciling(self):
@@ -417,7 +413,7 @@ class BootstrapTest(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as tmpdir,
-            self.assertRaisesRegex(RuntimeError, "unexpected Trusted Publisher"),
+            self.assertRaisesRegex(AssertionError, "unexpected Trusted Publisher"),
         ):
             reconcile_crate(Path(tmpdir), planned, client, "bootstrap-token")
 
