@@ -51,7 +51,7 @@ def metadata(name: str, *, version: str = "1.0.0", trustpub_only: bool = False):
         "description": (
             PLACEHOLDER_DESCRIPTION
             if version == PLACEHOLDER_VERSION
-            else "An Apache OpenDAL reqsign crate"
+            else "An Apache Reqsign crate"
         ),
         "trustpub_only": trustpub_only,
     }
@@ -418,25 +418,48 @@ class BootstrapTest(unittest.TestCase):
 
     def test_partial_placeholder_resumes_without_republishing(self):
         planned = PlannedCrate("reqsign-new", "services/new")
-        client = FakeClient(
-            planned.name,
-            metadata(planned.name, version=PLACEHOLDER_VERSION),
-        )
+        for description in (
+            PLACEHOLDER_DESCRIPTION,
+            "Namespace reservation for a crate planned by Apache OpenDAL reqsign.",
+        ):
+            with self.subTest(description=description):
+                krate = metadata(planned.name, version=PLACEHOLDER_VERSION)
+                krate["description"] = description
+                client = FakeClient(planned.name, krate)
+
+                with (
+                    tempfile.TemporaryDirectory() as tmpdir,
+                    mock.patch("bootstrap.publish_placeholder") as publish,
+                ):
+                    result = reconcile_crate(
+                        Path(tmpdir), planned, client, "bootstrap-token"
+                    )
+
+                publish.assert_not_called()
+                self.assertEqual(
+                    result.actions,
+                    (
+                        "configured Trusted Publishing",
+                        "enabled Trusted Publishing only",
+                    ),
+                )
+
+    def test_unrecognized_placeholder_is_not_reconciled(self):
+        planned = PlannedCrate("reqsign-new", "services/new")
+        krate = metadata(planned.name, version=PLACEHOLDER_VERSION)
+        krate["description"] = "Reserved by another project"
+        client = FakeClient(planned.name, krate)
 
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             mock.patch("bootstrap.publish_placeholder") as publish,
+            self.assertRaisesRegex(RuntimeError, "unexpected 0.0.0 placeholder"),
         ):
-            result = reconcile_crate(Path(tmpdir), planned, client, "bootstrap-token")
+            reconcile_crate(Path(tmpdir), planned, client, "bootstrap-token")
 
         publish.assert_not_called()
-        self.assertEqual(
-            result.actions,
-            (
-                "configured Trusted Publishing",
-                "enabled Trusted Publishing only",
-            ),
-        )
+        self.assertEqual(client.created_configs, 0)
+        self.assertEqual(client.restricted, 0)
 
     def test_ready_placeholder_is_a_noop(self):
         planned = PlannedCrate("reqsign-new", "services/new")

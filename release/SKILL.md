@@ -1,11 +1,11 @@
 ---
 name: reqsign-release
-description: Release Apache OpenDAL reqsign through the Apache RC, vote, dist, tag, crates.io, and announcement flow.
+description: Release Apache Reqsign through the Apache RC, vote, dist, tag, crates.io, and announcement flow.
 ---
 
-# Apache OpenDAL reqsign Release Skill
+# Apache Reqsign Release Skill
 
-Use this skill when preparing or executing an Apache OpenDAL reqsign release.
+Use this skill when preparing or executing an Apache Reqsign release.
 
 ## Hard Rules
 
@@ -15,11 +15,25 @@ Use this skill when preparing or executing an Apache OpenDAL reqsign release.
 - Every crate in the current publish plan must exist with the exact `apache/reqsign`, `release.yml`, `release` Trusted Publisher and `trustpub_only` enabled before creating the RC tag.
 - The repo release workflow publishes only formal `vX.Y.Z` tags. It uses short-lived GitHub OIDC credentials and never a long-lived crates.io token.
 - Source release artifacts live under Apache dist:
-  - RC: `https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z/`
-  - Final: `https://dist.apache.org/repos/dist/release/opendal/reqsign-X.Y.Z/`
+  - RC: `https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/`
+  - Final: `https://dist.apache.org/repos/dist/release/reqsign/reqsign-X.Y.Z/`
 - If a wrong formal tag is pushed early, immediately cancel the Release workflow, delete the remote tag, and verify crates.io did not publish anything.
 
 ## Release Preparation
+
+Before the first release as an independent project, confirm that ASF Infrastructure
+has provisioned the Reqsign dev and release dist directories and that the Reqsign
+`KEYS` file contains the release manager's signing key. Track the migration in
+[INFRA-28423](https://issues.apache.org/jira/browse/INFRA-28423). Stop release
+preparation if these resources are unavailable; do not upload a new Reqsign release
+under OpenDAL. Historical releases remain in the
+[OpenDAL archive](https://archive.apache.org/dist/opendal/).
+
+```bash
+svn ls https://dist.apache.org/repos/dist/dev/reqsign/
+svn ls https://dist.apache.org/repos/dist/release/reqsign/
+svn cat https://dist.apache.org/repos/dist/release/reqsign/KEYS
+```
 
 1. Sync live state.
 
@@ -28,8 +42,8 @@ Use this skill when preparing or executing an Apache OpenDAL reqsign release.
    git status --short --branch
    git tag --list 'vX.Y.Z*' --sort=version:refname
    git ls-remote --tags origin 'refs/tags/vX.Y.Z*'
-   svn ls https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z/ || true
-   svn ls https://dist.apache.org/repos/dist/release/opendal/reqsign-X.Y.Z/ || true
+   svn ls https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/ || true
+   svn ls https://dist.apache.org/repos/dist/release/reqsign/reqsign-X.Y.Z/ || true
    ```
 
 2. Prepare version bump on a PR.
@@ -147,10 +161,10 @@ shasum -a 512 -c apache-reqsign-X.Y.Z.tar.gz.sha512
 tar -tzf apache-reqsign-X.Y.Z.tar.gz | rg '(^|/)LICENSE$|(^|/)NOTICE$|(^|/)Cargo.toml$'
 ```
 
-Confirm the signing key is present in Apache OpenDAL KEYS:
+Confirm the signing key is present in Apache Reqsign KEYS:
 
 ```bash
-svn cat https://dist.apache.org/repos/dist/release/opendal/KEYS | rg 'xuanwo@apache.org|Xuanwo|KEY_FINGERPRINT'
+svn cat https://dist.apache.org/repos/dist/release/reqsign/KEYS | rg 'xuanwo@apache.org|Xuanwo|KEY_FINGERPRINT'
 ```
 
 ## Upload RC Artifacts
@@ -158,10 +172,10 @@ svn cat https://dist.apache.org/repos/dist/release/opendal/KEYS | rg 'xuanwo@apa
 Upload to Apache dev dist.
 
 ```bash
-rm -rf /tmp/opendal-dist-dev-reqsign-X.Y.Z
-svn co --depth=empty https://dist.apache.org/repos/dist/dev/opendal /tmp/opendal-dist-dev-reqsign-X.Y.Z
+rm -rf /tmp/reqsign-dist-dev-X.Y.Z
+svn co --depth=empty https://dist.apache.org/repos/dist/dev/reqsign /tmp/reqsign-dist-dev-X.Y.Z
 
-cd /tmp/opendal-dist-dev-reqsign-X.Y.Z
+cd /tmp/reqsign-dist-dev-X.Y.Z
 mkdir reqsign-X.Y.Z
 cp /tmp/reqsign-release-X.Y.Z/dist/* reqsign-X.Y.Z/
 svn add reqsign-X.Y.Z
@@ -172,9 +186,9 @@ svn commit --force-interactive -m "Prepare reqsign X.Y.Z release candidate"
 Verify the remote copy:
 
 ```bash
-svn ls https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z/
+svn ls https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/
 rm -rf /tmp/reqsign-verify-X.Y.Z
-svn co https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z /tmp/reqsign-verify-X.Y.Z
+svn co https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z /tmp/reqsign-verify-X.Y.Z
 cd /tmp/reqsign-verify-X.Y.Z
 shasum -a 512 -c apache-reqsign-X.Y.Z.tar.gz.sha512
 gpg --verify apache-reqsign-X.Y.Z.tar.gz.asc apache-reqsign-X.Y.Z.tar.gz
@@ -182,28 +196,30 @@ gpg --verify apache-reqsign-X.Y.Z.tar.gz.asc apache-reqsign-X.Y.Z.tar.gz
 
 ## Start Vote
 
-Create a GitHub Discussion in `apache/reqsign` General.
+Create a GitHub Discussion in `apache/reqsign` General. Confirm that the vote is
+forwarded to `dev@reqsign.apache.org` and that the mailing-list thread is linked
+from the Discussion before counting the voting period.
 
 Title:
 
 ```text
-[VOTE] Release Apache OpenDAL reqsign X.Y.Z - Vote Round 1
+[VOTE] Release Apache Reqsign X.Y.Z - Vote Round 1
 ```
 
 Body:
 
 ```text
-Hello, Apache OpenDAL Community,
+Hello, Apache Reqsign Community,
 
-This is a call for a vote to release Apache OpenDAL reqsign version X.Y.Z.
+This is a call for a vote to release Apache Reqsign version X.Y.Z.
 
 The release candidate:
 
-https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z/
+https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/
 
 Keys to verify the release candidate:
 
-https://downloads.apache.org/opendal/KEYS
+https://downloads.apache.org/reqsign/KEYS
 
 Git tag for the release candidate:
 
@@ -238,7 +254,7 @@ NAME
 
 1. Verify vote state.
 
-   Confirm at least three binding `+1` votes and no blocking `-1` votes.
+   Confirm at least three binding `+1` votes from Reqsign PMC members and no blocking `-1` votes.
 
 2. Publish vote result.
 
@@ -247,15 +263,15 @@ NAME
    Title:
 
    ```text
-   [RESULT][VOTE] Release Apache OpenDAL reqsign X.Y.Z - Vote Round 1
+   [RESULT][VOTE] Release Apache Reqsign X.Y.Z - Vote Round 1
    ```
 
    Body:
 
    ```text
-   Hello, Apache OpenDAL Community,
+   Hello, Apache Reqsign Community,
 
-   The vote to release Apache OpenDAL reqsign X.Y.Z has passed.
+   The vote to release Apache Reqsign X.Y.Z has passed.
 
    The vote PASSED with N +1 binding votes, no +0 or -1 votes.
 
@@ -287,8 +303,8 @@ NAME
 
    ```bash
    svn mv --force-interactive \
-     https://dist.apache.org/repos/dist/dev/opendal/reqsign-X.Y.Z \
-     https://dist.apache.org/repos/dist/release/opendal/reqsign-X.Y.Z \
+     https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z \
+     https://dist.apache.org/repos/dist/release/reqsign/reqsign-X.Y.Z \
      -m "Release reqsign X.Y.Z"
    ```
 

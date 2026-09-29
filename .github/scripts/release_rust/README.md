@@ -1,7 +1,6 @@
 # Rust release helpers
 
-These scripts define and publish the crates.io package set for Apache OpenDAL
-reqsign.
+These scripts define and publish the crates.io package set for Apache Reqsign.
 
 ## Publish plan
 
@@ -49,9 +48,10 @@ including when discovery finds no missing names. It never changes an
 established crate. Existing crates must be migrated independently before the
 workflow can succeed.
 
-Published crate metadata may still reference the former repository URL. The
-audit accepts that historical metadata, but every Trusted Publisher must target
-`apache/reqsign`. New placeholders and releases use the current repository URL.
+Published crate metadata may still reference the former repository URL or the
+former project name in a `0.0.0` placeholder description. The audit accepts that
+historical metadata, but every Trusted Publisher must target `apache/reqsign`.
+New placeholders and releases use the current project name and repository URL.
 
 Version `0.0.0` is an irreversible namespace reservation. It is not an ASF
 software release and contains no implementation.

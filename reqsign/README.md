@@ -1,4 +1,4 @@
-# reqsign
+# Apache Reqsign
 
 Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services.
 

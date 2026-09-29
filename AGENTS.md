@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Apache OpenDAL reqsign — a Rust library for signing HTTP API requests across
+Apache Reqsign — a Rust library for signing HTTP API requests across
 cloud providers (AWS, Azure, Google, Aliyun, Huawei, Tencent, Oracle,
 Volcengine).
 

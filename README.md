@@ -1,4 +1,4 @@
-# Apache OpenDAL Reqsign
+# Apache Reqsign
 
 [![Build Status]][actions] [![Latest Version]][crates.io] [![Crate Downloads]][crates.io]
 
@@ -184,6 +184,8 @@ Check out the [CONTRIBUTING.md](CONTRIBUTING.md) guide for more details on getti
 ## Getting help
 
 Submit [issues](https://github.com/apache/reqsign/issues/new/choose) for bug report or asking questions in [discussion](https://github.com/apache/reqsign/discussions/new?category=q-a).
+
+Join the [development mailing list](mailto:dev@reqsign.apache.org) for project discussions and release votes. [Subscribe](mailto:dev-subscribe@reqsign.apache.org) before posting, or browse the [archives](https://lists.apache.org/list.html?dev@reqsign.apache.org).
 
 ## Acknowledge
 

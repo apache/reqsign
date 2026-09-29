@@ -41,6 +41,10 @@ REPOSITORY = "https://github.com/apache/reqsign"
 LEGACY_REPOSITORY = "https://github.com/apache/opendal-reqsign"
 PLACEHOLDER_VERSION = "0.0.0"
 PLACEHOLDER_DESCRIPTION = (
+    "Namespace reservation for a crate planned by Apache Reqsign."
+)
+# Published placeholders retain their original description after a project rename.
+LEGACY_PLACEHOLDER_DESCRIPTION = (
     "Namespace reservation for a crate planned by Apache OpenDAL reqsign."
 )
 PUBLISHER = {
@@ -279,7 +283,10 @@ def validate_crate_metadata(
         )
 
     if metadata.get("max_version") == PLACEHOLDER_VERSION:
-        if metadata.get("description") != PLACEHOLDER_DESCRIPTION:
+        if metadata.get("description") not in (
+            PLACEHOLDER_DESCRIPTION,
+            LEGACY_PLACEHOLDER_DESCRIPTION,
+        ):
             raise RuntimeError(
                 f"{planned.name} has an unexpected {PLACEHOLDER_VERSION} placeholder"
             )
@@ -416,11 +423,11 @@ include = ["src/lib.rs", "README.md", "LICENSE", "NOTICE"]
 def _placeholder_readme(name: str) -> str:
     return f"""# {name}
 
-This crate belongs to [Apache OpenDAL reqsign]({REPOSITORY}).
+This crate belongs to [Apache Reqsign]({REPOSITORY}).
 
-Version {PLACEHOLDER_VERSION} reserves the crates.io package name for Apache
-OpenDAL reqsign. It is not an ASF software release, contains no implementation,
-and must not be used as a dependency.
+Version {PLACEHOLDER_VERSION} reserves the crates.io package name for Apache Reqsign.
+It is not an ASF software release, contains no implementation, and must not be
+used as a dependency.
 """
 
 
