@@ -18,12 +18,10 @@
 import subprocess
 import unittest
 from contextlib import contextmanager
-from pathlib import Path
 from unittest import mock
 
 from plan import Package
-from publish import already_published
-from publish import publish_package
+from publish import already_published, publish_package
 
 
 def subprocess_result(returncode: int, output: str):
@@ -68,7 +66,7 @@ class ReleaseRustPublishTest(unittest.TestCase):
             mock.patch("publish.subprocess.run", run),
             mock.patch("publish.time.sleep") as sleep,
         ):
-            result = publish_package(Path(), package)
+            result = publish_package(package)
 
         self.assertEqual(result, "published")
         self.assertEqual(cargo_tokens, ["first-token", "second-token"])
@@ -92,7 +90,7 @@ class ReleaseRustPublishTest(unittest.TestCase):
                 ),
             ),
         ):
-            result = publish_package(Path(), package)
+            result = publish_package(package)
 
         self.assertEqual(result, "already published")
 
@@ -119,7 +117,7 @@ class ReleaseRustPublishTest(unittest.TestCase):
             ),
             self.assertRaises(subprocess.CalledProcessError),
         ):
-            publish_package(Path(), package)
+            publish_package(package)
 
 
 if __name__ == "__main__":

@@ -16,7 +16,6 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import argparse
 from graphlib import TopologicalSorter
 import json
 import subprocess
@@ -80,17 +79,7 @@ def plan(project_dir: Path = PROJECT_DIR) -> list[Package]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Print the reqsign crates.io publish plan in dependency order."
-    )
-    parser.add_argument(
-        "--project-dir",
-        type=Path,
-        default=PROJECT_DIR,
-        help="Path to the repository root.",
-    )
-    args = parser.parse_args()
-    print(json.dumps([asdict(package) for package in plan(args.project_dir)], indent=2))
+    print(json.dumps([asdict(package) for package in plan()], indent=2))
     return 0
 
 

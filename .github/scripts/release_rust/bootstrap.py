@@ -82,8 +82,7 @@ def planned_crates(project_dir: Path = PROJECT_DIR) -> list[PlannedCrate]:
 
 
 class CratesIoClient:
-    def __init__(self, registry_url: str = REGISTRY_URL, token: str | None = None):
-        self.registry_url = registry_url.rstrip("/")
+    def __init__(self, token: str | None = None):
         self.token = token
 
     def request(self, method, path, body=None, *, authenticated=False):
@@ -92,7 +91,7 @@ class CratesIoClient:
             assert self.token, "a crates.io bootstrap token is required"
             headers["Authorization"] = self.token
         request = urllib.request.Request(
-            f"{self.registry_url}/api/v1/{path}",
+            f"{REGISTRY_URL}/api/v1/{path}",
             data=json.dumps(body).encode() if body is not None else None,
             headers=headers,
             method=method,
@@ -445,8 +444,8 @@ def verify_public(project_dir: Path, client: CratesIoClient) -> list[str]:
 
 
 def run_discover(args: argparse.Namespace) -> int:
-    client = CratesIoClient(args.registry_url)
-    packages, missing, placeholders = discover(args.project_dir, client)
+    client = CratesIoClient()
+    packages, missing, placeholders = discover(PROJECT_DIR, client)
     candidates = [*missing, *placeholders]
     result = {
         "packages": len(packages),
@@ -463,8 +462,8 @@ def run_apply(args: argparse.Namespace) -> int:
     if not token:
         raise RuntimeError("CARGO_REGISTRY_BOOTSTRAP_TOKEN is not set")
 
-    client = CratesIoClient(args.registry_url, token=token)
-    packages, missing, placeholders = discover(args.project_dir, client)
+    client = CratesIoClient(token=token)
+    packages, missing, placeholders = discover(PROJECT_DIR, client)
     candidate_set = {*missing, *placeholders}
     candidates = [package for package in packages if package.name in candidate_set]
 
@@ -472,7 +471,7 @@ def run_apply(args: argparse.Namespace) -> int:
     print(f"authenticated preflight passed for {len(packages)} planned crates", flush=True)
     print(f"bootstrap candidates: {len(candidates)}", flush=True)
     for planned in candidates:
-        result = reconcile_crate(args.project_dir, planned, client, token)
+        result = reconcile_crate(PROJECT_DIR, planned, client, token)
         print(f"{result.name}: {', '.join(result.actions)}", flush=True)
     authenticated = verify_authenticated(packages, client)
     print(f"authenticated final audit passed for {len(authenticated)} planned crates", flush=True)
@@ -480,7 +479,7 @@ def run_apply(args: argparse.Namespace) -> int:
 
 
 def run_verify(args: argparse.Namespace) -> int:
-    verified = verify_public(args.project_dir, CratesIoClient(args.registry_url))
+    verified = verify_public(PROJECT_DIR, CratesIoClient())
     print(json.dumps({"verified": verified}, indent=2))
     return 0
 
@@ -490,17 +489,6 @@ def main() -> int:
         description=(
             "Create and secure crates.io names in the reqsign Rust publish plan."
         )
-    )
-    parser.add_argument(
-        "--project-dir",
-        type=Path,
-        default=PROJECT_DIR,
-        help="Path to the repository root.",
-    )
-    parser.add_argument(
-        "--registry-url",
-        default=REGISTRY_URL,
-        help="crates.io-compatible registry API URL.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -521,7 +509,6 @@ def main() -> int:
     verify_parser.set_defaults(run=run_verify)
 
     args = parser.parse_args()
-    args.project_dir = args.project_dir.resolve()
     return args.run(args)
 
 
