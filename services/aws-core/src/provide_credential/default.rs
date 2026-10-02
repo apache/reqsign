@@ -35,6 +35,9 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// 5. Process credentials
 /// 6. ECS (IAM Roles for Tasks) & Container credentials
 /// 7. EC2 IMDSv2
+///
+/// Once SSO configuration is selected, SSO errors stop resolution to avoid
+/// silently switching identities. An absent SSO configuration continues the chain.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
@@ -253,7 +256,7 @@ impl DefaultCredentialProviderBuilder {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(p) = self.sso {
-                chain = chain.push(p);
+                chain = chain.push_with_error_propagation(p);
             }
         }
 
@@ -641,7 +644,7 @@ mod tests {
             .expect_err("selected SSO profile must be loaded before cache lookup");
         assert_eq!(ErrorKind::ConfigInvalid, error.kind());
         assert_eq!(
-            "No valid SSO token found. Please run 'aws sso login' first",
+            "SSO token cache not found. Please run 'aws sso login' for the selected profile",
             error.to_string()
         );
 

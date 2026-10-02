@@ -16,18 +16,19 @@
 // under the License.
 
 use crate::Credential;
+use asyncband::mutex::Mutex;
 use http::{Method, Request, StatusCode};
 use ini::Ini;
-use log::{debug, warn};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 const AWS_SSO_ACCOUNT_ID: &str = "sso_account_id";
 const AWS_SSO_REGION: &str = "sso_region";
 const AWS_SSO_ROLE_NAME: &str = "sso_role_name";
 const AWS_SSO_START_URL: &str = "sso_start_url";
-#[allow(dead_code)]
 const AWS_SSO_SESSION_NAME: &str = "sso_session";
 
 /// SSO Credentials Provider
@@ -39,11 +40,29 @@ const AWS_SSO_SESSION_NAME: &str = "sso_session";
 /// SSO configuration is typically stored in ~/.aws/config under a profile:
 /// ```ini
 /// [profile my-sso-profile]
-/// sso_start_url = https://my-sso-portal.awsapps.com/start
-/// sso_region = us-east-1
+/// sso_session = my-session
 /// sso_account_id = 123456789012
 /// sso_role_name = MyRole
+///
+/// [sso-session my-session]
+/// sso_start_url = https://my-sso-portal.awsapps.com/start
+/// sso_region = us-east-1
 /// ```
+///
+/// Named sessions refresh expired access tokens using cached OIDC registration
+/// and refresh tokens. Refreshed material is kept in memory for this provider
+/// and its clones; independently constructed providers do not coordinate refreshes.
+/// The AWS CLI cache is read through `Context` and is never written. On restart,
+/// the on-disk registration and refresh token must still be usable. When an
+/// in-memory token expires, a newer disk token (for example after `aws sso login`)
+/// replaces it. Recreate the provider to discard its in-memory state immediately.
+///
+/// Legacy inline `sso_start_url` / `sso_region` profiles and configuration supplied
+/// directly through the setters remain non-refreshable. This provider never
+/// starts interactive login and does not resolve assume-role profile chains.
+/// When assembling a custom credential chain, use
+/// [`reqsign_core::ProvideCredentialChain::push_with_error_propagation`] to keep
+/// SSO failures from falling back to an unrelated identity.
 #[derive(Debug, Clone)]
 pub struct SSOCredentialProvider {
     profile: Option<String>,
@@ -52,6 +71,7 @@ pub struct SSOCredentialProvider {
     sso_role_name: Option<String>,
     sso_start_url: Option<String>,
     sso_endpoint: Option<String>, // Allow custom endpoint for testing
+    tokens: Arc<Mutex<HashMap<TokenKey, CachedToken>>>,
 }
 
 impl Default for SSOCredentialProvider {
@@ -70,6 +90,7 @@ impl SSOCredentialProvider {
             sso_role_name: None,
             sso_start_url: None,
             sso_endpoint: None,
+            tokens: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -109,7 +130,7 @@ impl SSOCredentialProvider {
         self
     }
 
-    async fn load_sso_config(&self, ctx: &Context) -> Result<SSOConfig> {
+    async fn load_sso_config(&self, ctx: &Context) -> Result<Option<SSOConfig>> {
         // If all fields are provided directly, use them
         if let (Some(account_id), Some(region), Some(role_name), Some(start_url)) = (
             &self.sso_account_id,
@@ -117,12 +138,14 @@ impl SSOCredentialProvider {
             &self.sso_role_name,
             &self.sso_start_url,
         ) {
-            return Ok(SSOConfig {
+            return Ok(Some(SSOConfig {
                 sso_account_id: account_id.clone(),
                 sso_region: region.clone(),
                 sso_role_name: role_name.clone(),
                 sso_start_url: start_url.clone(),
-            });
+                session_name: None,
+                config_path: None,
+            }));
         }
 
         // Otherwise, load from config file
@@ -135,7 +158,11 @@ impl SSOCredentialProvider {
         self.load_from_config_file(ctx, &profile_name).await
     }
 
-    async fn load_from_config_file(&self, ctx: &Context, profile: &str) -> Result<SSOConfig> {
+    async fn load_from_config_file(
+        &self,
+        ctx: &Context,
+        profile: &str,
+    ) -> Result<Option<SSOConfig>> {
         // Load AWS config file
         let config_path = ctx
             .env_var("AWS_CONFIG_FILE")
@@ -144,18 +171,19 @@ impl SSOCredentialProvider {
         let expanded_path = if config_path.starts_with("~/") {
             match ctx.expand_home_dir(&config_path) {
                 Some(expanded) => expanded,
-                None => return Err(Error::config_invalid("failed to expand home directory")),
+                None => return Ok(None),
             }
         } else {
             config_path
         };
 
-        let content = ctx.file_read(&expanded_path).await.map_err(|_| {
-            Error::config_invalid(format!("failed to read config file: {expanded_path}"))
-        })?;
+        let content = match ctx.file_read(&expanded_path).await {
+            Ok(content) => content,
+            Err(_) => return Ok(None),
+        };
 
         let conf = Ini::load_from_str(&String::from_utf8_lossy(&content))
-            .map_err(|e| Error::config_invalid(format!("failed to parse config file: {e}")))?;
+            .map_err(|_| Error::config_invalid("failed to parse AWS SSO config file"))?;
 
         let profile_section = if profile == "default" {
             profile.to_string()
@@ -163,73 +191,203 @@ impl SSOCredentialProvider {
             format!("profile {profile}")
         };
 
-        let section = conf.section(Some(profile_section)).ok_or_else(|| {
-            Error::config_invalid(format!("profile '{profile}' not found in config"))
-        })?;
+        let Some(section) = conf.section(Some(profile_section)) else {
+            return Ok(None);
+        };
+        if ![
+            AWS_SSO_ACCOUNT_ID,
+            AWS_SSO_REGION,
+            AWS_SSO_ROLE_NAME,
+            AWS_SSO_START_URL,
+            AWS_SSO_SESSION_NAME,
+        ]
+        .iter()
+        .any(|key| section.contains_key(key))
+        {
+            return Ok(None);
+        }
 
-        // Check if this profile has SSO configuration
-        let sso_account_id = section.get(AWS_SSO_ACCOUNT_ID).ok_or_else(|| {
-            Error::config_invalid(format!("missing {AWS_SSO_ACCOUNT_ID} in profile"))
-        })?;
-
-        let sso_region = section
-            .get(AWS_SSO_REGION)
-            .ok_or_else(|| Error::config_invalid(format!("missing {AWS_SSO_REGION} in profile")))?;
-
-        let sso_role_name = section.get(AWS_SSO_ROLE_NAME).ok_or_else(|| {
-            Error::config_invalid(format!("missing {AWS_SSO_ROLE_NAME} in profile"))
-        })?;
-
-        let sso_start_url = section.get(AWS_SSO_START_URL).ok_or_else(|| {
-            Error::config_invalid(format!("missing {AWS_SSO_START_URL} in profile"))
-        })?;
-
-        Ok(SSOConfig {
-            sso_account_id: sso_account_id.to_string(),
-            sso_region: sso_region.to_string(),
-            sso_role_name: sso_role_name.to_string(),
-            sso_start_url: sso_start_url.to_string(),
-        })
-    }
-
-    async fn find_cached_token(
-        &self,
-        ctx: &Context,
-        start_url: &str,
-    ) -> Result<Option<CachedToken>> {
-        // Get home directory and build cache path
-        let home_dir = ctx
-            .home_dir()
-            .ok_or_else(|| Error::config_invalid("HOME directory not found".to_string()))?;
-
-        let cache_dir = home_dir.join(".aws").join("sso").join("cache");
-
-        // Generate cache file name (SHA1 hash of start URL)
-        let cache_key = hex_sha1(start_url.as_bytes());
-        let cache_file = cache_dir.join(format!("{cache_key}.json"));
-
-        debug!("looking for SSO token cache at: {cache_file:?}");
-
-        match ctx.file_read(&cache_file.to_string_lossy()).await {
-            Ok(content) => {
-                let token: CachedToken = serde_json::from_slice(&content).map_err(|e| {
-                    Error::unexpected(format!("failed to parse SSO token cache: {e}"))
-                })?;
-
-                // Check if token is expired
-                let expires_at = token.expires_at.parse::<Timestamp>()?;
-                if expires_at <= Timestamp::now() {
-                    warn!("SSO token is expired");
-                    return Ok(None);
+        let required = |section: &ini::Properties, key: &str| -> Result<String> {
+            section
+                .get(key)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| Error::config_invalid(format!("missing {key} in SSO configuration")))
+        };
+        let session_name = section.get(AWS_SSO_SESSION_NAME).map(str::to_owned);
+        let session = match &session_name {
+            Some(name) => conf
+                .section(Some(format!("sso-session {name}")))
+                .ok_or_else(|| Error::config_invalid("referenced SSO session not found"))?,
+            None => section,
+        };
+        let region = required(session, AWS_SSO_REGION)?;
+        let start_url = required(session, AWS_SSO_START_URL)?;
+        if session_name.is_some() {
+            for (key, value) in [(AWS_SSO_REGION, &region), (AWS_SSO_START_URL, &start_url)] {
+                if section.get(key).is_some_and(|v| v != value) {
+                    return Err(Error::config_invalid(format!(
+                        "{key} conflicts with named SSO session"
+                    )));
                 }
-
-                Ok(Some(token))
-            }
-            Err(_) => {
-                debug!("SSO token cache not found");
-                Ok(None)
             }
         }
+        Ok(Some(SSOConfig {
+            sso_account_id: required(section, AWS_SSO_ACCOUNT_ID)?,
+            sso_region: region,
+            sso_role_name: required(section, AWS_SSO_ROLE_NAME)?,
+            sso_start_url: start_url,
+            session_name,
+            config_path: Some(expanded_path),
+        }))
+    }
+
+    async fn read_cached_token(ctx: &Context, path: &str) -> Result<Option<CachedToken>> {
+        match ctx.file_read(path).await {
+            Ok(content) => serde_json::from_slice(&content)
+                .map(Some)
+                .map_err(|_| login_required("invalid SSO token cache")),
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn access_token(
+        &self,
+        ctx: &Context,
+        config: &SSOConfig,
+        now: impl Fn() -> Timestamp + Send + Sync,
+    ) -> Result<String> {
+        let key = config.token_key(ctx)?;
+        if config.session_name.is_none() {
+            let token = Self::read_cached_token(ctx, &key.path)
+                .await?
+                .ok_or_else(|| login_required("SSO token cache not found"))?;
+            return if token.is_valid_at(now())? {
+                Ok(token.access_token)
+            } else {
+                Err(login_required("legacy SSO token has expired"))
+            };
+        }
+
+        // Hold the provider lock across refresh so clones cannot exchange the
+        // same refresh token concurrently, including when the service rotates it.
+        let mut tokens = self.tokens.lock().await;
+        if let Some(token) = tokens.get(&key) {
+            if token.is_valid_at(now())? {
+                return Ok(token.access_token.clone());
+            }
+        }
+        if let Some(disk) = Self::read_cached_token(ctx, &key.path).await? {
+            let replace = match tokens.get(&key) {
+                Some(current) => disk.expiration()? > current.expiration()?,
+                None => true,
+            };
+            if replace {
+                tokens.insert(key.clone(), disk);
+            }
+        }
+        let token = tokens
+            .get_mut(&key)
+            .ok_or_else(|| login_required("SSO token cache not found"))?;
+        if !token.is_valid_at(now())? {
+            self.refresh_token(ctx, config, token, &now).await?;
+        }
+        if !token.is_valid_at(now())? {
+            return Err(login_required("refreshed SSO access token has expired"));
+        }
+        Ok(token.access_token.clone())
+    }
+
+    async fn refresh_token(
+        &self,
+        ctx: &Context,
+        config: &SSOConfig,
+        token: &mut CachedToken,
+        now: impl Fn() -> Timestamp + Send + Sync,
+    ) -> Result<()> {
+        let required = |value: &Option<String>| {
+            value
+                .as_ref()
+                .filter(|v| !v.is_empty())
+                .cloned()
+                .ok_or_else(|| login_required("SSO refresh material is missing"))
+        };
+        let registration_expiry = required(&token.registration_expires_at)?
+            .parse::<Timestamp>()
+            .map_err(|_| login_required("invalid SSO registration expiration"))?;
+        let started = now();
+        if registration_expiry <= started {
+            return Err(login_required("SSO client registration has expired"));
+        }
+        let body = serde_json::json!({
+            "grantType": "refresh_token",
+            "clientId": required(&token.client_id)?,
+            "clientSecret": required(&token.client_secret)?,
+            "refreshToken": required(&token.refresh_token)?,
+        });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(format!(
+                "https://oidc.{}.amazonaws.com/token",
+                config.sso_region
+            ))
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(bytes::Bytes::from(body.to_string()))
+            .map_err(|_| Error::config_invalid("failed to build SSO refresh request"))?;
+        // HTTP adapters and server error bodies can contain the submitted secrets.
+        let response = ctx.http_send(req).await.map_err(|_| {
+            Error::unexpected("SSO token refresh transport failed").set_retryable(true)
+        })?;
+        if response.status() != StatusCode::OK {
+            let status = response.status();
+            if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
+                return Err(
+                    Error::unexpected(format!("SSO token refresh returned {status}"))
+                        .set_retryable(true),
+                );
+            }
+            return Err(login_required(&format!(
+                "SSO token refresh rejected ({status})"
+            )));
+        }
+        let refreshed: RefreshResponse = serde_json::from_slice(response.body())
+            .map_err(|_| login_required("invalid SSO token refresh response"))?;
+        if refreshed.access_token.is_empty()
+            || refreshed.expires_in <= 0
+            || refreshed
+                .refresh_token
+                .as_ref()
+                .is_some_and(|v| v.is_empty())
+        {
+            return Err(login_required("invalid SSO token refresh response"));
+        }
+        let expires_at = started
+            .as_second()
+            .checked_add(refreshed.expires_in)
+            .and_then(|seconds| Timestamp::from_second(seconds).ok())
+            .ok_or_else(|| login_required("invalid SSO token expiration"))?;
+        // Commit the complete response before attempting GetRoleCredentials. Its
+        // failure must not lose a rotated refresh token or extend token lifetime.
+        token.access_token = refreshed.access_token;
+        token.expires_at = expires_at.to_string();
+        if let Some(refresh_token) = refreshed.refresh_token {
+            token.refresh_token = Some(refresh_token);
+        }
+        Ok(())
+    }
+
+    async fn provide_with_clock(
+        &self,
+        ctx: &Context,
+        now: impl Fn() -> Timestamp + Send + Sync,
+    ) -> Result<Option<Credential>> {
+        let Some(config) = self.load_sso_config(ctx).await? else {
+            return Ok(None);
+        };
+        let token = self.access_token(ctx, &config, now).await?;
+        self.get_role_credentials(ctx, &config, &token)
+            .await
+            .map(Some)
     }
 
     async fn get_role_credentials(
@@ -258,17 +416,20 @@ impl SSOCredentialProvider {
 
         let url = format!("{endpoint}?{params}");
 
+        let mut bearer = http::HeaderValue::from_str(access_token)
+            .map_err(|_| login_required("invalid SSO access token"))?;
+        bearer.set_sensitive(true);
         let req = Request::builder()
             .method(Method::GET)
             .uri(&url)
-            .header("x-amz-sso_bearer_token", access_token)
+            .header("x-amz-sso_bearer_token", bearer)
             .body(bytes::Bytes::new())
             .map_err(|e| Error::unexpected(format!("failed to build request: {e}")))?;
 
         let resp = ctx
             .http_send(req)
             .await
-            .map_err(|e| Error::unexpected(format!("failed to fetch SSO credentials: {e}")))?;
+            .map_err(|_| Error::unexpected("failed to fetch SSO credentials"))?;
 
         if resp.status() != StatusCode::OK {
             return Err(Error::unexpected(format!(
@@ -279,7 +440,7 @@ impl SSOCredentialProvider {
 
         let body = resp.into_body();
         let creds: SSOCredentialResponse = serde_json::from_slice(&body)
-            .map_err(|e| Error::unexpected(format!("failed to parse SSO credentials: {e}")))?;
+            .map_err(|_| Error::unexpected("failed to parse SSO credentials"))?;
 
         let role_creds = creds.role_credentials;
         let expires_in = Timestamp::from_millisecond(role_creds.expiration)
@@ -300,14 +461,81 @@ struct SSOConfig {
     sso_region: String,
     sso_role_name: String,
     sso_start_url: String,
+    session_name: Option<String>,
+    config_path: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TokenKey {
+    path: String,
+    config_path: Option<String>,
+    session_name: Option<String>,
+    start_url: String,
+    region: String,
+}
+
+impl SSOConfig {
+    fn token_key(&self, ctx: &Context) -> Result<TokenKey> {
+        let home = ctx
+            .home_dir()
+            .ok_or_else(|| Error::config_invalid("HOME directory not found"))?;
+        let name = self.session_name.as_deref().unwrap_or(&self.sso_start_url);
+        let path = home
+            .join(".aws")
+            .join("sso")
+            .join("cache")
+            .join(format!("{}.json", hex_sha1(name.as_bytes())));
+        Ok(TokenKey {
+            path: path.to_string_lossy().into_owned(),
+            config_path: self.config_path.clone(),
+            session_name: self.session_name.clone(),
+            start_url: self.sso_start_url.clone(),
+            region: self.sso_region.clone(),
+        })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CachedToken {
-    #[serde(rename = "accessToken")]
     access_token: String,
-    #[serde(rename = "expiresAt")]
     expires_at: String,
+    refresh_token: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    registration_expires_at: Option<String>,
+}
+
+impl std::fmt::Debug for CachedToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedToken").finish_non_exhaustive()
+    }
+}
+
+impl CachedToken {
+    fn expiration(&self) -> Result<Timestamp> {
+        self.expires_at
+            .parse()
+            .map_err(|_| login_required("invalid SSO token expiration"))
+    }
+
+    fn is_valid_at(&self, now: Timestamp) -> Result<bool> {
+        Ok(!self.access_token.is_empty() && self.expiration()? > now)
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RefreshResponse {
+    access_token: String,
+    expires_in: i64,
+    refresh_token: Option<String>,
+}
+
+fn login_required(reason: &str) -> Error {
+    Error::config_invalid(format!(
+        "{reason}. Please run 'aws sso login' for the selected profile"
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -328,35 +556,7 @@ impl ProvideCredential for SSOCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        let config = match self.load_sso_config(ctx).await {
-            Ok(c) => c,
-            Err(_) => {
-                debug!("SSO configuration not found");
-                return Ok(None);
-            }
-        };
-
-        debug!(
-            "SSO config loaded: account={}, role={}",
-            config.sso_account_id, config.sso_role_name
-        );
-
-        // Find cached SSO token
-        let token = self
-            .find_cached_token(ctx, &config.sso_start_url)
-            .await?
-            .ok_or_else(|| {
-                Error::config_invalid(
-                    "No valid SSO token found. Please run 'aws sso login' first".to_string(),
-                )
-            })?;
-
-        // Exchange token for role credentials
-        let creds = self
-            .get_role_credentials(ctx, &config, &token.access_token)
-            .await?;
-
-        Ok(Some(creds))
+        self.provide_with_clock(ctx, Timestamp::now).await
     }
 }
 
@@ -369,32 +569,4 @@ fn hex_sha1(data: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use reqsign_core::StaticEnv;
-    use reqsign_file_read_tokio::TokioFileRead;
-    use reqsign_http_send_reqwest::ReqwestHttpSend;
-    use std::collections::HashMap;
-
-    #[tokio::test]
-    async fn test_sso_provider_no_config() {
-        let ctx = Context::new()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default());
-        let ctx = ctx.with_env(StaticEnv {
-            home_dir: Some(std::path::PathBuf::from("/home/test")),
-            envs: HashMap::new(),
-        });
-
-        let provider = SSOCredentialProvider::new();
-        let result = provider.provide_credential(&ctx).await.unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_sha1_hash() {
-        let url = "https://my-sso-portal.awsapps.com/start";
-        let hash = hex_sha1(url.as_bytes());
-        assert_eq!(hash.len(), 40); // SHA1 produces 40 hex characters
-    }
-}
+mod tests;
