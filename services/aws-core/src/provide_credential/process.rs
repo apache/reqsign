@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::Credential;
-use ini::Ini;
 use log::debug;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
@@ -84,42 +83,17 @@ impl ProcessCredentialProvider {
         }
 
         // Otherwise, load from config file
-        // Priority: 1. self.profile, 2. AWS_PROFILE env var, 3. "default"
-        let profile_name = self
-            .profile
-            .clone()
-            .or_else(|| ctx.env_var("AWS_PROFILE"))
-            .unwrap_or_else(|| "default".to_string());
+        let mut shared = crate::SharedConfig::new();
+        if let Some(profile) = &self.profile {
+            shared = shared.with_profile(profile);
+        }
+        let profile_name = shared.profile_name(ctx);
         self.load_command_from_config(ctx, &profile_name).await
     }
 
     async fn load_command_from_config(&self, ctx: &Context, profile: &str) -> Result<String> {
-        // Load AWS config file
-        let config_path = ctx
-            .env_var("AWS_CONFIG_FILE")
-            .unwrap_or_else(|| "~/.aws/config".to_string());
-
-        let expanded_path = if config_path.starts_with("~/") {
-            match ctx.expand_home_dir(&config_path) {
-                Some(expanded) => expanded,
-                None => return Err(Error::config_invalid("failed to expand home directory")),
-            }
-        } else {
-            config_path
-        };
-
-        let content = ctx.file_read(&expanded_path).await.map_err(|_| {
-            Error::config_invalid(format!("failed to read config file: {expanded_path}"))
-        })?;
-
-        let conf = Ini::load_from_str(&String::from_utf8_lossy(&content))
-            .map_err(|e| Error::config_invalid(format!("failed to parse config file: {e}")))?;
-
-        let profile_section = if profile == "default" {
-            profile.to_string()
-        } else {
-            format!("profile {profile}")
-        };
+        let conf = crate::SharedConfig::new().load_config_file(ctx).await?;
+        let profile_section = crate::config::config_section(profile);
 
         let section = conf.section(Some(profile_section)).ok_or_else(|| {
             Error::config_invalid(format!("profile '{profile}' not found in config"))
