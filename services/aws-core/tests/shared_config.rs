@@ -480,3 +480,36 @@ async fn metadata_tokens_are_reused_only_for_the_same_endpoint() -> Result<()> {
     assert_eq!(requests[3], "http://other.invalid/latest/api/token");
     Ok(())
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn sharing_config_loading_preserves_existing_process_invocation() -> Result<()> {
+    use reqsign_core::{CommandExecute, CommandOutput, ProvideCredential};
+    #[derive(Debug)]
+    struct Command;
+    impl CommandExecute for Command {
+        async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
+            assert_eq!(program, "helper");
+            assert_eq!(args, ["--profile", "selected"]);
+            Ok(CommandOutput {
+                status: 0,
+                stdout: br#"{"Version":1,"AccessKeyId":"key","SecretAccessKey":"secret"}"#.to_vec(),
+                stderr: vec![],
+            })
+        }
+    }
+    let ctx = context(
+        &[(
+            "/config",
+            "[profile selected]\ncredential_process = \"helper\" --profile selected\n",
+        )],
+        &[("AWS_PROFILE", "selected"), ("AWS_CONFIG_FILE", "/config")],
+    )
+    .with_command_execute(Command);
+    let credential = reqsign_aws_core::ProcessCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await?
+        .unwrap();
+    assert_eq!(credential.access_key_id, "key");
+    Ok(())
+}

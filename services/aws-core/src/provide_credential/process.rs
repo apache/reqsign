@@ -92,7 +92,11 @@ impl ProcessCredentialProvider {
     }
 
     async fn load_command_from_config(&self, ctx: &Context, profile: &str) -> Result<String> {
-        let conf = crate::SharedConfig::new().load_config_file(ctx).await?;
+        // The current command tokenizer relies on INI quote handling. Preserve that
+        // interpretation when sharing file loading with other profile consumers.
+        let conf = crate::SharedConfig::new()
+            .load_config_file_with_options(ctx, ini::ParseOption::default())
+            .await?;
         let profile_section = crate::config::config_section(profile);
 
         let section = conf.section(Some(profile_section)).ok_or_else(|| {
