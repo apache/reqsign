@@ -37,7 +37,8 @@ run_id="$(
   gh api --method POST \
     -H 'X-GitHub-Api-Version: 2026-03-10' \
     "repos/${repo}/actions/workflows/${workflow}/dispatches" \
-    -f ref=main |
+    -f ref=main \
+    -F return_run_details=true |
     jq -er '.workflow_run_id'
 )"
 run_head_sha="$(gh run view "${run_id}" --repo "${repo}" --json headSha --jq '.headSha')"
