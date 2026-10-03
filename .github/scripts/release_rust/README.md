@@ -5,7 +5,8 @@ These scripts define and publish the crates.io package set for Apache Reqsign.
 ## Publish plan
 
 `plan.py` reads `cargo metadata --no-deps`, selects workspace packages that can
-publish to crates.io, and orders them by non-dev local dependencies.
+publish to crates.io, and orders them by non-dev local dependencies using
+Python's `TopologicalSorter`.
 
 ```bash
 python3 .github/scripts/release_rust/plan.py
@@ -43,9 +44,8 @@ Trusted Publishing cannot create the first version of a crate.
   ownership or the exact Trusted Publisher because those APIs require
   authentication.
 
-The protected `rust-bootstrap` workflow always runs the authenticated audit,
-including when discovery finds no missing names. It never changes an
-established crate. Existing crates must be migrated independently before the
+The protected `rust-bootstrap` job audits the complete plan before any write,
+including when no names are missing. It never changes an established crate. Existing crates must be migrated independently before the
 workflow can succeed.
 
 Published crate metadata may still reference the former repository URL or the
@@ -55,6 +55,15 @@ New placeholders and releases use the current project name and repository URL.
 
 Version `0.0.0` is an irreversible namespace reservation. It is not an ASF
 software release and contains no implementation.
+
+The local dispatch helper uses GitHub REST API version `2026-03-10` to obtain
+the exact workflow run ID, then checks its commit and waits for completion.
+
+These are repository-specific scripts: run them with normal Python (without
+`-O` or `PYTHONOPTIMIZE`, which disable assertions). Cargo and crates.io response
+fields are used directly; unexpected package or publisher state fails an
+assertion. Failed API requests stop the run; rerun after resolving the failure.
+Only Cargo publish rate limits and public metadata propagation are retried.
 
 ## Tests
 
