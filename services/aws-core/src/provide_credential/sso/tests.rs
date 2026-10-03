@@ -332,6 +332,10 @@ async fn rejected_or_malformed_refresh_never_uses_expired_token_or_leaks_secrets
         ),
         (401, json!({"error": "invalid_client"})),
         (
+            400,
+            json!({"error": "client-secret", "error_description": "new-secret"}),
+        ),
+        (
             200,
             json!({"accessToken": "new-secret", "expiresIn": "client-secret"}),
         ),
@@ -557,4 +561,103 @@ async fn newer_login_cache_replaces_expired_in_memory_token() {
         http.requests.lock().unwrap()[2].headers()["x-amz-sso_bearer_token"],
         "new-login"
     );
+}
+
+#[derive(Debug, Default)]
+struct ProcessCommand(std::sync::atomic::AtomicUsize);
+
+impl reqsign_core::CommandExecute for ProcessCommand {
+    async fn command_execute(
+        &self,
+        program: &str,
+        args: &[&str],
+    ) -> Result<reqsign_core::CommandOutput> {
+        assert_eq!(program, "helper");
+        assert!(args.is_empty());
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(reqsign_core::CommandOutput {
+            status: 0,
+            stdout:
+                br#"{"Version":1,"AccessKeyId":"process-key","SecretAccessKey":"process-secret"}"#
+                    .to_vec(),
+            stderr: vec![],
+        })
+    }
+}
+
+#[tokio::test]
+async fn default_chain_preserves_literal_config_and_selected_sso_errors() {
+    for command in [
+        r"helper --certificate C:\x509\certificate.pem",
+        r#"helper --argument "unterminated"#,
+    ] {
+        for selected_sso in [false, true] {
+            let (ctx, files, http) = fixture(cached("2099-01-01T00:00:00Z"));
+            let sso = if selected_sso {
+                "sso_session = missing\n"
+            } else {
+                ""
+            };
+            files.put("/config", format!(
+                "[default]\nregion = us-east-1\n{sso}\n[profile unselected]\ncredential_process = {command}\n"
+            ));
+            let process = Arc::new(ProcessCommand::default());
+            let ctx = ctx.with_command_execute(process.clone());
+            let provider = crate::DefaultCredentialProvider::builder()
+                .no_env()
+                .no_profile()
+                .no_web_identity()
+                .no_ecs()
+                .no_imds()
+                .process(crate::ProcessCredentialProvider::new().with_command("helper"))
+                .with_profile("default")
+                .build();
+            let result = provider.provide_credential(&ctx).await;
+            if selected_sso {
+                let error = result.unwrap_err();
+                assert_eq!(error.kind(), reqsign_core::ErrorKind::ConfigInvalid);
+                assert_eq!(error.to_string(), "referenced SSO session not found");
+                assert_eq!(process.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+            } else {
+                assert_eq!(result.unwrap().unwrap().access_key_id, "process-key");
+                assert_eq!(process.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+            }
+            assert_eq!(http.count(), 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn refresh_throttling_preserves_material_for_retry() {
+    for status in [400, 429] {
+        let (ctx, _, http) = fixture(cached("2025-01-01T00:00:00Z"));
+        http.reply(
+            status,
+            json!({
+                "error": "slow_down", "error_description": "client-secret original-refresh-secret"
+            }),
+        );
+        let provider = SSOCredentialProvider::new();
+        let error = provider
+            .provide_with_clock(&ctx, timestamp)
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), reqsign_core::ErrorKind::RateLimited);
+        assert!(error.is_retryable());
+        assert!(!error.to_string().contains("aws sso login"));
+        for secret in ["client-secret", "original-refresh-secret"] {
+            assert!(!format!("{error:?}").contains(secret));
+        }
+        assert_eq!(http.count(), 1);
+        http.refresh("new-access", Some("rotated-refresh"));
+        http.role();
+        provider.provide_with_clock(&ctx, timestamp).await.unwrap();
+        let requests = http.requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[0].body(), requests[1].body());
+        assert_eq!(
+            requests[2].headers()["x-amz-sso_bearer_token"],
+            "new-access"
+        );
+    }
 }

@@ -18,7 +18,7 @@
 use crate::Credential;
 use asyncband::mutex::Mutex;
 use http::{Method, Request, StatusCode};
-use ini::Ini;
+use ini::{Ini, ParseOption};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
@@ -182,8 +182,16 @@ impl SSOCredentialProvider {
             Err(_) => return Ok(None),
         };
 
-        let conf = Ini::load_from_str(&String::from_utf8_lossy(&content))
-            .map_err(|_| Error::config_invalid("failed to parse AWS SSO config file"))?;
+        // AWS config values are literal, including commands in unselected profiles.
+        let conf = Ini::load_from_str_opt(
+            &String::from_utf8_lossy(&content),
+            ParseOption {
+                enabled_quote: false,
+                enabled_escape: false,
+                ..Default::default()
+            },
+        )
+        .map_err(|_| Error::config_invalid("failed to parse AWS SSO config file"))?;
 
         let profile_section = if profile == "default" {
             profile.to_string()
@@ -340,7 +348,15 @@ impl SSOCredentialProvider {
         })?;
         if response.status() != StatusCode::OK {
             let status = response.status();
-            if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
+            // CreateToken also reports throttling as HTTP 400. Only recognize
+            // the allowlisted code; never retain or expose the error description.
+            let slow_down = status == StatusCode::BAD_REQUEST
+                && serde_json::from_slice::<RefreshError>(response.body())
+                    .is_ok_and(|error| matches!(error.error, RefreshErrorCode::SlowDown));
+            if status == StatusCode::TOO_MANY_REQUESTS || slow_down {
+                return Err(Error::rate_limited("SSO token refresh was throttled"));
+            }
+            if status.is_server_error() {
                 return Err(
                     Error::unexpected(format!("SSO token refresh returned {status}"))
                         .set_retryable(true),
@@ -522,6 +538,19 @@ impl CachedToken {
     fn is_valid_at(&self, now: Timestamp) -> Result<bool> {
         Ok(!self.access_token.is_empty() && self.expiration()? > now)
     }
+}
+
+#[derive(Deserialize)]
+struct RefreshError {
+    error: RefreshErrorCode,
+}
+
+#[derive(Deserialize)]
+enum RefreshErrorCode {
+    #[serde(rename = "slow_down")]
+    SlowDown,
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Deserialize)]
