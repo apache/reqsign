@@ -373,7 +373,8 @@ where
 ///
 /// This is a generic implementation that can be used by any service to chain multiple
 /// credential providers together. The chain will try each provider in order until one
-/// returns credentials or all providers have been exhausted.
+/// returns credentials or all providers have been exhausted. Errors are skipped
+/// unless a provider was added with [`Self::push_with_error_propagation`].
 ///
 /// # Example
 ///
@@ -405,7 +406,12 @@ where
 /// # }
 /// ```
 pub struct ProvideCredentialChain<C> {
-    providers: Vec<Box<dyn ProvideCredentialDyn<Credential = C>>>,
+    providers: Vec<CredentialProviderEntry<C>>,
+}
+
+struct CredentialProviderEntry<C> {
+    provider: Box<dyn ProvideCredentialDyn<Credential = C>>,
+    propagate_error: bool,
 }
 
 impl<C> ProvideCredentialChain<C>
@@ -421,7 +427,27 @@ where
 
     /// Add a credential provider to the chain.
     pub fn push(mut self, provider: impl ProvideCredential<Credential = C> + 'static) -> Self {
-        self.providers.push(Box::new(provider));
+        self.providers.push(CredentialProviderEntry {
+            provider: Box::new(provider),
+            propagate_error: false,
+        });
+        self
+    }
+
+    /// Add a provider whose errors stop credential resolution.
+    ///
+    /// `Ok(None)` still tries the next provider. Use this when a configured
+    /// identity must not silently fall back to another identity on failure.
+    /// Providers added with [`Self::push`], [`Self::push_front`], or
+    /// [`Self::from_vec`] retain their fallback-on-error behavior.
+    pub fn push_with_error_propagation(
+        mut self,
+        provider: impl ProvideCredential<Credential = C> + 'static,
+    ) -> Self {
+        self.providers.push(CredentialProviderEntry {
+            provider: Box::new(provider),
+            propagate_error: true,
+        });
         self
     }
 
@@ -432,13 +458,27 @@ where
         mut self,
         provider: impl ProvideCredential<Credential = C> + 'static,
     ) -> Self {
-        self.providers.insert(0, Box::new(provider));
+        self.providers.insert(
+            0,
+            CredentialProviderEntry {
+                provider: Box::new(provider),
+                propagate_error: false,
+            },
+        );
         self
     }
 
     /// Create a credential provider chain from a vector of providers.
     pub fn from_vec(providers: Vec<Box<dyn ProvideCredentialDyn<Credential = C>>>) -> Self {
-        Self { providers }
+        Self {
+            providers: providers
+                .into_iter()
+                .map(|provider| CredentialProviderEntry {
+                    provider,
+                    propagate_error: false,
+                })
+                .collect(),
+        }
     }
 
     /// Get the number of providers in the chain.
@@ -479,7 +519,8 @@ where
     type Credential = C;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        for provider in &self.providers {
+        for entry in &self.providers {
+            let provider = &entry.provider;
             log::debug!("Trying credential provider: {provider:?}");
 
             match provider.provide_credential_dyn(ctx).await {
@@ -492,6 +533,9 @@ where
                     continue;
                 }
                 Err(e) => {
+                    if entry.propagate_error {
+                        return Err(e);
+                    }
                     log::warn!("Error loading credential from provider {provider:?}: {e:?}");
                     // Continue to next provider on error
                     continue;
@@ -506,6 +550,52 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct ChainResult(Result<Option<u8>>);
+
+    impl ProvideCredential for ChainResult {
+        type Credential = u8;
+
+        async fn provide_credential(&self, _: &Context) -> Result<Option<u8>> {
+            match &self.0 {
+                Ok(value) => Ok(*value),
+                Err(_) => Err(crate::Error::credential_invalid(
+                    "selected identity expired",
+                )),
+            }
+        }
+    }
+
+    #[test]
+    fn chain_error_propagation_is_opt_in_and_absence_still_falls_through() {
+        futures::executor::block_on(async {
+            let failure = || ChainResult(Err(crate::Error::credential_invalid("expired")));
+            let fallback = || ChainResult(Ok(Some(42)));
+            let ctx = Context::new();
+            let ordinary = ProvideCredentialChain::new()
+                .push(failure())
+                .push(fallback());
+            assert_eq!(ordinary.provide_credential(&ctx).await.unwrap(), Some(42));
+
+            let selected = ProvideCredentialChain::new()
+                .push_with_error_propagation(failure())
+                .push(fallback());
+            let error = selected.provide_credential(&ctx).await.unwrap_err();
+            assert_eq!(error.kind(), crate::ErrorKind::CredentialInvalid);
+            assert_eq!(error.to_string(), "selected identity expired");
+
+            let absent = ProvideCredentialChain::new()
+                .push_with_error_propagation(ChainResult(Ok(None)))
+                .push(fallback());
+            assert_eq!(absent.provide_credential(&ctx).await.unwrap(), Some(42));
+
+            let present = ProvideCredentialChain::new()
+                .push_with_error_propagation(fallback())
+                .push_with_error_propagation(failure());
+            assert_eq!(present.provide_credential(&ctx).await.unwrap(), Some(42));
+        });
+    }
 
     #[derive(Clone, Debug)]
     struct ExactCredential {

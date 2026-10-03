@@ -27,6 +27,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+asyncband = { workspace = true }
 bytes = { workspace = true }
 form_urlencoded = { workspace = true }
 hex = { workspace = true }
