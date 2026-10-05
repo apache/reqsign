@@ -15,487 +15,161 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import argparse
-import io
 import subprocess
 import tempfile
-import tomllib
 import unittest
-import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from bootstrap import CratesIoClient
-from bootstrap import LEGACY_PLACEHOLDER_DESCRIPTION
-from bootstrap import LEGACY_REPOSITORY
-from bootstrap import PLACEHOLDER_DESCRIPTION
-from bootstrap import PLACEHOLDER_VERSION
-from bootstrap import PUBLISHER
-from bootstrap import PROJECT_DIR
-from bootstrap import REPOSITORY
-from bootstrap import PlannedCrate
-from bootstrap import ReconcileResult
-from bootstrap import _placeholder_manifest
-from bootstrap import discover
-from bootstrap import preflight_authenticated
-from bootstrap import reconcile_crate
-from bootstrap import run_apply
-from bootstrap import verify_authenticated
-from bootstrap import write_placeholder_package
+from bootstrap import (
+    LEGACY_PLACEHOLDER_DESCRIPTION,
+    LEGACY_REPOSITORY,
+    PLACEHOLDER_DESCRIPTION,
+    PUBLISHER,
+    REPOSITORY,
+    apply,
+    write_placeholder_package,
+)
 
 
-def metadata(name: str, *, version: str = "1.0.0", trustpub_only: bool = False):
+def metadata(name, version="1.0.0", *, ready=True):
     return {
         "id": name,
         "max_version": version,
         "repository": REPOSITORY,
-        "description": (
-            PLACEHOLDER_DESCRIPTION
-            if version == PLACEHOLDER_VERSION
-            else "An Apache Reqsign crate"
-        ),
-        "trustpub_only": trustpub_only,
+        "description": PLACEHOLDER_DESCRIPTION,
+        "trustpub_only": ready,
     }
 
 
-def expected_config(name: str):
+def publisher(name):
     return {"crate": name, **PUBLISHER}
 
 
-class FakeClient:
-    def __init__(self, name: str, krate=None, configs=None):
-        self.name = name
-        self.krate = krate
-        self.configs = list(configs or [])
-        self.created_configs = 0
-        self.restricted = 0
+class FakeRegistry:
+    token = "bootstrap-token"
 
-    def get_crate(self, name: str):
-        self._assert_name(name)
-        return None if self.krate is None else dict(self.krate)
+    def __init__(self, crates, configs):
+        self.crates = crates
+        self.configs = configs
+        self.writes = []
 
-    def get_version(self, name: str, version: str):
-        self._assert_name(name)
-        return {"num": version}
+    def get_crate(self, name):
+        crate = self.crates.get(name)
+        return dict(crate) if crate else None
 
-    def list_github_configs(self, name: str):
-        self._assert_name(name)
-        return [dict(config) for config in self.configs]
+    def list_github_configs(self, name):
+        return self.configs.get(name, [])
 
-    def create_github_config(self, name: str):
-        self._assert_name(name)
-        config = expected_config(name)
-        self.configs.append(config)
-        self.created_configs += 1
-        return dict(config)
+    def create_github_config(self, name):
+        self.writes.append(("publisher", name))
+        config = publisher(name)
+        self.configs[name] = [config]
+        return config
 
-    def set_trustpub_only(self, name: str):
-        self._assert_name(name)
-        self.krate["trustpub_only"] = True
-        self.restricted += 1
-        return dict(self.krate)
-
-    def _assert_name(self, name: str):
-        if name != self.name:
-            raise AssertionError(f"expected {self.name}, got {name}")
-
-
-class JsonResponse(io.BytesIO):
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self.close()
+    def set_trustpub_only(self, name):
+        self.writes.append(("restrict", name))
+        self.crates[name]["trustpub_only"] = True
+        return self.get_crate(name)
 
 
 class BootstrapTest(unittest.TestCase):
-    def test_bootstrap_workflow_is_input_free_and_always_protected(self):
-        workflow = (
-            PROJECT_DIR / ".github/workflows/bootstrap_rust_crates.yml"
-        ).read_text(encoding="utf-8")
-        dispatch = workflow.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
+    def test_entire_plan_is_checked_before_any_write(self):
+        for invalid in (
+            "repository",
+            "publisher",
+            "multiple publishers",
+            "trustpub_only",
+        ):
+            with self.subTest(invalid=invalid):
+                crate = metadata("established")
+                configs = [publisher("established")]
+                if invalid == "repository":
+                    crate["repository"] = "https://github.com/other/reqsign"
+                elif invalid == "publisher":
+                    configs[0]["repository_name"] = "opendal-reqsign"
+                elif invalid == "multiple publishers":
+                    configs.append(publisher("established"))
+                else:
+                    crate["trustpub_only"] = False
+                registry = FakeRegistry(
+                    {"established": crate}, {"established": configs}
+                )
+                with (
+                    mock.patch("bootstrap.publish_placeholder") as publish,
+                    self.assertRaises(AssertionError),
+                ):
+                    apply(["missing", "established"], registry)
+                publish.assert_not_called()
+                self.assertEqual(registry.writes, [])
 
-        self.assertEqual(dispatch, "  workflow_dispatch:\n")
-        self.assertIn("    environment: rust-bootstrap\n", workflow)
-        self.assertNotIn("candidate_count", workflow)
-
-    def test_publisher_matches_the_release_workflow(self):
-        workflow = (PROJECT_DIR / ".github/workflows/release.yml").read_text(
-            encoding="utf-8"
+    def test_bootstrap_resumes_partial_placeholders_and_is_safe_to_repeat(self):
+        crates = {
+            "partial": metadata("partial", "0.0.0", ready=False),
+            "configured": metadata("configured", "0.0.0", ready=False),
+            "ready": metadata("ready", "0.0.0"),
+            "established": metadata("established"),
+        }
+        crates["partial"]["description"] = LEGACY_PLACEHOLDER_DESCRIPTION
+        crates["established"]["repository"] = LEGACY_REPOSITORY
+        registry = FakeRegistry(
+            crates,
+            {
+                name: [publisher(name)]
+                for name in ("configured", "ready", "established")
+            },
         )
-        publish_job = workflow.split("\n  publish:\n", 1)[1]
+        published = []
 
-        self.assertEqual(PUBLISHER["workflow_filename"], "release.yml")
-        self.assertEqual(PUBLISHER["repository_owner"], "apache")
-        self.assertEqual(PUBLISHER["repository_name"], "reqsign")
-        self.assertEqual(PUBLISHER["environment"], "release")
-        self.assertIn("    environment: release\n", publish_job)
-        self.assertIn("github.event_name == 'push'", publish_job)
-        self.assertIn("!contains(github.ref, '-')", publish_job)
-        self.assertIn("      id-token: write\n", publish_job)
-        self.assertNotIn("secrets.CARGO_REGISTRY_TOKEN", publish_job)
-        self.assertNotIn("CARGO_REGISTRY_BOOTSTRAP_TOKEN", workflow)
+        def publish(name, token):
+            published.append(name)
+            registry.crates[name] = metadata(name, "0.0.0", ready=False)
 
-    def test_placeholder_manifest_is_dependency_free(self):
-        manifest = tomllib.loads(_placeholder_manifest("reqsign-new"))
+        names = ["missing", *crates]
+        with mock.patch("bootstrap.publish_placeholder", publish):
+            apply(names, registry)
+            apply(names, registry)
+        self.assertEqual(published, ["missing"])
+        self.assertEqual(
+            registry.writes,
+            [
+                ("publisher", "missing"),
+                ("restrict", "missing"),
+                ("publisher", "partial"),
+                ("restrict", "partial"),
+                ("restrict", "configured"),
+            ],
+        )
 
-        self.assertEqual(manifest["package"]["name"], "reqsign-new")
-        self.assertEqual(manifest["package"]["version"], PLACEHOLDER_VERSION)
-        self.assertNotIn("dependencies", manifest)
-        self.assertNotIn("dev-dependencies", manifest)
-        self.assertNotIn("build-dependencies", manifest)
+    def test_crate_that_becomes_established_after_audit_is_not_modified(self):
+        registry = FakeRegistry({}, {})
+        with (
+            mock.patch.object(
+                registry, "get_crate", side_effect=[None, metadata("new")]
+            ),
+            mock.patch("bootstrap.publish_placeholder") as publish,
+            self.assertRaisesRegex(AssertionError, "established crate"),
+        ):
+            apply(["new"], registry)
+        publish.assert_not_called()
+        self.assertEqual(registry.writes, [])
 
-    def test_placeholder_can_be_packaged_offline(self):
-        planned = PlannedCrate("reqsign-new", "services/new")
+    def test_placeholder_can_be_packaged_and_built_offline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             package_dir = Path(tmpdir)
-            write_placeholder_package(PROJECT_DIR, planned, package_dir)
-
+            write_placeholder_package("reqsign-new", package_dir)
             process = subprocess.run(
-                [
-                    "cargo",
-                    "package",
-                    "--manifest-path",
-                    str(package_dir / "Cargo.toml"),
-                    "--no-verify",
-                    "--offline",
-                ],
+                ["cargo", "package", "--offline"],
+                cwd=package_dir,
                 check=False,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
-
             self.assertEqual(process.returncode, 0, process.stdout)
             self.assertTrue(
-                (
-                    package_dir
-                    / "target"
-                    / "package"
-                    / f"{planned.name}-{PLACEHOLDER_VERSION}.crate"
-                ).is_file()
+                (package_dir / "target/package/reqsign-new-0.0.0.crate").is_file()
             )
-
-    def test_public_read_retries_a_transient_registry_failure(self):
-        error = urllib.error.HTTPError(
-            "https://crates.io/api/v1/crates/reqsign",
-            503,
-            "unavailable",
-            {},
-            io.BytesIO(b""),
-        )
-        response = JsonResponse(
-            b'{"crate":{"id":"reqsign","repository":'
-            b'"https://github.com/apache/reqsign"}}'
-        )
-
-        with (
-            mock.patch(
-                "bootstrap.urllib.request.urlopen",
-                side_effect=(error, response),
-            ),
-            mock.patch("bootstrap.time.sleep") as sleep,
-        ):
-            krate = CratesIoClient().get_crate("reqsign")
-
-        self.assertEqual(krate["id"], "reqsign")
-        sleep.assert_called_once_with(1)
-
-    def test_discovery_does_not_migrate_established_crates(self):
-        planned = PlannedCrate("reqsign-core", "core")
-        client = FakeClient(planned.name, metadata(planned.name))
-
-        with mock.patch("bootstrap.planned_crates", return_value=[planned]):
-            packages, missing, placeholders = discover(Path(), client)
-
-        self.assertEqual(packages, [planned])
-        self.assertEqual(missing, [])
-        self.assertEqual(placeholders, [])
-
-    def test_discovery_selects_a_placeholder(self):
-        planned = PlannedCrate("reqsign-new", "services/new")
-        client = FakeClient(
-            planned.name,
-            metadata(planned.name, version=PLACEHOLDER_VERSION),
-        )
-
-        with mock.patch("bootstrap.planned_crates", return_value=[planned]):
-            _, missing, placeholders = discover(Path(), client)
-
-        self.assertEqual(missing, [])
-        self.assertEqual(placeholders, [planned.name])
-
-    def test_authenticated_preflight_audits_an_established_crate(self):
-        planned = PlannedCrate("reqsign-core", "core")
-        client = FakeClient(
-            planned.name,
-            metadata(planned.name, trustpub_only=True),
-            [expected_config(planned.name)],
-        )
-
-        verified = preflight_authenticated([planned], set(), client)
-
-        self.assertEqual(verified, [planned.name])
-        self.assertEqual(client.created_configs, 0)
-        self.assertEqual(client.restricted, 0)
-
-    def test_authenticated_preflight_rejects_an_unexpected_publisher(self):
-        planned = PlannedCrate("reqsign-core", "core")
-        unexpected = {
-            **expected_config(planned.name),
-            "workflow_filename": "other.yml",
-        }
-        client = FakeClient(
-            planned.name,
-            metadata(planned.name, trustpub_only=True),
-            [unexpected],
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "unexpected Trusted Publisher"):
-            preflight_authenticated([planned], set(), client)
-
-        self.assertEqual(client.created_configs, 0)
-        self.assertEqual(client.restricted, 0)
-
-    def test_authenticated_preflight_accepts_historical_repository_metadata(self):
-        planned = PlannedCrate("reqsign-core", "core")
-        krate = metadata(planned.name, trustpub_only=True)
-        krate["repository"] = LEGACY_REPOSITORY
-        client = FakeClient(planned.name, krate, [expected_config(planned.name)])
-
-        self.assertEqual(
-            preflight_authenticated([planned], set(), client), [planned.name]
-        )
-        self.assertEqual(verify_authenticated([planned], client), [planned.name])
-        self.assertEqual(client.created_configs, 0)
-
-    def test_authenticated_preflight_rejects_historical_publisher(self):
-        planned = PlannedCrate("reqsign-core", "core")
-        krate = metadata(planned.name, trustpub_only=True)
-        krate["repository"] = LEGACY_REPOSITORY
-        config = {**expected_config(planned.name), "repository_name": "opendal-reqsign"}
-        client = FakeClient(planned.name, krate, [config])
-
-        with self.assertRaisesRegex(RuntimeError, "unexpected Trusted Publisher"):
-            preflight_authenticated([planned], set(), client)
-
-        self.assertEqual(client.created_configs, 0)
-
-    def test_discovery_rejects_an_unrelated_repository(self):
-        planned = PlannedCrate("reqsign-core", "core")
-        krate = metadata(planned.name)
-        krate["repository"] = "https://github.com/other/reqsign"
-        client = FakeClient(planned.name, krate)
-
-        with (
-            mock.patch("bootstrap.planned_crates", return_value=[planned]),
-            self.assertRaisesRegex(RuntimeError, "unexpected repository"),
-        ):
-            discover(Path(), client)
-
-    def test_authenticated_preflight_rejects_unmigrated_established_crate(self):
-        planned = PlannedCrate("reqsign-core", "core")
-        client = FakeClient(
-            planned.name,
-            metadata(planned.name),
-            [expected_config(planned.name)],
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "does not require"):
-            preflight_authenticated([planned], set(), client)
-
-    def test_authenticated_verification_requires_the_exact_publisher(self):
-        planned = PlannedCrate("reqsign-core", "core")
-        unexpected = {
-            **expected_config(planned.name),
-            "environment": "other",
-        }
-        client = FakeClient(
-            planned.name,
-            metadata(planned.name, trustpub_only=True),
-            [unexpected],
-        )
-
-        with self.assertRaisesRegex(RuntimeError, "unexpected Trusted Publisher"):
-            verify_authenticated([planned], client)
-
-    def test_apply_preflights_the_complete_plan_before_reconciling(self):
-        candidate = PlannedCrate("reqsign-new", "services/new")
-        established = PlannedCrate("reqsign-core", "core")
-        packages = [candidate, established]
-        client = object()
-        calls = []
-
-        def preflight(actual_packages, candidate_names, actual_client):
-            calls.append(("preflight", actual_packages, candidate_names, actual_client))
-
-        def reconcile(project_dir, planned, actual_client, token):
-            calls.append(("reconcile", planned, actual_client, token))
-            return ReconcileResult(planned.name, ("verified",))
-
-        def verify(actual_packages, actual_client):
-            calls.append(("verify", actual_packages, actual_client))
-            return [package.name for package in actual_packages]
-
-        args = argparse.Namespace(project_dir=Path(), registry_url="registry")
-        with (
-            mock.patch.dict(
-                "bootstrap.os.environ",
-                {"CARGO_REGISTRY_BOOTSTRAP_TOKEN": "bootstrap-token"},
-                clear=True,
-            ),
-            mock.patch("bootstrap.CratesIoClient", return_value=client),
-            mock.patch(
-                "bootstrap.discover",
-                return_value=(packages, [candidate.name], []),
-            ),
-            mock.patch("bootstrap.preflight_authenticated", preflight),
-            mock.patch("bootstrap.reconcile_crate", reconcile),
-            mock.patch("bootstrap.verify_authenticated", verify),
-        ):
-            self.assertEqual(run_apply(args), 0)
-
-        self.assertEqual(
-            [call[0] for call in calls],
-            ["preflight", "reconcile", "verify"],
-        )
-        self.assertEqual(calls[0][1], packages)
-        self.assertEqual(calls[0][2], {candidate.name})
-        self.assertEqual(calls[2][1], packages)
-
-    def test_apply_does_not_mutate_when_authenticated_preflight_fails(self):
-        candidate = PlannedCrate("reqsign-new", "services/new")
-        args = argparse.Namespace(project_dir=Path(), registry_url="registry")
-
-        with (
-            mock.patch.dict(
-                "bootstrap.os.environ",
-                {"CARGO_REGISTRY_BOOTSTRAP_TOKEN": "bootstrap-token"},
-                clear=True,
-            ),
-            mock.patch("bootstrap.CratesIoClient"),
-            mock.patch(
-                "bootstrap.discover",
-                return_value=([candidate], [candidate.name], []),
-            ),
-            mock.patch(
-                "bootstrap.preflight_authenticated",
-                side_effect=RuntimeError("audit failed"),
-            ),
-            mock.patch("bootstrap.reconcile_crate") as reconcile,
-            mock.patch("bootstrap.verify_authenticated") as verify,
-            self.assertRaisesRegex(RuntimeError, "audit failed"),
-        ):
-            run_apply(args)
-
-        reconcile.assert_not_called()
-        verify.assert_not_called()
-
-    def test_missing_crate_is_created_configured_and_restricted(self):
-        planned = PlannedCrate("reqsign-new", "services/new")
-        client = FakeClient(planned.name)
-
-        def publish(project_dir, package, token):
-            self.assertEqual(package, planned)
-            self.assertEqual(token, "bootstrap-token")
-            client.krate = metadata(planned.name, version=PLACEHOLDER_VERSION)
-
-        with (
-            tempfile.TemporaryDirectory() as tmpdir,
-            mock.patch("bootstrap.publish_placeholder", publish),
-        ):
-            result = reconcile_crate(Path(tmpdir), planned, client, "bootstrap-token")
-
-        self.assertEqual(
-            result.actions,
-            (
-                "created placeholder",
-                "configured Trusted Publishing",
-                "enabled Trusted Publishing only",
-            ),
-        )
-        self.assertEqual(client.created_configs, 1)
-        self.assertEqual(client.restricted, 1)
-
-    def test_partial_placeholder_resumes_without_republishing(self):
-        planned = PlannedCrate("reqsign-new", "services/new")
-        for description in (
-            PLACEHOLDER_DESCRIPTION,
-            LEGACY_PLACEHOLDER_DESCRIPTION,
-        ):
-            with self.subTest(description=description):
-                krate = metadata(planned.name, version=PLACEHOLDER_VERSION)
-                krate["description"] = description
-                client = FakeClient(planned.name, krate)
-
-                with (
-                    tempfile.TemporaryDirectory() as tmpdir,
-                    mock.patch("bootstrap.publish_placeholder") as publish,
-                ):
-                    result = reconcile_crate(
-                        Path(tmpdir), planned, client, "bootstrap-token"
-                    )
-
-                publish.assert_not_called()
-                self.assertEqual(
-                    result.actions,
-                    (
-                        "configured Trusted Publishing",
-                        "enabled Trusted Publishing only",
-                    ),
-                )
-
-    def test_ready_placeholder_is_a_noop(self):
-        planned = PlannedCrate("reqsign-new", "services/new")
-        client = FakeClient(
-            planned.name,
-            metadata(
-                planned.name,
-                version=PLACEHOLDER_VERSION,
-                trustpub_only=True,
-            ),
-            [expected_config(planned.name)],
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = reconcile_crate(Path(tmpdir), planned, client, "bootstrap-token")
-
-        self.assertEqual(result.actions, ("verified",))
-        self.assertEqual(client.created_configs, 0)
-        self.assertEqual(client.restricted, 0)
-
-    def test_established_crate_is_never_migrated(self):
-        planned = PlannedCrate("reqsign-core", "core")
-        client = FakeClient(planned.name, metadata(planned.name))
-
-        with (
-            tempfile.TemporaryDirectory() as tmpdir,
-            self.assertRaisesRegex(RuntimeError, "established crate"),
-        ):
-            reconcile_crate(Path(tmpdir), planned, client, "bootstrap-token")
-
-        self.assertEqual(client.created_configs, 0)
-        self.assertEqual(client.restricted, 0)
-
-    def test_unexpected_publisher_fails_closed(self):
-        planned = PlannedCrate("reqsign-new", "services/new")
-        unexpected = {
-            **expected_config(planned.name),
-            "workflow_filename": "other.yml",
-        }
-        client = FakeClient(
-            planned.name,
-            metadata(planned.name, version=PLACEHOLDER_VERSION),
-            [unexpected],
-        )
-
-        with (
-            tempfile.TemporaryDirectory() as tmpdir,
-            self.assertRaisesRegex(RuntimeError, "unexpected Trusted Publisher"),
-        ):
-            reconcile_crate(Path(tmpdir), planned, client, "bootstrap-token")
-
-        self.assertEqual(client.restricted, 0)
 
 
 if __name__ == "__main__":
