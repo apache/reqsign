@@ -109,25 +109,17 @@ impl SharedConfig {
     }
 
     pub(crate) async fn load_config_file(&self, ctx: &Context) -> Result<Ini> {
-        read_ini(
-            ctx,
-            self.config_file.as_deref(),
-            "AWS_CONFIG_FILE",
-            "~/.aws/config",
-            aws_parse_options(),
-        )
-        .await
+        read_ini(ctx, self.config_file_path(ctx)).await
     }
 
     pub(crate) async fn load_credentials_file(&self, ctx: &Context) -> Result<Ini> {
-        read_ini(
+        let path = file_path(
             ctx,
             self.credentials_file.as_deref(),
             "AWS_SHARED_CREDENTIALS_FILE",
             "~/.aws/credentials",
-            aws_parse_options(),
-        )
-        .await
+        );
+        read_ini(ctx, path).await
     }
 
     /// Read and merge the selected profile. This never contacts IMDS, even when enabled.
@@ -241,14 +233,8 @@ fn aws_parse_options() -> ParseOption {
     }
 }
 
-async fn read_ini(
-    ctx: &Context,
-    explicit: Option<&str>,
-    env: &str,
-    default: &str,
-    options: ParseOption,
-) -> Result<Ini> {
-    let Some(path) = file_path(ctx, explicit, env, default) else {
+async fn read_ini(ctx: &Context, path: Option<String>) -> Result<Ini> {
+    let Some(path) = path else {
         return Ok(Ini::new());
     };
     let Ok(content) = ctx.file_read(&path).await else {
@@ -256,7 +242,7 @@ async fn read_ini(
     };
     let content = std::str::from_utf8(&content)
         .map_err(|_| Error::config_invalid("AWS shared configuration is not UTF-8"))?;
-    Ini::load_from_str_opt(content, options)
+    Ini::load_from_str_opt(content, aws_parse_options())
         .map_err(|_| Error::config_invalid("failed to parse AWS shared configuration"))
 }
 

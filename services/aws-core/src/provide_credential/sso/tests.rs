@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use super::session::hex_sha1;
 use super::*;
 use bytes::Bytes;
 use http::Response;
@@ -660,4 +661,114 @@ async fn refresh_throttling_preserves_material_for_retry() {
             "new-access"
         );
     }
+}
+
+#[tokio::test]
+async fn another_session_can_finish_while_refresh_is_blocked() {
+    let files = Arc::new(Files::default());
+    files.put(
+        "/config",
+        format!(
+            "{}\n{}",
+            config("one"),
+            config("two").replace("[profile test]", "[profile second]")
+        ),
+    );
+    files.token("/test", "one", cached("2025-01-01T00:00:00Z"));
+    files.token("/test", "two", cached("2025-01-01T00:00:00Z"));
+    let blocked_http = Arc::new(Http {
+        refresh_gate: Some(Notify::new()),
+        ..Http::default()
+    });
+    blocked_http.refresh("one-access", None);
+    blocked_http.role();
+    let independent_http = Arc::new(Http::default());
+    independent_http.refresh("two-access", None);
+    independent_http.role();
+    let ctx = context(&files, &blocked_http, "/test", "/config");
+    let second_ctx = context(&files, &independent_http, "/test", "/config");
+    let provider = SSOCredentialProvider::new();
+    let second_provider = provider.clone().with_profile("second");
+    let mut blocked = pin!(provider.provide_with_clock(&ctx, timestamp));
+    let mut independent = pin!(second_provider.provide_with_clock(&second_ctx, timestamp));
+    poll_fn(|cx| {
+        assert!(blocked.as_mut().poll(cx).is_pending());
+        let Poll::Ready(result) = independent.as_mut().poll(cx) else {
+            panic!("another session must not wait for the blocked refresh");
+        };
+        assert_eq!(result.unwrap().unwrap().access_key_id, "role-key");
+        Poll::Ready(())
+    })
+    .await;
+    assert_eq!(blocked_http.count(), 1);
+    assert_eq!(independent_http.count(), 2);
+    blocked_http.refresh_gate.as_ref().unwrap().notify_one();
+    assert!(blocked.await.unwrap().is_some());
+}
+
+#[derive(Debug)]
+struct FailedProvider;
+
+impl ProvideCredential for FailedProvider {
+    type Credential = Credential;
+
+    async fn provide_credential(&self, _: &Context) -> Result<Option<Credential>> {
+        Err(Error::config_invalid("custom provider failed"))
+    }
+}
+
+#[tokio::test]
+async fn default_provider_keeps_slot_removal_precedence_and_custom_chain_policy() {
+    let (ctx, files, _) = fixture(cached("2099-01-01T00:00:00Z"));
+    files.put("/config", "[profile test]\nsso_session = missing\n");
+    let process = Arc::new(ProcessCommand::default());
+    let ctx = ctx.with_command_execute(process.clone());
+    let builder = || {
+        crate::DefaultCredentialProvider::builder()
+            .no_env()
+            .no_profile()
+            .no_web_identity()
+            .no_ecs()
+            .no_imds()
+            .process(crate::ProcessCredentialProvider::new().with_command("helper"))
+    };
+    assert!(builder().build().provide_credential(&ctx).await.is_err());
+    assert_eq!(process.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(
+        builder()
+            .no_sso()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap()
+            .access_key_id,
+        "process-key"
+    );
+    let first = builder()
+        .build()
+        .push_front(crate::StaticCredentialProvider::new("first-key", "secret"));
+    assert_eq!(
+        first
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap()
+            .access_key_id,
+        "first-key"
+    );
+    let chain = reqsign_core::ProvideCredentialChain::new()
+        .push(FailedProvider)
+        .push(crate::StaticCredentialProvider::new("custom-key", "secret"));
+    let custom = crate::DefaultCredentialProvider::with_chain(chain);
+    assert_eq!(
+        custom
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap()
+            .access_key_id,
+        "custom-key"
+    );
+    assert_eq!(process.0.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

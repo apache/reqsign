@@ -21,6 +21,9 @@ use http::{Method, Request, StatusCode};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
+
+mod session;
+use session::{SessionKey, SsoSession, login_required};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -59,9 +62,8 @@ const AWS_SSO_SESSION_NAME: &str = "sso_session";
 /// Legacy inline `sso_start_url` / `sso_region` profiles and configuration supplied
 /// directly through the setters remain non-refreshable. This provider never
 /// starts interactive login and does not resolve assume-role profile chains.
-/// When assembling a custom credential chain, use
-/// [`reqsign_core::ProvideCredentialChain::push_with_error_propagation`] to keep
-/// SSO failures from falling back to an unrelated identity.
+/// The AWS default provider propagates SSO errors. A custom credential chain
+/// retains its own error policy.
 #[derive(Debug, Clone)]
 pub struct SSOCredentialProvider {
     profile: Option<String>,
@@ -70,7 +72,7 @@ pub struct SSOCredentialProvider {
     sso_role_name: Option<String>,
     sso_start_url: Option<String>,
     sso_endpoint: Option<String>, // Allow custom endpoint for testing
-    tokens: Arc<Mutex<HashMap<TokenKey, CachedToken>>>,
+    sessions: Arc<Mutex<HashMap<SessionKey, Arc<SsoSession>>>>,
 }
 
 impl Default for SSOCredentialProvider {
@@ -89,7 +91,7 @@ impl SSOCredentialProvider {
             sso_role_name: None,
             sso_start_url: None,
             sso_endpoint: None,
-            tokens: Arc::new(Mutex::new(HashMap::new())),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -212,146 +214,24 @@ impl SSOCredentialProvider {
         }))
     }
 
-    async fn read_cached_token(ctx: &Context, path: &str) -> Result<Option<CachedToken>> {
-        match ctx.file_read(path).await {
-            Ok(content) => serde_json::from_slice(&content)
-                .map(Some)
-                .map_err(|_| login_required("invalid SSO token cache")),
-            Err(_) => Ok(None),
-        }
-    }
-
     async fn access_token(
         &self,
         ctx: &Context,
         config: &SSOConfig,
         now: impl Fn() -> Timestamp + Send + Sync,
     ) -> Result<String> {
-        let key = config.token_key(ctx)?;
+        let key = SessionKey::from_config(ctx, config)?;
         if config.session_name.is_none() {
-            let token = Self::read_cached_token(ctx, &key.path)
-                .await?
-                .ok_or_else(|| login_required("SSO token cache not found"))?;
-            return if token.is_valid_at(now())? {
-                Ok(token.access_token)
-            } else {
-                Err(login_required("legacy SSO token has expired"))
-            };
+            return session::legacy_access_token(ctx, &key.path, now()).await;
         }
-
-        // Hold the provider lock across refresh so clones cannot exchange the
-        // same refresh token concurrently, including when the service rotates it.
-        let mut tokens = self.tokens.lock().await;
-        if let Some(token) = tokens.get(&key) {
-            if token.is_valid_at(now())? {
-                return Ok(token.access_token.clone());
-            }
-        }
-        if let Some(disk) = Self::read_cached_token(ctx, &key.path).await? {
-            let replace = match tokens.get(&key) {
-                Some(current) => disk.expiration()? > current.expiration()?,
-                None => true,
-            };
-            if replace {
-                tokens.insert(key.clone(), disk);
-            }
-        }
-        let token = tokens
-            .get_mut(&key)
-            .ok_or_else(|| login_required("SSO token cache not found"))?;
-        if !token.is_valid_at(now())? {
-            self.refresh_token(ctx, config, token, &now).await?;
-        }
-        if !token.is_valid_at(now())? {
-            return Err(login_required("refreshed SSO access token has expired"));
-        }
-        Ok(token.access_token.clone())
-    }
-
-    async fn refresh_token(
-        &self,
-        ctx: &Context,
-        config: &SSOConfig,
-        token: &mut CachedToken,
-        now: impl Fn() -> Timestamp + Send + Sync,
-    ) -> Result<()> {
-        let required = |value: &Option<String>| {
-            value
-                .as_ref()
-                .filter(|v| !v.is_empty())
-                .cloned()
-                .ok_or_else(|| login_required("SSO refresh material is missing"))
+        let session = {
+            let mut sessions = self.sessions.lock().await;
+            sessions
+                .entry(key.clone())
+                .or_insert_with(|| Arc::new(SsoSession::new(key)))
+                .clone()
         };
-        let registration_expiry = required(&token.registration_expires_at)?
-            .parse::<Timestamp>()
-            .map_err(|_| login_required("invalid SSO registration expiration"))?;
-        let started = now();
-        if registration_expiry <= started {
-            return Err(login_required("SSO client registration has expired"));
-        }
-        let body = serde_json::json!({
-            "grantType": "refresh_token",
-            "clientId": required(&token.client_id)?,
-            "clientSecret": required(&token.client_secret)?,
-            "refreshToken": required(&token.refresh_token)?,
-        });
-        let req = Request::builder()
-            .method(Method::POST)
-            .uri(format!(
-                "https://oidc.{}.amazonaws.com/token",
-                config.sso_region
-            ))
-            .header(http::header::CONTENT_TYPE, "application/json")
-            .body(bytes::Bytes::from(body.to_string()))
-            .map_err(|_| Error::config_invalid("failed to build SSO refresh request"))?;
-        // HTTP adapters and server error bodies can contain the submitted secrets.
-        let response = ctx.http_send(req).await.map_err(|_| {
-            Error::unexpected("SSO token refresh transport failed").set_retryable(true)
-        })?;
-        if response.status() != StatusCode::OK {
-            let status = response.status();
-            // CreateToken also reports throttling as HTTP 400. Only recognize
-            // the allowlisted code; never retain or expose the error description.
-            let slow_down = status == StatusCode::BAD_REQUEST
-                && serde_json::from_slice::<RefreshError>(response.body())
-                    .is_ok_and(|error| matches!(error.error, RefreshErrorCode::SlowDown));
-            if status == StatusCode::TOO_MANY_REQUESTS || slow_down {
-                return Err(Error::rate_limited("SSO token refresh was throttled"));
-            }
-            if status.is_server_error() {
-                return Err(
-                    Error::unexpected(format!("SSO token refresh returned {status}"))
-                        .set_retryable(true),
-                );
-            }
-            return Err(login_required(&format!(
-                "SSO token refresh rejected ({status})"
-            )));
-        }
-        let refreshed: RefreshResponse = serde_json::from_slice(response.body())
-            .map_err(|_| login_required("invalid SSO token refresh response"))?;
-        if refreshed.access_token.is_empty()
-            || refreshed.expires_in <= 0
-            || refreshed
-                .refresh_token
-                .as_ref()
-                .is_some_and(|v| v.is_empty())
-        {
-            return Err(login_required("invalid SSO token refresh response"));
-        }
-        let expires_at = started
-            .as_second()
-            .checked_add(refreshed.expires_in)
-            .and_then(|seconds| Timestamp::from_second(seconds).ok())
-            .ok_or_else(|| login_required("invalid SSO token expiration"))?;
-        // Commit the complete response before attempting GetRoleCredentials. Its
-        // failure must not lose a rotated refresh token or extend token lifetime.
-        token.access_token = refreshed.access_token;
-        token.expires_at = expires_at.to_string();
-        if let Some(refresh_token) = refreshed.refresh_token {
-            token.refresh_token = Some(refresh_token);
-        }
-        Ok(())
+        session.access_token(ctx, now).await
     }
 
     async fn provide_with_clock(
@@ -443,92 +323,6 @@ struct SSOConfig {
     config_path: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct TokenKey {
-    path: String,
-    config_path: Option<String>,
-    session_name: Option<String>,
-    start_url: String,
-    region: String,
-}
-
-impl SSOConfig {
-    fn token_key(&self, ctx: &Context) -> Result<TokenKey> {
-        let home = ctx
-            .home_dir()
-            .ok_or_else(|| Error::config_invalid("HOME directory not found"))?;
-        let name = self.session_name.as_deref().unwrap_or(&self.sso_start_url);
-        let path = home
-            .join(".aws")
-            .join("sso")
-            .join("cache")
-            .join(format!("{}.json", hex_sha1(name.as_bytes())));
-        Ok(TokenKey {
-            path: path.to_string_lossy().into_owned(),
-            config_path: self.config_path.clone(),
-            session_name: self.session_name.clone(),
-            start_url: self.sso_start_url.clone(),
-            region: self.sso_region.clone(),
-        })
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CachedToken {
-    access_token: String,
-    expires_at: String,
-    refresh_token: Option<String>,
-    client_id: Option<String>,
-    client_secret: Option<String>,
-    registration_expires_at: Option<String>,
-}
-
-impl std::fmt::Debug for CachedToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CachedToken").finish_non_exhaustive()
-    }
-}
-
-impl CachedToken {
-    fn expiration(&self) -> Result<Timestamp> {
-        self.expires_at
-            .parse()
-            .map_err(|_| login_required("invalid SSO token expiration"))
-    }
-
-    fn is_valid_at(&self, now: Timestamp) -> Result<bool> {
-        Ok(!self.access_token.is_empty() && self.expiration()? > now)
-    }
-}
-
-#[derive(Deserialize)]
-struct RefreshError {
-    error: RefreshErrorCode,
-}
-
-#[derive(Deserialize)]
-enum RefreshErrorCode {
-    #[serde(rename = "slow_down")]
-    SlowDown,
-    #[serde(other)]
-    Other,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RefreshResponse {
-    access_token: String,
-    expires_in: i64,
-    refresh_token: Option<String>,
-}
-
-fn login_required(reason: &str) -> Error {
-    Error::config_invalid(format!(
-        "{reason}. Please run 'aws sso login' for the selected profile"
-    ))
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SSOCredentialResponse {
@@ -549,14 +343,6 @@ impl ProvideCredential for SSOCredentialProvider {
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
         self.provide_with_clock(ctx, Timestamp::now).await
     }
-}
-
-// Simple SHA1 implementation for cache key generation
-fn hex_sha1(data: &[u8]) -> String {
-    use sha1::{Digest, Sha1};
-    let mut hasher = Sha1::new();
-    hasher.update(data);
-    hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]
