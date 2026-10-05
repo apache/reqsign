@@ -21,10 +21,10 @@
 
 ## Reporting a Vulnerability
 
-Apache OpenDAL Reqsign follows the
+Apache Reqsign follows the
 [Apache Software Foundation security process](https://www.apache.org/security/).
 Please report suspected vulnerabilities privately to
-`private@opendal.apache.org`. If you are unsure where to send the report, use
+`private@reqsign.apache.org`. If you are unsure where to send the report, use
 the ASF Security Team address, `security@apache.org`. Do not open public GitHub
 issues or pull requests for security reports.
 

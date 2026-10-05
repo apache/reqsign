@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign"
-version = "0.20.6"
+version = "0.20.7"
 
 categories = ["authentication", "web-programming::http-client"]
 description = "Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services"
@@ -109,3 +109,26 @@ required-features = ["azure", "default-context"]
 [[example]]
 name = "google"
 required-features = ["google", "default-context"]
+
+[[example]]
+name = "static_credentials"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "presign"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "custom_context"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "s3_express_grant"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "s3_express_sign"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "custom_http"
