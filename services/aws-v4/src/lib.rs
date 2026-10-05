@@ -173,6 +173,7 @@ pub use reqsign_aws_core::{
     DefaultCredentialProviderBuilder, ECSCredentialProvider, EnvCredentialProvider,
     IMDSv2CredentialProvider, ProfileCredentialProvider, StaticCredentialProvider,
 };
+pub use reqsign_aws_core::{IMDSv2RegionProvider, Profile, SharedConfig};
 #[cfg(not(target_arch = "wasm32"))]
 pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
 
