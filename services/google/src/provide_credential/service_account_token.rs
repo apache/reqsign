@@ -23,14 +23,14 @@ use http::header::CONTENT_TYPE;
 use log::debug;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{
-    Context, Error, ErrorKind, ProvideCredential, ProvideCredentialDyn, Result, SigningCredential,
+    Context, Error, ProvideCredential, ProvideCredentialDyn, Result, SigningCredential,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::constants::{DEFAULT_SCOPE, GOOGLE_SCOPE, TOKEN_OPERATION_HEADROOM};
 use crate::credential::{Credential, ServiceAccount, Token};
 
-const OAUTH_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
+use super::oauth::{OAUTH_TOKEN_ENDPOINT, checked_expiration, oauth_error, validate_token_uri};
 const JWT_BEARER_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
 const JWT_LIFETIME: Duration = Duration::from_secs(3600);
 
@@ -38,13 +38,18 @@ const JWT_LIFETIME: Duration = Duration::from_secs(3600);
 struct Claims<'a> {
     iss: &'a str,
     scope: &'a str,
-    aud: &'static str,
+    aud: &'a str,
     exp: u64,
     iat: u64,
 }
 
 impl<'a> Claims<'a> {
-    fn new(client_email: &'a str, scope: &'a str, now: Timestamp) -> Result<Self> {
+    fn new(
+        client_email: &'a str,
+        scope: &'a str,
+        token_uri: &'a str,
+        now: Timestamp,
+    ) -> Result<Self> {
         let iat = u64::try_from(now.as_second())
             .map_err(|_| Error::unexpected("service account JWT timestamp is invalid"))?;
         let exp = iat
@@ -53,7 +58,7 @@ impl<'a> Claims<'a> {
         Ok(Self {
             iss: client_email,
             scope,
-            aud: OAUTH_TOKEN_ENDPOINT,
+            aud: token_uri,
             exp,
             iat,
         })
@@ -79,12 +84,6 @@ impl JwtHeader {
 struct TokenResponse {
     access_token: String,
     expires_in: u64,
-}
-
-#[derive(Deserialize)]
-struct OAuthErrorResponse {
-    #[serde(default)]
-    error: Option<String>,
 }
 
 enum Source {
@@ -139,6 +138,7 @@ enum Source {
 pub struct ServiceAccountTokenCredentialProvider {
     source: Source,
     scope: Option<String>,
+    token_uri: String,
 }
 
 impl Debug for ServiceAccountTokenCredentialProvider {
@@ -155,6 +155,7 @@ impl ServiceAccountTokenCredentialProvider {
         Self {
             source: Source::ServiceAccount(service_account),
             scope: None,
+            token_uri: OAUTH_TOKEN_ENDPOINT.to_string(),
         }
     }
 
@@ -169,6 +170,7 @@ impl ServiceAccountTokenCredentialProvider {
         Self {
             source: Source::Provider(Box::new(provider)),
             scope: None,
+            token_uri: OAUTH_TOKEN_ENDPOINT.to_string(),
         }
     }
 
@@ -179,6 +181,27 @@ impl ServiceAccountTokenCredentialProvider {
     pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
         self.scope = Some(scope.into());
         self
+    }
+
+    /// Set the trusted OAuth token URI used for both the request and JWT audience.
+    ///
+    /// Defaults to `https://oauth2.googleapis.com/token`. The URI must be absolute
+    /// HTTP(S), with a host and without userinfo or a fragment. HTTP is intended
+    /// for trusted local testing; use HTTPS for production credentials.
+    /// Validation errors never include the supplied URI.
+    ///
+    /// The endpoint receives a signed assertion. The caller must trust it and
+    /// configure its HTTP transport's TLS and redirect policy accordingly.
+    /// No endpoint discovery or fallback is performed after an exchange fails.
+    ///
+    /// Credential-file `token_uri` is not selected automatically. Adapters can
+    /// extract that field from trusted input and pass it here; their explicit
+    /// configuration should take precedence. See the crate's OAuth endpoint example.
+    pub fn with_token_uri(mut self, token_uri: impl Into<String>) -> Result<Self> {
+        let token_uri = token_uri.into();
+        validate_token_uri(&token_uri)?;
+        self.token_uri = token_uri;
+        Ok(self)
     }
 
     async fn service_account(&self, ctx: &Context) -> Result<Option<ServiceAccount>> {
@@ -213,8 +236,13 @@ impl ProvideCredential for ServiceAccountTokenCredentialProvider {
         let Some(service_account) = self.service_account(ctx).await? else {
             return Ok(None);
         };
-        let token =
-            exchange_service_account_token(ctx, &service_account, self.scope.as_deref()).await?;
+        let token = exchange_service_account_token(
+            ctx,
+            &service_account,
+            self.scope.as_deref(),
+            &self.token_uri,
+        )
+        .await?;
         Ok(Some(
             Credential::with_token(token).with_signer_email(service_account.client_email),
         ))
@@ -232,6 +260,7 @@ async fn exchange_service_account_token(
     ctx: &Context,
     service_account: &ServiceAccount,
     scope: Option<&str>,
+    token_uri: &str,
 ) -> Result<Token> {
     if !service_account.is_valid() {
         return Err(Error::credential_invalid(
@@ -241,7 +270,7 @@ async fn exchange_service_account_token(
 
     let scope = resolve_scope(ctx, scope);
     debug!("exchanging service account for token with scope: {scope}");
-    let request = build_token_request(service_account, &scope, Timestamp::now())?;
+    let request = build_token_request(service_account, &scope, token_uri, Timestamp::now())?;
     let request_started_at = Timestamp::now();
     let response = ctx.http_send(request).await.map_err(|err| {
         Error::new(err.kind(), "service account OAuth token request failed")
@@ -265,11 +294,12 @@ async fn exchange_service_account_token(
 fn build_token_request(
     service_account: &ServiceAccount,
     scope: &str,
+    token_uri: &str,
     now: Timestamp,
 ) -> Result<http::Request<bytes::Bytes>> {
     let jwt = reqsign_core::jwt::encode_rs256_pem(
         &JwtHeader::rs256(),
-        &Claims::new(&service_account.client_email, scope, now)?,
+        &Claims::new(&service_account.client_email, scope, token_uri, now)?,
         service_account.private_key.as_bytes(),
     )?;
     let body = Serializer::new(String::new())
@@ -279,7 +309,7 @@ fn build_token_request(
 
     http::Request::builder()
         .method(http::Method::POST)
-        .uri(OAUTH_TOKEN_ENDPOINT)
+        .uri(token_uri)
         .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
         .body(body.into_bytes().into())
         .map_err(|err| {
@@ -304,72 +334,6 @@ fn parse_token_response(body: &[u8], request_started_at: Timestamp) -> Result<To
     })
 }
 
-fn checked_expiration(started_at: Timestamp, expires_in: Duration) -> Result<Timestamp> {
-    let expires_in_seconds = i64::try_from(expires_in.as_secs())
-        .map_err(|_| Error::unexpected("service account OAuth token expiration is invalid"))?;
-    let expiration_second = started_at
-        .as_second()
-        .checked_add(expires_in_seconds)
-        .ok_or_else(|| Error::unexpected("service account OAuth token expiration is invalid"))?;
-    Timestamp::from_second(expiration_second)
-        .map_err(|_| Error::unexpected("service account OAuth token expiration is invalid"))
-}
-
-fn oauth_error(status: http::StatusCode, body: &[u8]) -> Error {
-    let error_code = serde_json::from_slice::<OAuthErrorResponse>(body)
-        .ok()
-        .and_then(|response| response.error);
-    let recognized_code = match error_code.as_deref() {
-        Some(
-            code @ ("invalid_grant"
-            | "invalid_request"
-            | "invalid_scope"
-            | "unsupported_grant_type"
-            | "unauthorized_client"
-            | "invalid_client"
-            | "access_denied"
-            | "temporarily_unavailable"),
-        ) => Some(code),
-        _ => None,
-    };
-
-    let mut error = match recognized_code {
-        Some("invalid_grant" | "invalid_client") => Error::credential_invalid(
-            "service account OAuth token exchange rejected the source credential",
-        ),
-        Some("invalid_request" | "invalid_scope" | "unsupported_grant_type") => {
-            Error::request_invalid("service account OAuth token exchange rejected the request")
-        }
-        Some("unauthorized_client" | "access_denied") => {
-            Error::permission_denied("service account OAuth token exchange was denied")
-        }
-        Some("temporarily_unavailable") => {
-            Error::unexpected("service account OAuth token exchange is temporarily unavailable")
-                .set_retryable(true)
-        }
-        _ if status == http::StatusCode::UNAUTHORIZED => Error::credential_invalid(
-            "service account OAuth token exchange rejected the source credential",
-        ),
-        _ if status == http::StatusCode::FORBIDDEN => {
-            Error::permission_denied("service account OAuth token exchange was denied")
-        }
-        _ if status == http::StatusCode::TOO_MANY_REQUESTS => {
-            Error::rate_limited("service account OAuth token exchange was rate limited")
-        }
-        _ => Error::unexpected("service account OAuth token exchange failed")
-            .set_retryable(status.is_server_error()),
-    }
-    .with_context(format!("oauth_status: {}", status.as_u16()));
-
-    if let Some(code) = recognized_code {
-        error = error.with_context(format!("oauth_error: {code}"));
-    }
-    if error.kind() == ErrorKind::Unexpected && status.is_server_error() {
-        error = error.set_retryable(true);
-    }
-    error
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -378,7 +342,7 @@ mod tests {
     use bytes::Bytes;
     use http::{HeaderMap, Method};
     use reqsign_core::hash::base64_decode;
-    use reqsign_core::{FileRead, Granter, HttpSend, StaticEnv, time::Timestamp};
+    use reqsign_core::{ErrorKind, FileRead, Granter, HttpSend, StaticEnv, time::Timestamp};
     use rsa::RsaPrivateKey;
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use rsa::rand_core::OsRng;
