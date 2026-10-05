@@ -43,50 +43,26 @@ Each operation is listed with source references on its
 
 ## Walkthrough: S3 Express session credentials
 
-```rust
-use reqsign::{Context, Granter};
-use reqsign_aws_v4::{
-    DefaultCredentialProvider, S3ExpressSessionConfig,
-    S3ExpressSessionGrant, S3ExpressSessionGranter,
-    S3ExpressSessionMode, S3ExpressSessionPartition,
-};
+The same dependencies as [Getting Started](/docs/getting-started/) suffice.
+This example uses the default context for environment, file, and HTTP access:
 
-// Bind the operation: which bucket, which zone, which mode.
-let config = S3ExpressSessionConfig::new(
-    "my-bucket--usw2-az1--x-s3",
-    "usw2-az1",
-    "us-west-2",
-    S3ExpressSessionPartition::Aws,
-)?;
-let grant = S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly);
-
-// Compose exactly like a Signer: context + source + operation.
-let granter = Granter::new(
-    ctx,
-    DefaultCredentialProvider::new(),
-    S3ExpressSessionGranter::new(config, grant),
-);
-
-// Exchange IAM credentials for bucket-scoped session credentials.
-let scoped = granter.grant(None).await?;
+```rust file=reqsign/examples/s3_express_grant.rs
 ```
 
-## Using the granted credential
+## Signing with automatically refreshed sessions
 
-A granted credential implements `SigningCredential` — feed it to a signer
-through a static provider, hand it to another process, or presign with it:
+For a long-lived signer, use `S3ExpressSessionProvider`. It performs the same
+CreateSession exchange when credentials are needed, preserves their expiration,
+and lets `Signer` refresh the session. S3 Express uses the `s3express` signing
+service and the directory bucket's zonal endpoint:
 
-```rust
-use reqsign::aws;
-use reqsign_aws_v4::StaticCredentialProvider;
-
-let signer = aws::default_signer("s3", "us-west-2")
-    .with_credential_provider(StaticCredentialProvider::new(
-        scoped.access_key_id(),
-        scoped.secret_access_key(),
-        scoped.session_token(),
-    ));
+```rust file=reqsign/examples/s3_express_sign.rs
 ```
+
+When passing a manually granted credential to another component, retain the
+entire credential, including `expires_in`. Reconstructing it with AWS's
+`StaticCredentialProvider` loses the expiration and automatic refresh behavior.
+Keep granted keys and session tokens out of logs.
 
 ## Semantics to rely on
 
@@ -94,8 +70,9 @@ let signer = aws::default_signer("s3", "us-west-2")
   result owns independent material and never aliases the cache.
 - `expires_in` requests a validity window where the operation supports one;
   the operation's own maximum applies.
-- Errors surface without internal retry or fallback to a stale source — your
-  retry policy stays in charge.
+- Errors returned by the configured source or grant operation propagate without
+  retry or reuse of a stale cached source. A source configured as a credential
+  chain can still fall back between its providers.
 
-Accessor method names on the credential types are provider-specific — see
+Credential fields and types are provider-specific — see
 [docs.rs](https://docs.rs/reqsign-aws-v4) for the exact API.

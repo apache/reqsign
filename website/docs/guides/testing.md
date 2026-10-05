@@ -26,17 +26,19 @@ Reqsign is built to be tested without touching real clouds: credentials are
 injectable, and every I/O path routes through
 [`Context`](/docs/architecture/#context).
 
-## Deterministic signing tests
+## Signing tests with fixed credentials
 
-Fix the credential; the signature becomes a function of the request:
+Use fixed credentials to check signing without credential-source I/O. Signing
+still uses the current time, so this example checks the authentication header
+rather than asserting a timestamp-dependent signature:
 
 ```rust
-use reqsign_core::{Context, Signer};
-use reqsign_aws_v4::{RequestSigner, StaticCredentialProvider};
+use reqsign::{Context, Signer};
+use reqsign::aws::{RequestSigner, StaticCredentialProvider};
 
 let signer = Signer::new(
     Context::new(), // no I/O needed with static credentials
-    StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key", None),
+    StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
     RequestSigner::new("s3", "us-east-1"),
 );
 
@@ -60,7 +62,7 @@ Credential chains read env vars and files through `Context`, so tests inject
 them without process-global mutation:
 
 ```rust
-use reqsign_core::{Context, Env};
+use reqsign::{Context, Env};
 
 #[derive(Debug)]
 struct StaticEnv(std::collections::HashMap<String, String>);

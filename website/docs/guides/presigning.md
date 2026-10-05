@@ -45,24 +45,7 @@ signer.sign(&mut req, Some(Duration::from_secs(3600))).await?;
 
 ## Produce a presigned URL
 
-```rust
-use std::time::Duration;
-use reqsign::aws;
-
-let signer = aws::default_signer("s3", "us-east-1");
-
-let mut req = http::Request::builder()
-    .method(http::Method::GET)
-    .uri("https://s3.amazonaws.com/my-bucket/report.csv")
-    .body(())?
-    .into_parts()
-    .0;
-
-// The signature moves into the query string, valid for one hour.
-signer.sign(&mut req, Some(Duration::from_secs(3600))).await?;
-
-// req.uri is the shareable URL.
-println!("{}", req.uri);
+```rust file=reqsign/examples/presign.rs
 ```
 
 For AWS this produces `X-Amz-Algorithm`, `X-Amz-Credential`,
@@ -76,12 +59,13 @@ Passing `Some(duration)` does **not** universally mean "presign" — the
 configured service signer and credential type determine how the duration is
 interpreted:
 
-- AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, and Google
-  Cloud Storage select query authentication with that validity window.
+- AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud
+  Storage, and Huawei Cloud OBS select query authentication with that
+  validity window.
 - Azure Storage SAS credentials authenticate through the query string by
   nature; shared keys and bearer tokens sign headers.
-- Huawei Cloud OBS and Oracle Cloud bound credential validity but produce
-  **no** query authentication — header signing is their only mode.
+- Oracle Cloud bounds credential validity but produces **no** query
+  authentication — header signing is its only mode.
 
 The [provider matrix](/docs/providers/) carries the authoritative
 header/query flags, and the

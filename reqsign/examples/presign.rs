@@ -15,32 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use anyhow::Result;
+use reqsign::aws;
+use std::time::Duration;
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // ANCHOR: quickstart
-    use reqsign::azure;
-    // Create a default signer for Azure Storage
-    let signer = azure::default_signer();
-
-    // Build a request
-    let mut req = http::Request::builder()
-        .method(http::Method::GET)
-        .uri("https://myaccount.blob.core.windows.net/mycontainer/myblob")
-        .body(())
-        .unwrap()
+async fn main() -> anyhow::Result<()> {
+    let signer = aws::default_signer("s3", "us-east-1");
+    let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/report.csv")
+        .body(())?
         .into_parts()
         .0;
-
-    // Sign the request
-    signer.sign(&mut req, None).await?;
-
-    // ANCHOR_END: quickstart
-
-    // Execute the request would require rebuilding with body
-    // In real usage, you'd use your HTTP client here
-    println!("Request signed successfully!");
-
+    signer
+        .sign(&mut req, Some(Duration::from_secs(3600)))
+        .await?;
+    // Share req.uri over a trusted channel; it contains authentication material.
+    assert!(req.uri.query().is_some());
     Ok(())
 }

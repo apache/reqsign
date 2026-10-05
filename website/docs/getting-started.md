@@ -54,7 +54,7 @@ cargo add http anyhow
 The default `default-context` feature wires a ready-to-use runtime (Tokio
 file reading, reqwest HTTP, Tokio command execution). Keep it unless you are
 [bringing your own runtime](/docs/guides/custom-runtimes/). Requires
-Rust 1.85.0+.
+Rust 1.86.0+.
 
 ## 2. Sign your first request
 
@@ -109,16 +109,7 @@ composes that provider's own credential chain — the
 A default signer is an ordinary `Signer`: replace any component and keep the
 rest —
 
-```rust
-use reqsign::aws;
-use reqsign_aws_v4::StaticCredentialProvider;
-
-let signer = aws::default_signer("s3", "us-east-1")
-    .with_credential_provider(StaticCredentialProvider::new(
-        "AKIDEXAMPLE",
-        "example-secret-key",
-        None, // session token
-    ));
+```rust file=reqsign/examples/static_credentials.rs
 ```
 
 ## Where to go next

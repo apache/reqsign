@@ -98,8 +98,8 @@ signer and credential type determine how the duration is interpreted.
 
 | Interpretation | Providers |
 | --- | --- |
-| Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs) |
-| Bounds credential validity; header signing regardless | Huawei Cloud OBS, Oracle Cloud |
+| Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs), Huawei Cloud OBS |
+| Bounds credential validity; header signing regardless | Oracle Cloud |
 | Requests a granted credential's validity window | Granting operations (subject to the operation's own maximum) |
 
 Whatever the provider does with it, one obligation is universal: the
@@ -136,10 +136,13 @@ issue tracker.
 
 ## Errors and retries
 
-**The contract:** Reqsign surfaces errors; you own resilience. `sign` and
+**The contract:** The signer and granter propagate errors returned by their
+configured provider; you own retries. `sign` and
 `grant` perform no internal retries, no fallback signers, and no silent
 reuse of stale credentials. Combined with atomic mutation, any error leaves
-you exactly where you started — free to retry, reroute, or fail.
+the request head unchanged — free to retry, reroute, or fail. This does not
+prevent a `ProvideCredentialChain` from trying later sources after individual
+provider errors; see [Loading credentials](/docs/guides/credentials/).
 
 `reqsign_core::Error` carries an `ErrorKind` designed for retry decisions:
 

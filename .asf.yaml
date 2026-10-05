@@ -19,7 +19,7 @@
 
 github:
   description: "Apache Reqsign: Signing HTTP requests without heavy SDKs."
-  homepage: https://docs.rs/reqsign
+  homepage: https://reqsign.apache.org
   labels:
     - rust
     - s3
@@ -91,3 +91,7 @@ notifications:
   issues: commits@reqsign.apache.org
   pullrequests: commits@reqsign.apache.org
   discussions: dev@reqsign.apache.org
+
+# The generated website branch carries this file to enable ASF publishing.
+publish:
+  whoami: asf-site

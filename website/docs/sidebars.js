@@ -28,7 +28,7 @@ module.exports = {
     "comparison",
     "getting-started",
     // Provider pages render their capability facts from data/providers.json
-    // (one machine-checked source); the MDX around the data holds any
+    // (one shared catalog); the MDX around the data holds any
     // provider-specific prose. The validator requires one page per provider.
     {
       type: "category",

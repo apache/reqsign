@@ -18,7 +18,7 @@
  */
 
 // Validates data/providers.json against the Cargo workspace so provider
-// capability claims cannot drift from the code. Run from website/:
+// crate, feature, page, and source-path references stay consistent. Run from website/:
 //
 //   node scripts/validate-providers.mjs
 //
@@ -29,7 +29,8 @@
 //     internal crate (new service crates must be cataloged);
 //   - provider ids are unique and URL-safe;
 //   - every source_ref path exists in the repository;
-//   - last_verified dates parse and are not in the future.
+//   - last_verified dates use YYYY-MM-DD and are not in the future.
+// Signing behavior and credential-chain semantics are not checked here.
 
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";

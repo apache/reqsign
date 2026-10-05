@@ -47,7 +47,7 @@ breaks correctness. What every provider shares is this composition pattern.
 `Signer` composes the three pieces and adds a credential cache:
 
 ```rust
-use reqsign_core::Signer;
+use reqsign::Signer;
 
 let signer = Signer::new(ctx, credential_provider, request_signer);
 signer.sign(&mut req, None).await?;
@@ -90,16 +90,12 @@ source that needs HTTP against a stub context returns an error instead of
 quietly doing nothing, so you always know which capabilities you granted.
 The facade's `default_context()` returns the full assembly in the table.
 
-```rust
-use reqsign::{Context, OsEnv};
-use reqsign_file_read_tokio::TokioFileRead;
-use reqsign_http_send_reqwest::ReqwestHttpSend;
-
-let ctx = Context::new()
-    .with_file_read(TokioFileRead)
-    .with_http_send(ReqwestHttpSend::default())
-    .with_env(OsEnv);
+```rust file=reqsign/examples/custom_context.rs
 ```
+
+This explicit assembly also needs `reqsign-file-read-tokio`,
+`reqsign-command-execute-tokio`, and `reqsign-http-send-reqwest` as direct
+dependencies; `default_context()` supplies the same components through the facade.
 
 Why traits instead of feature flags: tests inject static env maps and canned
 HTTP responses without process-global mutation; sandboxes withhold
@@ -126,8 +122,12 @@ The `Option` is the chain protocol:
 - `Ok(Some(credential))` — this source resolved a credential; use it.
 - `Ok(None)` — this source has nothing to offer (env var unset, file
   missing); **try the next source**.
-- `Err(e)` — this source should have worked but failed (malformed file,
-  network error); surface the error.
+- `Err(e)` — this source failed (malformed file, network error). A directly
+  installed provider propagates this error to the signer.
+
+`ProvideCredentialChain` logs errors and continues to the next provider, just
+as it does for `None`. It returns `Ok(None)` when no provider succeeds. Do not
+use this chain when a source failure must prevent fallback to another identity.
 
 Chains compose providers in order and take the first `Some`; because "not
 configured" is `None` rather than an error, a chain of ten sources stays
@@ -205,8 +205,9 @@ The reuse rule on every `sign` or `grant`:
    the operation's deadline.
 2. Otherwise the provider is asked for a fresh credential, which only needs
    to satisfy the exact deadline.
-3. Provider errors are returned as-is — no internal retry, no silent
-   fallback to the previous cached credential. Retry policy belongs to you.
+3. Errors returned by the configured provider are propagated without retry or
+   reuse of the previous cached credential. A configured provider chain can
+   handle errors internally by trying its next source, as described above.
 
 Replacing a signer's credential provider — or a granter's context or source
 provider — clears the cache: a credential loaded under one configuration is
@@ -239,7 +240,7 @@ pub trait GrantCredential {
 ```
 
 ```rust
-use reqsign_core::Granter;
+use reqsign::Granter;
 
 let granter = Granter::new(ctx, source_provider, granting_operation);
 let scoped = granter.grant(Some(Duration::from_secs(900))).await?;
@@ -273,22 +274,7 @@ applications; still customizable through `with_*` builders.
 **Custom assembly** — the same components, wired explicitly. What
 `default_signer` does for you, written out:
 
-```rust
-use reqsign::{Context, OsEnv, Signer};
-use reqsign_aws_v4::{DefaultCredentialProvider, RequestSigner};
-use reqsign_file_read_tokio::TokioFileRead;
-use reqsign_http_send_reqwest::ReqwestHttpSend;
-
-let ctx = Context::new()
-    .with_file_read(TokioFileRead)
-    .with_http_send(ReqwestHttpSend::default())
-    .with_env(OsEnv);
-
-let signer = Signer::new(
-    ctx,
-    DefaultCredentialProvider::new(),
-    RequestSigner::new("s3", "us-east-1"),
-);
+```rust file=reqsign/examples/custom_context.rs
 ```
 
 **Service crates directly** — libraries supporting exactly one provider can

@@ -36,7 +36,7 @@ cargo add reqsign --features huaweicloud
 ```rust
 use reqsign::huaweicloud;
 
-// Env and config credentials — resolved by the default chain.
+// Environment credentials — resolved by the default chain.
 let signer = huaweicloud::default_signer("my-bucket");
 
 let mut req = http::Request::builder()

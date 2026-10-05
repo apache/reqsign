@@ -19,7 +19,7 @@
 
 // The provider capability matrix, rendered from data/providers.json on the
 // docs providers index. A table scales with the catalog: new providers become
-// new rows, and every cell traces back to the machine-checked catalog.
+// new rows, and every cell traces back to the catalog.
 
 import React from "react";
 import Link from "@docusaurus/Link";
@@ -82,9 +82,8 @@ export default function ProvidersMatrix() {
         </table>
       </div>
       <p className={styles.verifiedNote}>
-        Capability data last verified against{" "}
-        <code>apache/reqsign@{catalog.verified_commit}</code>; CI fails
-        when this matrix drifts from the workspace. Found a mismatch?{" "}
+        CI checks crate, feature, page, and source-path consistency; capability
+        semantics are reviewed by maintainers. Found a mismatch?{" "}
         <Link to="https://github.com/apache/reqsign/issues">
           Open an issue.
         </Link>

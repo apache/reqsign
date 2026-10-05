@@ -58,7 +58,7 @@ majors are published with each
 
 ## Targets
 
-**Rust version.** The workspace declares `rust-version = "1.85.0"` — the
+**Rust version.** The workspace declares `rust-version = "1.86.0"` — the
 minimum supported Rust. CI tracks stable; MSRV bumps are treated as
 observable changes, not patch-level noise.
 

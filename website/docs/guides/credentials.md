@@ -34,7 +34,7 @@ SDKs consult, in a documented order. Each
 [provider page](/docs/providers/) lists its exact sources.
 
 ```rust
-use reqsign_aws_v4::DefaultCredentialProvider;
+use reqsign::aws::DefaultCredentialProvider;
 
 // The documented default chain for AWS:
 // env → profiles → SSO → OIDC → process → ECS → IMDS
@@ -47,7 +47,7 @@ Every `DefaultCredentialProvider` exposes the same four entry points:
 DefaultCredentialProvider::new();                // the documented default chain
 DefaultCredentialProvider::builder();            // default slots, then adjust
 DefaultCredentialProvider::with_chain(chain);    // bypass defaults entirely
-DefaultCredentialProvider::push_front(provider); // prepend a high-priority source
+DefaultCredentialProvider::new().push_front(provider); // prepend a high-priority source
 ```
 
 ## Adjust the chain
@@ -56,7 +56,7 @@ The builder pre-populates the default slots. Each slot has exactly two
 methods — one to replace it, one to remove it:
 
 ```rust
-use reqsign_aws_v4::{DefaultCredentialProvider, EnvCredentialProvider};
+use reqsign::aws::{DefaultCredentialProvider, EnvCredentialProvider};
 
 // Replace the env slot, drop IMDS, keep everything else as documented.
 let provider = DefaultCredentialProvider::builder()
@@ -74,16 +74,7 @@ removal method.
 When the credential is decided elsewhere — tests, WASM, a control plane that
 injects keys — skip chains entirely:
 
-```rust
-use reqsign::aws;
-use reqsign_aws_v4::StaticCredentialProvider;
-
-let signer = aws::default_signer("s3", "us-east-1")
-    .with_credential_provider(StaticCredentialProvider::new(
-        "AKIDEXAMPLE",
-        "example-secret-key",
-        None, // session token
-    ));
+```rust file=reqsign/examples/static_credentials.rs region=static
 ```
 
 Replacing a signer's credential provider clears its credential cache, so a
@@ -96,8 +87,8 @@ manager, a sidecar, an in-house vault — implement `ProvideCredential`:
 
 ```rust
 use bytes::Bytes;
-use reqsign_core::{Context, ProvideCredential, Result};
-use reqsign_aws_v4::Credential;
+use reqsign::{Context, ProvideCredential, Result};
+use reqsign::aws::Credential;
 
 #[derive(Debug)]
 struct VaultCredentialProvider {
@@ -128,8 +119,15 @@ impl ProvideCredential for VaultCredentialProvider {
 ```
 
 The return-value protocol is what makes chains compose: `Ok(Some(_))`
-resolves, `Ok(None)` passes to the next source, `Err(_)` aborts with the
-error. Report "not configured" as `None` and real failures as errors — see
+resolves and `Ok(None)` passes to the next source. `ProvideCredentialChain`
+also logs `Err(_)` and continues: a failing custom source can fall back to
+profiles, metadata, or another configured identity. If all sources fail or
+return `None`, the chain returns `Ok(None)`.
+
+Report "not configured" as `None` and real failures as errors. When failure
+must stop credential resolution, install your provider directly on the signer
+or implement a chain with that policy; prepending a provider does not enforce
+it. A provider installed directly has its errors propagated by `Signer`. See
 [Architecture § ProvideCredential](/docs/architecture/#providecredential).
 
 ## Plug it in
@@ -137,9 +135,9 @@ error. Report "not configured" as `None` and real failures as errors — see
 Highest priority in front of the default chain:
 
 ```rust
-use reqsign_aws_v4::DefaultCredentialProvider;
+use reqsign::aws::DefaultCredentialProvider;
 
-let provider = DefaultCredentialProvider::push_front(VaultCredentialProvider {
+let provider = DefaultCredentialProvider::new().push_front(VaultCredentialProvider {
     endpoint: "http://127.0.0.1:8200/v1/aws/creds/my-role".into(),
 });
 ```
@@ -147,7 +145,7 @@ let provider = DefaultCredentialProvider::push_front(VaultCredentialProvider {
 Or a fully explicit chain that bypasses the defaults:
 
 ```rust
-use reqsign_core::ProvideCredentialChain;
+use reqsign::ProvideCredentialChain;
 
 let chain = ProvideCredentialChain::new()
     .push(VaultCredentialProvider { endpoint })

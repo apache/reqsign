@@ -1,7 +1,5 @@
 {
-  "_comment": "Single source of truth for provider capability claims on the website. Every entry must be traceable to source_refs in this repository. Validated against cargo metadata by scripts/validate-providers.mjs; drift fails CI. credential_sources lists the default chain slots in real chain order (verified against each service's DefaultCredentialProviderBuilder); explicit_sources lists providers that exist but are never part of the default chain.",
-  "verified_commit": "cd22149",
-  "last_verified": "2026-08-01",
+  "_comment": "Provider capability catalog maintained from the referenced source files. CI validates crate, feature, page, and source-path consistency; signing behavior and credential-chain semantics require maintainer review.",
   "internal_crates": [
     {
       "name": "reqsign-core",
@@ -459,6 +457,11 @@
           "id": "impersonated_service_account",
           "label": "Service account impersonation",
           "provider": "ImpersonatedServiceAccountCredentialProvider"
+        },
+        {
+          "id": "service_account_token",
+          "label": "OAuth2 token from a service account key or impersonation",
+          "provider": "ServiceAccountTokenCredentialProvider"
         }
       ],
       "credential_provider_crate": "reqsign-google"
@@ -590,8 +593,8 @@
       ],
       "request_auth": {
         "header": true,
-        "query": false,
-        "notes": "Header signing only; expires_in bounds credential validity but does not produce query authentication."
+        "query": true,
+        "notes": "expires_in selects query authentication with AccessKeyId, Expires, and Signature parameters."
       },
       "credential_granting": [],
       "wasm": {
@@ -608,7 +611,7 @@
       "source_refs": [
         "services/huaweicloud-obs"
       ],
-      "last_verified": "2026-08-01",
+      "last_verified": "2026-10-05",
       "explicit_sources": [
         {
           "id": "static",

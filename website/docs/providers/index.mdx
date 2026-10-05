@@ -27,10 +27,11 @@ import ProvidersMatrix from "@site/src/components/providers/ProvidersMatrix";
 
 Reqsign keeps each provider's signing protocol and credential semantics
 explicit instead of hiding them behind one abstraction. This matrix and every
-detail page are rendered from a machine-checked capability catalog
-([`website/data/providers.json`](https://github.com/apache/reqsign/blob/main/website/data/providers.json));
-each claim is traced to source, and CI fails when the catalog drifts from the
-workspace.
+detail page are rendered from the
+[`provider catalog`](https://github.com/apache/reqsign/blob/main/website/data/providers.json).
+CI checks crate, feature, page, and source-path consistency. Maintainers review
+signing capabilities and credential-chain semantics against the referenced source;
+those behavioral claims are not inferred by the validator.
 
 <ProvidersMatrix />
 

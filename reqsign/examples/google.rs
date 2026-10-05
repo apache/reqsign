@@ -16,12 +16,11 @@
 // under the License.
 
 use anyhow::Result;
-use reqsign::google;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
-
+    // ANCHOR: quickstart
+    use reqsign::google;
     // Create a default signer for Google Cloud Storage
     let signer = google::default_signer("storage.googleapis.com");
 
@@ -36,6 +35,8 @@ async fn main() -> Result<()> {
 
     // Sign the request
     signer.sign(&mut req, None).await?;
+
+    // ANCHOR_END: quickstart
 
     // Execute the request would require rebuilding with body
     // In real usage, you'd use your HTTP client here

@@ -56,10 +56,10 @@ export default function ProviderDetails({ id }) {
         ))}
       </ol>
 
-      <h3>All credential providers</h3>
+      <h3>Credential providers</h3>
       <p>
-        Every <code>ProvideCredential</code> implementation this provider
-        ships. Construct any of them directly, reorder them, or compose them
+        Available <code>ProvideCredential</code> implementations. Construct any of
+        them directly, reorder them, or compose them
         into your own chain — see{" "}
         <Link to="/docs/guides/credentials/">Loading credentials</Link>:
       </p>

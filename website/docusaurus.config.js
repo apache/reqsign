@@ -25,8 +25,7 @@ const exec = require("child_process").execSync;
 const { themes } = require("prism-react-renderer");
 const repoAddress = "https://github.com/apache/reqsign";
 
-// The canonical hostname is pending ASF Infra approval; keep url/baseUrl
-// configurable so staging and the documented fallbacks need no code change.
+// Keep the canonical URL configurable for local and staging builds.
 const url = process.env.REQSIGN_WEBSITE_URL
   ? process.env.REQSIGN_WEBSITE_URL
   : "https://reqsign.apache.org";

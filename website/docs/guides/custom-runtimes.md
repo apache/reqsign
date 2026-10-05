@@ -49,7 +49,7 @@ plus `OsEnv` from `reqsign-core`. Mix them freely with your own.
 
 ```rust
 use bytes::Bytes;
-use reqsign_core::{Context, HttpSend, Result};
+use reqsign::{Context, HttpSend, Result};
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 
 #[derive(Debug)]
@@ -107,8 +107,8 @@ your credential sources actually need — usually just HTTP:
 
 ```rust
 use bytes::Bytes;
-use reqsign_core::{Context, HttpSend, Result, Signer};
-use reqsign_aws_v4::{RequestSigner, StaticCredentialProvider};
+use reqsign::{Context, HttpSend, Result, Signer};
+use reqsign::aws::{RequestSigner, StaticCredentialProvider};
 
 #[derive(Debug)]
 struct FetchHttpSend; // wraps fetch() via wasm-bindgen
@@ -124,7 +124,7 @@ impl HttpSend for FetchHttpSend {
 let ctx = Context::new().with_http_send(FetchHttpSend);
 let signer = Signer::new(
     ctx,
-    StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key", None),
+    StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
     RequestSigner::new("s3", "us-east-1"),
 );
 ```

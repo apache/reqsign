@@ -19,11 +19,21 @@
 
 // Content model for the landing page. All copy and catalog data lives here so
 // the section components stay presentational. Hero statistics and the provider
-// grid derive from data/providers.json — the machine-checked capability
-// catalog — so the page cannot drift from the code. Code samples mirror the
-// compiled examples under reqsign/examples/ and in-tree doc tests.
+// grid derive from data/providers.json — the capability
+// catalog. CI checks its structure; maintainers verify capability semantics.
+// Code samples are included from compiled examples under reqsign/examples/.
 
 import catalog from "../../../data/providers.json";
+
+import { codeSnippet } from "../../code-snippets";
+import customHttpCode from "!!raw-loader!@site/../reqsign/examples/custom_http.rs";
+import awsCode from "!!raw-loader!@site/../reqsign/examples/aws.rs";
+import azureCode from "!!raw-loader!@site/../reqsign/examples/azure.rs";
+import googleCode from "!!raw-loader!@site/../reqsign/examples/google.rs";
+import staticCredentialsCode from "!!raw-loader!@site/../reqsign/examples/static_credentials.rs";
+import customContextCode from "!!raw-loader!@site/../reqsign/examples/custom_context.rs";
+import presignCode from "!!raw-loader!@site/../reqsign/examples/presign.rs";
+import s3ExpressGrantCode from "!!raw-loader!@site/../reqsign/examples/s3_express_grant.rs";
 
 export const REPO_URL = "https://github.com/apache/reqsign";
 export const DOCS_URL = "/docs/getting-started/";
@@ -41,7 +51,7 @@ const granterCount = providers.reduce(
 const wasmCount = providers.filter((p) => p.wasm.supported).length;
 
 export const heroStats = [
-  { value: `${providers.length}`, label: "cloud providers" },
+  { value: `${providers.length}`, label: "signing providers" },
   { value: `${granterCount}`, label: "granting operations" },
   { value: `${wasmCount}`, label: "WASM-ready providers" },
   { value: "0", label: "vendor SDKs required" },
@@ -55,61 +65,21 @@ export const codeSamples = [
     label: "AWS",
     language: "rust",
     install: "$ cargo add reqsign --features aws",
-    code: `use reqsign::aws;
-
-// Credentials load from env, profiles, SSO, IMDS — the default chain.
-let signer = aws::default_signer("s3", "us-east-1");
-
-// Build the request with plain http types. No wrapper client.
-let mut req = http::Request::builder()
-    .method(http::Method::GET)
-    .uri("https://s3.amazonaws.com/my-bucket/my-object")
-    .body(())?
-    .into_parts()
-    .0;
-
-// Sign in place, then send with the HTTP client you already use.
-signer.sign(&mut req, None).await?;`,
+    code: codeSnippet(awsCode, "quickstart"),
   },
   {
     id: "azure",
     label: "Azure",
     language: "rust",
     install: "$ cargo add reqsign --features azure",
-    code: `use reqsign::azure;
-
-// Shared key, SAS, or Entra ID — resolved by the default chain.
-let signer = azure::default_signer();
-
-let mut req = http::Request::builder()
-    .method(http::Method::GET)
-    .uri("https://myaccount.blob.core.windows.net/container/blob")
-    .body(())?
-    .into_parts()
-    .0;
-
-// Sign in place, then send with the HTTP client you already use.
-signer.sign(&mut req, None).await?;`,
+    code: codeSnippet(azureCode, "quickstart"),
   },
   {
     id: "google",
     label: "Google",
     language: "rust",
     install: "$ cargo add reqsign --features google",
-    code: `use reqsign::google;
-
-// Service accounts, workload identity, VM metadata — the default chain.
-let signer = google::default_signer("storage.googleapis.com");
-
-let mut req = http::Request::builder()
-    .method(http::Method::GET)
-    .uri("https://storage.googleapis.com/my-bucket/my-object")
-    .body(())?
-    .into_parts()
-    .0;
-
-// Sign in place, then send with the HTTP client you already use.
-signer.sign(&mut req, None).await?;`,
+    code: codeSnippet(googleCode, "quickstart"),
   },
 ];
 
@@ -155,121 +125,37 @@ export const howItWorks = [
   },
 ];
 
-// Capability explorer. Each snippet mirrors a compiled example or in-tree doc
-// test; each doc link lands on the guide that owns the topic.
+// Capability explorer. Runnable snippets come from compiled examples; each doc link lands on the guide that owns the topic.
 export const capabilityThemes = [
   {
     title: "Default signer",
     blurb: "One call wires the default context and credential chain.",
     doc: "/docs/getting-started/#every-provider-one-pattern",
-    code: `use reqsign::aws;
-use reqsign_aws_v4::StaticCredentialProvider;
-
-// The default signer composes the default context
-// with the provider's full credential chain.
-let signer = aws::default_signer("s3", "us-east-1");
-
-// Override any component without leaving the default path.
-let signer = aws::default_signer("s3", "us-east-1")
-    .with_credential_provider(StaticCredentialProvider::new(
-        "AKIDEXAMPLE",
-        "example-secret-key",
-        None,
-    ));`,
+    code: codeSnippet(staticCredentialsCode, "static"),
   },
   {
     title: "Custom assembly",
     blurb: "Pick every component of the signer explicitly.",
     doc: "/docs/architecture/#where-to-plug-in",
-    code: `use reqsign::{Context, OsEnv, Signer};
-use reqsign_aws_v4::{DefaultCredentialProvider, RequestSigner};
-use reqsign_file_read_tokio::TokioFileRead;
-use reqsign_http_send_reqwest::ReqwestHttpSend;
-
-// Wire the runtime pieces yourself: files, HTTP, env.
-let ctx = Context::new()
-    .with_file_read(TokioFileRead)
-    .with_http_send(ReqwestHttpSend::default())
-    .with_env(OsEnv);
-
-let signer = Signer::new(
-    ctx,
-    DefaultCredentialProvider::new(),
-    RequestSigner::new("s3", "us-east-1"),
-);`,
+    code: codeSnippet(customContextCode),
   },
   {
     title: "Presigning",
     blurb: "Produce query-authenticated URLs you can hand out.",
     doc: "/docs/guides/presigning/",
-    code: `use std::time::Duration;
-use reqsign::aws;
-
-let signer = aws::default_signer("s3", "us-east-1");
-
-let mut req = http::Request::builder()
-    .method(http::Method::GET)
-    .uri("https://s3.amazonaws.com/my-bucket/report.csv")
-    .body(())?
-    .into_parts()
-    .0;
-
-// expires_in moves the signature into the query string
-// for providers with query authentication (see /docs/providers).
-signer.sign(&mut req, Some(Duration::from_secs(3600))).await?;
-
-// req.uri now carries X-Amz-* parameters — share it as-is.`,
+    code: codeSnippet(presignCode),
   },
   {
     title: "Credential granting",
     blurb: "Downscope credentials before a request is ever signed.",
     doc: "/docs/guides/granting/",
-    code: `use reqsign::{Context, Granter};
-use reqsign_aws_v4::{
-    DefaultCredentialProvider, S3ExpressSessionConfig,
-    S3ExpressSessionGrant, S3ExpressSessionGranter,
-    S3ExpressSessionMode, S3ExpressSessionPartition,
-};
-
-// Exchange IAM credentials for bucket-scoped session
-// credentials via S3 Express CreateSession.
-let config = S3ExpressSessionConfig::new(
-    "my-bucket--usw2-az1--x-s3",
-    "usw2-az1",
-    "us-west-2",
-    S3ExpressSessionPartition::Aws,
-)?;
-let grant = S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly);
-
-let granter = Granter::new(
-    Context::new(),
-    DefaultCredentialProvider::new(),
-    S3ExpressSessionGranter::new(config, grant),
-);
-let scoped = granter.grant(None).await?;`,
+    code: codeSnippet(s3ExpressGrantCode),
   },
   {
     title: "Custom context & WASM",
     blurb: "Bring your own runtime — down to wasm32-unknown-unknown.",
     doc: "/docs/guides/custom-runtimes/#wasm",
-    code: `use bytes::Bytes;
-use reqsign_core::{Context, HttpSend, Result};
-
-// Implement the Context traits over any transport you own —
-// a browser fetch(), a proxy, a test double.
-#[derive(Debug)]
-struct MyHttpSend;
-
-impl HttpSend for MyHttpSend {
-    async fn http_send(
-        &self,
-        req: http::Request<Bytes>,
-    ) -> Result<http::Response<Bytes>> {
-        todo!("drive the request through your own transport")
-    }
-}
-
-let ctx = Context::new().with_http_send(MyHttpSend);`,
+    code: codeSnippet(customHttpCode),
   },
 ];
 

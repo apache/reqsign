@@ -104,7 +104,7 @@ downstream hard-codes a color.
 
 - Capability numbers and provider lists derive from `data/providers.json`;
   the page must not hand-write claims the catalog cannot back.
-- Code shown on the landing page mirrors compiled examples
+- Runnable code shown on the landing page imports compiled examples
   (`reqsign/examples/`) or in-tree doc tests; docs snippets include real
   files via `remark-include-code`.
 - Copy states what is verified, never "every cloud".

@@ -18,10 +18,12 @@
 name: Website
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
     paths:
+      - ".asf.yaml"
       - "website/**"
       - ".github/workflows/website.yml"
       # The provider catalog and included code snippets must stay in sync
@@ -35,6 +37,7 @@ on:
     branches:
       - main
     paths:
+      - ".asf.yaml"
       - "website/**"
       - ".github/workflows/website.yml"
       - "Cargo.toml"
@@ -47,8 +50,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -71,6 +74,9 @@ jobs:
         working-directory: website
         run: pnpm install --frozen-lockfile
 
+      - name: Compile website examples
+        run: cargo check -p reqsign --examples --all-features
+
       - name: Validate provider catalog against cargo metadata
         working-directory: website
         run: node scripts/validate-providers.mjs
@@ -82,3 +88,36 @@ jobs:
       - name: Check for third-party runtime assets
         working-directory: website
         run: node scripts/check-external-assets.mjs
+
+      - name: Include ASF publishing configuration
+        run: cp .asf.yaml website/build/.asf.yaml
+
+      - name: Upload website
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: website
+          path: website/build/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated website
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: website
+          path: website/build
+
+      - name: Publish to ASF
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: asf-site
+          publish_dir: website/build
+          # Keep the publication history so an earlier artifact can be recovered.
+          enable_jekyll: false
