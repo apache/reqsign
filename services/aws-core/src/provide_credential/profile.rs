@@ -16,14 +16,10 @@
 // under the License.
 
 use crate::Credential;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(test)]
 use crate::constants::*;
 #[cfg(not(target_arch = "wasm32"))]
-use ini::Ini;
-#[cfg(not(target_arch = "wasm32"))]
 use log::debug;
-#[cfg(not(target_arch = "wasm32"))]
-use reqsign_core::Error;
 use reqsign_core::{Context, ProvideCredential, Result};
 
 /// ProfileCredentialProvider loads AWS credentials from configuration files.
@@ -78,42 +74,27 @@ impl ProfileCredentialProvider {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn shared_config(&self) -> crate::SharedConfig {
+        let mut config = crate::SharedConfig::new();
+        if let Some(v) = &self.profile {
+            config = config.with_profile(v);
+        }
+        if let Some(v) = &self.config_file {
+            config = config.with_config_file(v);
+        }
+        if let Some(v) = &self.credentials_file {
+            config = config.with_credentials_file(v);
+        }
+        config
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     async fn load_from_credentials_file(
         &self,
         ctx: &Context,
         profile: &str,
     ) -> Result<Option<Credential>> {
-        let path = if let Some(path) = &self.credentials_file {
-            path.clone()
-        } else if let Some(path) = ctx.env_var(AWS_SHARED_CREDENTIALS_FILE) {
-            path
-        } else {
-            "~/.aws/credentials".to_string()
-        };
-
-        let expanded_path = if path.starts_with("~/") {
-            match ctx.expand_home_dir(&path) {
-                Some(expanded) => expanded,
-                None => {
-                    debug!("failed to expand homedir for path: {path}");
-                    return Ok(None);
-                }
-            }
-        } else {
-            path.clone()
-        };
-
-        let content = match ctx.file_read(&expanded_path).await {
-            Ok(content) => content,
-            Err(err) => {
-                debug!("failed to read credentials file {expanded_path}: {err:?}");
-                return Ok(None);
-            }
-        };
-
-        let conf = Ini::load_from_str(&String::from_utf8_lossy(&content)).map_err(|e| {
-            Error::config_invalid("failed to parse credentials file").with_source(e)
-        })?;
+        let conf = self.shared_config().load_credentials_file(ctx).await?;
 
         let props = match conf.section(Some(profile)) {
             Some(props) => props,
@@ -143,41 +124,8 @@ impl ProfileCredentialProvider {
         ctx: &Context,
         profile: &str,
     ) -> Result<Option<Credential>> {
-        let path = if let Some(path) = &self.config_file {
-            path.clone()
-        } else if let Some(path) = ctx.env_var(AWS_CONFIG_FILE) {
-            path
-        } else {
-            "~/.aws/config".to_string()
-        };
-
-        let expanded_path = if path.starts_with("~/") {
-            match ctx.expand_home_dir(&path) {
-                Some(expanded) => expanded,
-                None => {
-                    debug!("failed to expand homedir for path: {path}");
-                    return Ok(None);
-                }
-            }
-        } else {
-            path.clone()
-        };
-
-        let content = match ctx.file_read(&expanded_path).await {
-            Ok(content) => content,
-            Err(err) => {
-                debug!("failed to read config file {expanded_path}: {err:?}");
-                return Ok(None);
-            }
-        };
-
-        let conf = Ini::load_from_str(&String::from_utf8_lossy(&content))
-            .map_err(|e| Error::config_invalid("failed to parse config file").with_source(e))?;
-
-        let section = match profile {
-            "default" => "default".to_string(),
-            x => format!("profile {x}"),
-        };
+        let conf = self.shared_config().load_config_file(ctx).await?;
+        let section = crate::config::config_section(profile);
 
         let props = match conf.section(Some(&section)) {
             Some(props) => props,
@@ -213,11 +161,7 @@ impl ProvideCredential for ProfileCredentialProvider {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let profile = self
-                .profile
-                .clone()
-                .or_else(|| ctx.env_var(AWS_PROFILE))
-                .unwrap_or_else(|| "default".to_string());
+            let profile = self.shared_config().profile_name(ctx);
 
             // Try credentials file first
             if let Some(cred) = self.load_from_credentials_file(ctx, &profile).await? {

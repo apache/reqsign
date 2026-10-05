@@ -18,7 +18,6 @@
 use crate::Credential;
 use asyncband::mutex::Mutex;
 use http::{Method, Request, StatusCode};
-use ini::{Ini, ParseOption};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
@@ -148,57 +147,20 @@ impl SSOCredentialProvider {
             }));
         }
 
-        // Otherwise, load from config file
-        // Priority: 1. self.profile, 2. AWS_PROFILE env var, 3. "default"
-        let profile_name = self
-            .profile
-            .clone()
-            .or_else(|| ctx.env_var("AWS_PROFILE"))
-            .unwrap_or_else(|| "default".to_string());
-        self.load_from_config_file(ctx, &profile_name).await
+        let mut shared = crate::SharedConfig::new();
+        if let Some(profile) = &self.profile {
+            shared = shared.with_profile(profile);
+        }
+        self.load_from_config_file(ctx, &shared).await
     }
 
     async fn load_from_config_file(
         &self,
         ctx: &Context,
-        profile: &str,
+        shared: &crate::SharedConfig,
     ) -> Result<Option<SSOConfig>> {
-        // Load AWS config file
-        let config_path = ctx
-            .env_var("AWS_CONFIG_FILE")
-            .unwrap_or_else(|| "~/.aws/config".to_string());
-
-        let expanded_path = if config_path.starts_with("~/") {
-            match ctx.expand_home_dir(&config_path) {
-                Some(expanded) => expanded,
-                None => return Ok(None),
-            }
-        } else {
-            config_path
-        };
-
-        let content = match ctx.file_read(&expanded_path).await {
-            Ok(content) => content,
-            Err(_) => return Ok(None),
-        };
-
-        // AWS config values are literal, including commands in unselected profiles.
-        let conf = Ini::load_from_str_opt(
-            &String::from_utf8_lossy(&content),
-            ParseOption {
-                enabled_quote: false,
-                enabled_escape: false,
-                ..Default::default()
-            },
-        )
-        .map_err(|_| Error::config_invalid("failed to parse AWS SSO config file"))?;
-
-        let profile_section = if profile == "default" {
-            profile.to_string()
-        } else {
-            format!("profile {profile}")
-        };
-
+        let conf = shared.load_config_file(ctx).await?;
+        let profile_section = crate::config::config_section(&shared.profile_name(ctx));
         let Some(section) = conf.section(Some(profile_section)) else {
             return Ok(None);
         };
@@ -246,7 +208,7 @@ impl SSOCredentialProvider {
             sso_role_name: required(section, AWS_SSO_ROLE_NAME)?,
             sso_start_url: start_url,
             session_name,
-            config_path: Some(expanded_path),
+            config_path: shared.config_file_path(ctx),
         }))
     }
 

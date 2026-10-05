@@ -19,6 +19,12 @@
 
 pub mod constants;
 
+mod config;
+pub use config::{Profile, SharedConfig};
+mod imds;
+mod region;
+pub use region::IMDSv2RegionProvider;
+
 #[doc(hidden)]
 pub mod assume_role;
 pub use assume_role::AssumeRoleGrant;
