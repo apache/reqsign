@@ -15,32 +15,27 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use anyhow::Result;
+use reqsign::aws::{
+    self, DefaultCredentialProvider, S3ExpressSessionGrant, S3ExpressSessionMode,
+    S3ExpressSessionProvider,
+};
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // ANCHOR: quickstart
-    use reqsign::azure;
-    // Create a default signer for Azure Storage
-    let signer = azure::default_signer();
-
-    // Build a request
-    let mut req = http::Request::builder()
-        .method(http::Method::GET)
-        .uri("https://myaccount.blob.core.windows.net/mycontainer/myblob")
-        .body(())
-        .unwrap()
-        .into_parts()
-        .0;
-
-    // Sign the request
+async fn main() -> anyhow::Result<()> {
+    let provider = S3ExpressSessionProvider::new(
+        "my-bucket--usw2-az1--x-s3",
+        DefaultCredentialProvider::new(),
+    )
+    .with_region("us-west-2")
+    .with_grant(S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly));
+    let signer = aws::default_signer("s3express", "us-west-2").with_credential_provider(provider);
+    let mut req = http::Request::get(
+        "https://my-bucket--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/object",
+    )
+    .body(())?
+    .into_parts()
+    .0;
+    // The signer caches the session with its expiration and refreshes as needed.
     signer.sign(&mut req, None).await?;
-
-    // ANCHOR_END: quickstart
-
-    // Execute the request would require rebuilding with body
-    // In real usage, you'd use your HTTP client here
-    println!("Request signed successfully!");
-
     Ok(())
 }

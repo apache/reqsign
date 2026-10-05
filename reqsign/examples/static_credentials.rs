@@ -15,32 +15,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use anyhow::Result;
-
 #[tokio::main]
-async fn main() -> Result<()> {
-    // ANCHOR: quickstart
-    use reqsign::azure;
-    // Create a default signer for Azure Storage
-    let signer = azure::default_signer();
+async fn main() -> anyhow::Result<()> {
+    // ANCHOR: static
+    use reqsign::aws::{self, StaticCredentialProvider};
+    let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
+        StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
+    );
+    // ANCHOR_END: static
 
-    // Build a request
-    let mut req = http::Request::builder()
-        .method(http::Method::GET)
-        .uri("https://myaccount.blob.core.windows.net/mycontainer/myblob")
-        .body(())
-        .unwrap()
+    // ANCHOR: chain
+    let provider = reqsign::aws::DefaultCredentialProvider::new().push_front(
+        StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
+    );
+    // ANCHOR_END: chain
+    let _custom_chain_signer =
+        aws::default_signer("s3", "us-east-1").with_credential_provider(provider);
+
+    let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/my-object")
+        .body(())?
         .into_parts()
         .0;
-
-    // Sign the request
     signer.sign(&mut req, None).await?;
-
-    // ANCHOR_END: quickstart
-
-    // Execute the request would require rebuilding with body
-    // In real usage, you'd use your HTTP client here
-    println!("Request signed successfully!");
-
+    assert!(req.headers.contains_key("authorization"));
     Ok(())
 }

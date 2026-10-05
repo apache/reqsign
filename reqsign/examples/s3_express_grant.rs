@@ -15,32 +15,23 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use anyhow::Result;
+use reqsign::aws::{
+    DefaultCredentialProvider, S3ExpressSessionConfig, S3ExpressSessionGrant,
+    S3ExpressSessionGranter, S3ExpressSessionMode,
+};
+use reqsign::{Granter, default_context};
 
 #[tokio::main]
-async fn main() -> Result<()> {
-    // ANCHOR: quickstart
-    use reqsign::azure;
-    // Create a default signer for Azure Storage
-    let signer = azure::default_signer();
-
-    // Build a request
-    let mut req = http::Request::builder()
-        .method(http::Method::GET)
-        .uri("https://myaccount.blob.core.windows.net/mycontainer/myblob")
-        .body(())
-        .unwrap()
-        .into_parts()
-        .0;
-
-    // Sign the request
-    signer.sign(&mut req, None).await?;
-
-    // ANCHOR_END: quickstart
-
-    // Execute the request would require rebuilding with body
-    // In real usage, you'd use your HTTP client here
-    println!("Request signed successfully!");
-
+async fn main() -> anyhow::Result<()> {
+    let config = S3ExpressSessionConfig::from_bucket("my-bucket--usw2-az1--x-s3", "us-west-2")?;
+    let grant = S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly);
+    let granter = Granter::new(
+        default_context(),
+        DefaultCredentialProvider::new(),
+        S3ExpressSessionGranter::new(config, grant),
+    );
+    let scoped = granter.grant(None).await?;
+    // Keep the entire credential, including expires_in, when passing it on.
+    assert!(scoped.expires_in.is_some());
     Ok(())
 }

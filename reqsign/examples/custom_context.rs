@@ -15,32 +15,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use anyhow::Result;
+use reqsign::aws::{DefaultCredentialProvider, RequestSigner};
+use reqsign::{Context, OsEnv, Signer};
+use reqsign_command_execute_tokio::TokioCommandExecute;
+use reqsign_file_read_tokio::TokioFileRead;
+use reqsign_http_send_reqwest::ReqwestHttpSend;
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // ANCHOR: quickstart
-    use reqsign::azure;
-    // Create a default signer for Azure Storage
-    let signer = azure::default_signer();
-
-    // Build a request
-    let mut req = http::Request::builder()
-        .method(http::Method::GET)
-        .uri("https://myaccount.blob.core.windows.net/mycontainer/myblob")
-        .body(())
-        .unwrap()
-        .into_parts()
-        .0;
-
-    // Sign the request
-    signer.sign(&mut req, None).await?;
-
-    // ANCHOR_END: quickstart
-
-    // Execute the request would require rebuilding with body
-    // In real usage, you'd use your HTTP client here
-    println!("Request signed successfully!");
-
-    Ok(())
+fn main() {
+    let ctx = Context::new()
+        .with_file_read(TokioFileRead)
+        .with_http_send(ReqwestHttpSend::default())
+        .with_env(OsEnv)
+        .with_command_execute(TokioCommandExecute);
+    let _signer = Signer::new(
+        ctx,
+        DefaultCredentialProvider::new(),
+        RequestSigner::new("s3", "us-east-1"),
+    );
 }

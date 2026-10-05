@@ -15,32 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use anyhow::Result;
+use bytes::Bytes;
+use reqsign::{Context, HttpSend, Result};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // ANCHOR: quickstart
-    use reqsign::azure;
-    // Create a default signer for Azure Storage
-    let signer = azure::default_signer();
+// Implement this adapter over your own transport, such as browser fetch().
+#[derive(Debug)]
+struct MyHttpSend;
 
-    // Build a request
-    let mut req = http::Request::builder()
-        .method(http::Method::GET)
-        .uri("https://myaccount.blob.core.windows.net/mycontainer/myblob")
-        .body(())
-        .unwrap()
-        .into_parts()
-        .0;
+impl HttpSend for MyHttpSend {
+    async fn http_send(&self, _req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+        todo!("drive the request through your own transport")
+    }
+}
 
-    // Sign the request
-    signer.sign(&mut req, None).await?;
-
-    // ANCHOR_END: quickstart
-
-    // Execute the request would require rebuilding with body
-    // In real usage, you'd use your HTTP client here
-    println!("Request signed successfully!");
-
-    Ok(())
+fn main() {
+    // This example only assembles the context; implement http_send before use.
+    let _ctx = Context::new().with_http_send(MyHttpSend);
 }
