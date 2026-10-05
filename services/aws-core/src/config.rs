@@ -99,24 +99,27 @@ impl SharedConfig {
             .or_else(|| ctx.env_var("AWS_DEFAULT_REGION"))
     }
 
-    pub(crate) async fn load_config_file(&self, ctx: &Context) -> Result<Ini> {
-        read_ini(
+    pub(crate) fn config_file_path(&self, ctx: &Context) -> Option<String> {
+        file_path(
             ctx,
             self.config_file.as_deref(),
             "AWS_CONFIG_FILE",
             "~/.aws/config",
         )
-        .await
+    }
+
+    pub(crate) async fn load_config_file(&self, ctx: &Context) -> Result<Ini> {
+        read_ini(ctx, self.config_file_path(ctx)).await
     }
 
     pub(crate) async fn load_credentials_file(&self, ctx: &Context) -> Result<Ini> {
-        read_ini(
+        let path = file_path(
             ctx,
             self.credentials_file.as_deref(),
             "AWS_SHARED_CREDENTIALS_FILE",
             "~/.aws/credentials",
-        )
-        .await
+        );
+        read_ini(ctx, path).await
     }
 
     /// Read and merge the selected profile. This never contacts IMDS, even when enabled.
@@ -221,12 +224,18 @@ pub(crate) fn config_section(profile: &str) -> String {
     }
 }
 
-async fn read_ini(ctx: &Context, explicit: Option<&str>, env: &str, default: &str) -> Result<Ini> {
-    let path = explicit
-        .map(str::to_owned)
-        .or_else(|| ctx.env_var(env))
-        .unwrap_or_else(|| default.into());
-    let Some(path) = ctx.expand_home_dir(&path) else {
+fn aws_parse_options() -> ParseOption {
+    // Preserve literal commands and keep nested settings distinct from profile properties.
+    ParseOption {
+        enabled_quote: false,
+        enabled_escape: false,
+        enabled_indented_mutiline_value: true,
+        ..Default::default()
+    }
+}
+
+async fn read_ini(ctx: &Context, path: Option<String>) -> Result<Ini> {
+    let Some(path) = path else {
         return Ok(Ini::new());
     };
     let Ok(content) = ctx.file_read(&path).await else {
@@ -234,15 +243,14 @@ async fn read_ini(ctx: &Context, explicit: Option<&str>, env: &str, default: &st
     };
     let content = std::str::from_utf8(&content)
         .map_err(|_| Error::config_invalid("AWS shared configuration is not UTF-8"))?;
-    // Commands contain literal quotes/backslashes; nested settings belong to their parent value.
-    Ini::load_from_str_opt(
-        content,
-        ParseOption {
-            enabled_quote: false,
-            enabled_escape: false,
-            enabled_indented_mutiline_value: true,
-            ..Default::default()
-        },
-    )
-    .map_err(|_| Error::config_invalid("failed to parse AWS shared configuration"))
+    Ini::load_from_str_opt(content, aws_parse_options())
+        .map_err(|_| Error::config_invalid("failed to parse AWS shared configuration"))
+}
+
+fn file_path(ctx: &Context, explicit: Option<&str>, env: &str, default: &str) -> Option<String> {
+    let path = explicit
+        .map(str::to_owned)
+        .or_else(|| ctx.env_var(env))
+        .unwrap_or_else(|| default.into());
+    ctx.expand_home_dir(&path)
 }

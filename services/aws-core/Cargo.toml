@@ -27,6 +27,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+asyncband = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 futures-timer = { version = "3", features = ["wasm-bindgen"] }
