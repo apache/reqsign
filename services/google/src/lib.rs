@@ -35,7 +35,7 @@ mod credential_access_boundary;
 pub use credential_access_boundary::ClientSideCredentialAccessBoundaryGranter;
 pub use credential_access_boundary::{
     CredentialAccessBoundaryGrant, CredentialAccessBoundaryPermissions,
-    ServerSideCredentialAccessBoundaryGranter,
+    CredentialAccessBoundaryRule, ServerSideCredentialAccessBoundaryGranter,
 };
 
 mod service_account_impersonation;
