@@ -28,6 +28,7 @@ use std::time::Duration;
 /// explicit endpoint, `AWS_EC2_METADATA_SERVICE_ENDPOINT`, then the IPv4 metadata
 /// endpoint (or IPv6 when `AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE=IPv6`).
 ///
+/// The runtime-independent timer also supports browser timers on wasm32.
 /// The entire discovery has a default two-second deadline with no retries. HTTP
 /// requests use the supplied Context. Timeout cancels the in-flight HTTP future;
 /// the HTTP adapter must cooperate with cancellation and must not block polling.

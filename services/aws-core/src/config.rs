@@ -124,7 +124,8 @@ impl SharedConfig {
     /// Region precedence: explicit override, `AWS_REGION`, `AWS_DEFAULT_REGION`,
     /// merged profile. Endpoint precedence: explicit override, `AWS_ENDPOINT_URL`,
     /// merged profile. Missing values remain `None`; no application defaults are added.
-    /// Service-specific endpoint settings and endpoint rules are not resolved.
+    /// Service-specific endpoint settings, `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS`,
+    /// and endpoint rules are not interpreted. Callers decide how to use the setting.
     pub async fn load(&self, ctx: &Context) -> Result<Profile> {
         let name = self.profile_name(ctx);
         let config = self.load_config_file(ctx).await?;

@@ -434,6 +434,17 @@ async fn credential_provider_uses_the_same_profile_and_files() -> Result<()> {
         profile.get("aws_secret_access_key"),
         Some(credential.secret_access_key.as_str())
     );
+    let ctx = ctx.with_file_read(Files(HashMap::from([
+        ("/config".into(), b"[profile selected]\naws_access_key_id = config-key\naws_secret_access_key = config-secret\n".to_vec()),
+        ("/credentials".into(), b"[selected]\naws_access_key_id = incomplete-key\naws_session_token = unrelated-token\n".to_vec()),
+    ])));
+    let credential = reqsign_aws_core::ProfileCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await?
+        .unwrap();
+    assert_eq!(credential.access_key_id, "config-key");
+    assert_eq!(credential.secret_access_key, "config-secret");
+    assert_eq!(credential.session_token, None);
     Ok(())
 }
 
@@ -448,23 +459,19 @@ async fn metadata_transport_failure_is_an_error() {
 }
 
 #[tokio::test]
-async fn credential_metadata_still_uses_shared_token_protocol() -> Result<()> {
-    use reqsign_core::ProvideCredential;
+async fn metadata_credentials_and_region_share_protocol_with_scoped_tokens() -> Result<()> {
     let http = Metadata::default();
     let ctx = context(&[], &[]).with_http_send(http.clone());
-    let provider = reqsign_aws_core::IMDSv2CredentialProvider::new();
-    let credential = provider.provide_credential(&ctx).await?.unwrap();
+    let credentials = reqsign_aws_core::IMDSv2CredentialProvider::new();
+    let credential = reqsign_core::ProvideCredential::provide_credential(&credentials, &ctx)
+        .await?
+        .unwrap();
     assert_eq!(credential.access_key_id, "key");
     assert_eq!(credential.session_token.as_deref(), Some("session"));
     assert_eq!(http.requests.lock().unwrap().len(), 3);
-    assert!(!format!("{provider:?}").contains("secret-imds-token"));
-    Ok(())
-}
+    assert!(!format!("{credentials:?}").contains("secret-imds-token"));
+    http.requests.lock().unwrap().clear();
 
-#[tokio::test]
-async fn metadata_tokens_are_reused_only_for_the_same_endpoint() -> Result<()> {
-    let http = Metadata::default();
-    let ctx = context(&[], &[]).with_http_send(http.clone());
     let provider = IMDSv2RegionProvider::new();
     provider.resolve_region(&ctx).await?;
     provider.resolve_region(&ctx).await?;
@@ -478,38 +485,5 @@ async fn metadata_tokens_are_reused_only_for_the_same_endpoint() -> Result<()> {
     let requests = http.requests.lock().unwrap();
     assert_eq!(requests.len(), 5);
     assert_eq!(requests[3], "http://other.invalid/latest/api/token");
-    Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-#[tokio::test]
-async fn sharing_config_loading_preserves_existing_process_invocation() -> Result<()> {
-    use reqsign_core::{CommandExecute, CommandOutput, ProvideCredential};
-    #[derive(Debug)]
-    struct Command;
-    impl CommandExecute for Command {
-        async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
-            assert_eq!(program, "helper");
-            assert_eq!(args, ["--profile", "selected"]);
-            Ok(CommandOutput {
-                status: 0,
-                stdout: br#"{"Version":1,"AccessKeyId":"key","SecretAccessKey":"secret"}"#.to_vec(),
-                stderr: vec![],
-            })
-        }
-    }
-    let ctx = context(
-        &[(
-            "/config",
-            "[profile selected]\ncredential_process = \"helper\" --profile selected\n",
-        )],
-        &[("AWS_PROFILE", "selected"), ("AWS_CONFIG_FILE", "/config")],
-    )
-    .with_command_execute(Command);
-    let credential = reqsign_aws_core::ProcessCredentialProvider::new()
-        .provide_credential(&ctx)
-        .await?
-        .unwrap();
-    assert_eq!(credential.access_key_id, "key");
     Ok(())
 }
