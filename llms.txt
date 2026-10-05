@@ -1,0 +1,35 @@
+# Apache Reqsign™: Build. Sign. Send.
+
+> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.
+
+Reqsign keeps explicit per-provider signing protocols while sharing one composition pattern: build the request, load or grant credentials, sign, then send with your own HTTP client.
+
+## Table of Contents
+
+### Docs
+
+- [Build. Sign. Send. | Apache Reqsign™](https://reqsign.apache.org/): Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine — without pulling in full vendor SDKs.
+- [Community | Apache Reqsign™](https://reqsign.apache.org/community/): How Apache Reqsign is governed and where to ask questions, report issues, and contribute.
+- [Download | Apache Reqsign™](https://reqsign.apache.org/download/): Official Apache source releases, signatures, checksums, and crates.io convenience packages for Apache Reqsign.
+- [Architecture | Apache Reqsign™](https://reqsign.apache.org/docs/architecture/): How Reqsign is put together — Context, ProvideCredential, SignRequest, Signer, and Granter — and the three levels at which you can plug in.
+- [Reqsign vs vendor SDKs | Apache Reqsign™](https://reqsign.apache.org/docs/comparison/): <!--
+- [Getting Started | Apache Reqsign™](https://reqsign.apache.org/docs/getting-started/): Install Reqsign and sign your first cloud request in five minutes.
+- [Providers | Apache Reqsign™](https://reqsign.apache.org/docs/providers/): Every cloud provider Reqsign supports, with signing schemes, request authentication, granting operations, and WASM status traced to source.
+- [What is Reqsign? | Apache Reqsign™](https://reqsign.apache.org/docs/what-is-reqsign/): <!--
+- [Loading credentials | Apache Reqsign™](https://reqsign.apache.org/docs/guides/credentials/): Use each provider's default credential chain, adjust its slots, or implement your own credential source.
+- [Custom runtimes and WASM | Apache Reqsign™](https://reqsign.apache.org/docs/guides/custom-runtimes/): Replace any Context capability with your own implementation, down to running in the browser on wasm32-unknown-unknown.
+- [Scoped credential granting | Apache Reqsign™](https://reqsign.apache.org/docs/guides/granting/): <!--
+- [Presigning and query authentication | Apache Reqsign™](https://reqsign.apache.org/docs/guides/presigning/): Move authentication from headers into the URL and hand out presigned requests safely.
+- [Testing with mocks | Apache Reqsign™](https://reqsign.apache.org/docs/guides/testing/): <!--
+- [Aliyun OSS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aliyun-oss/): OSS signatures V1, V2, and V4 with a deep RAM credential chain.
+- [AWS SigV4 | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aws-sigv4/): Signature Version 4 for AWS services, with the full shared credential chain.
+- [AWS SigV4a | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aws-sigv4a/): Asymmetric multi-region signing for AWS, sharing the SigV4 credential chain.
+- [Azure Storage | Apache Reqsign™](https://reqsign.apache.org/docs/providers/azure-storage/): Shared Key, SAS, and Microsoft Entra ID auth for Azure Storage.
+- [Google Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/google/): OAuth 2.0 tokens and V4 signed URLs for Google Cloud services.
+- [Huawei Cloud OBS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/huaweicloud-obs/): OBS signature signing for Huawei Cloud Object Storage.
+- [Oracle Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/oracle/): OCI HTTP request signatures from API keys and config files.
+- [Tencent COS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/tencent-cos/): COS signatures with OIDC federation for Tencent Cloud Object Storage.
+- [Volcengine TOS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/volcengine-tos/): TOS signatures and presigned URLs for Volcengine object storage.
+- [API Reference | Apache Reqsign™](https://reqsign.apache.org/docs/reference/api/): <!--
+- [Signing contracts | Apache Reqsign™](https://reqsign.apache.org/docs/reference/signing-contracts/): The behavioral guarantees of sign and grant — URI ownership, atomicity, freshness, expiration, redaction, and error semantics.
+- [Versioning and targets | Apache Reqsign™](https://reqsign.apache.org/docs/reference/versioning-and-targets/): Version tracks across the Reqsign crates, and the supported Rust and WASM targets.

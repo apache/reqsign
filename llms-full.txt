@@ -1,0 +1,2614 @@
+# Apache Reqsign™: Build. Sign. Send.
+
+> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.
+
+Reqsign keeps explicit per-provider signing protocols while sharing one composition pattern: build the request, load or grant credentials, sign, then send with your own HTTP client.
+
+---
+url: https://reqsign.apache.org/
+---
+# Build. Sign. Send. | Apache Reqsign™
+
+[Skip to main content](#%5F%5Fdocusaurus%5FskipToContent%5Ffallback)
+
+[![Apache Reqsign](/img/logo.svg)![Apache Reqsign](/img/logo_dark.svg)](/)
+
+[Docs](/docs/what-is-reqsign/)[Providers](/docs/providers/)[Download](/download/)[Community](/community/)
+
+[ASF](#)
+* [Foundation](https://www.apache.org/)
+* [License](https://www.apache.org/licenses/)
+* [Events](https://www.apache.org/events/current-event.html)
+* [Privacy](https://privacy.apache.org/policies/privacy-policy-public.html)
+* [Security](https://www.apache.org/security/)
+* [Sponsorship](https://www.apache.org/foundation/sponsorship.html)
+* [Thanks](https://www.apache.org/foundation/thanks.html)
+* [Code of Conduct](https://www.apache.org/foundation/policies/conduct.html)
+
+[](https://github.com/apache/reqsign)[](https://discord.gg/XQy8yGR2dg)
+
+Apache Reqsign™ — Request Signing
+
+# Build. Sign. Send.
+
+Sign HTTP requests, load cloud credentials, and grant scoped access — without pulling in a full vendor SDK.
+
+[Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
+
+9signing providers
+
+5granting operations
+
+5WASM-ready providers
+
+0vendor SDKs required
+
+$ cargo add reqsign --features aws
+
+AWSAzureGoogle
+
+```
+
+use reqsign::aws;
+
+// Create a default signer for S3 in us-east-1
+
+let signer = aws::default_signer("s3", "us-east-1");
+
+
+// Build a request
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://s3.amazonaws.com/my-bucket/my-object")
+
+    .body(())
+
+    .unwrap()
+
+    .into_parts()
+
+    .0;
+
+
+// Sign the request
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+Proven in production
+
+[Apache OpenDAL™](https://opendal.apache.org/) signs every cloud storage request — S3, GCS, Azure Blob, COS, TOS, and more — through Reqsign.
+
+[uv](https://github.com/astral-sh/uv) the Python package manager, authenticates to AWS, Azure, and Google Cloud with Reqsign.
+
+Why Reqsign
+
+## The signing layer, and nothing else.
+
+Reqsign keeps each provider's protocol explicit while sharing one composition pattern — so your client stays yours.
+
+01
+
+### Signing without a full SDK
+
+Build requests with plain http types, sign them in place, and send with any client. Encoded URIs, atomic request mutation, and expiration follow explicit, documented contracts.
+
+02
+
+### Credentials that fit the provider
+
+Every provider keeps its own credential semantics. Default chains cover environment, config files, instance metadata, OIDC federation, CLIs, and credential processes.
+
+03
+
+### Scoped access you can grant
+
+One Granter abstraction covers S3 Access Grants, S3 Express sessions, Azure user delegation SAS, and GCP Credential Access Boundary — downscoping that vendor SDKs rarely unify.
+
+04
+
+### A runtime you control
+
+Context makes file reading, HTTP sending, environment, and command execution pluggable. Swap Tokio and reqwest for your own runtime, or compile to WebAssembly.
+
+How it works
+
+## Three steps. Your client stays in charge.
+
+1. 01  
+### Build  
+Construct the request with the http crate's plain types — reqsign never wraps your HTTP client.  
+→
+2. 02  
+### Load or grant  
+Resolve credentials through the provider's default chain, your own ProvideCredential, or a Granter that downscopes them first.  
+→
+3. 03  
+### Sign, then send  
+One sign call mutates the request head atomically — headers or query string — and hands it back for any client to send.
+
+Capabilities
+
+## From default chains to downscoped grants.
+
+Start with one call, then take over any piece: credentials, runtime, query authentication, or the grant that scopes access before a request is ever signed.
+
+* [Default signerOne call wires the default context and credential chain.↗](/docs/getting-started/#every-provider-one-pattern)
+* [Custom assemblyPick every component of the signer explicitly.↗](/docs/architecture/#where-to-plug-in)
+* [PresigningProduce query-authenticated URLs you can hand out.↗](/docs/guides/presigning/)
+* [Credential grantingDownscope credentials before a request is ever signed.↗](/docs/guides/granting/)
+* [Custom context & WASMBring your own runtime — down to wasm32-unknown-unknown.↗](/docs/guides/custom-runtimes/#wasm)
+
+Default signer
+
+```
+
+use reqsign::aws::{self, StaticCredentialProvider};
+
+let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
+
+    StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
+
+);
+
+
+```
+
+Providers
+
+## 9 providers. Explicit schemes.
+
+Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
+
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)
+
+[Read the provider matrix →](/docs/providers/)
+
+Start signing
+
+## Ship your own client, not an SDK.
+
+Five minutes to a signed request — with credentials, presigning, and scoped grants when you need them.
+
+[Sign your first request →](/docs/getting-started/)[Read the provider matrix](/docs/providers/)[Join the community](/community/)
+
+[![Apache Software Foundation](/./img/asf_logo_wide.svg)![Apache Software Foundation](/./img/asf_logo_wide.svg)](https://www.apache.org/)
+
+Copyright © 2022-2026, The Apache Software Foundation  
+Apache Reqsign, Reqsign, Apache, the Apache feather and the Apache Reqsign project logo are either registered trademarks or trademarks of the Apache Software Foundation.
+
+---
+
+---
+url: https://reqsign.apache.org/community/
+---
+# Community | Apache Reqsign™
+
+[Skip to main content](#%5F%5Fdocusaurus%5FskipToContent%5Ffallback)
+
+[![Apache Reqsign](/img/logo.svg)![Apache Reqsign](/img/logo_dark.svg)](/)
+
+[Docs](/docs/what-is-reqsign/)[Providers](/docs/providers/)[Download](/download/)[Community](/community/)
+
+[ASF](#)
+* [Foundation](https://www.apache.org/)
+* [License](https://www.apache.org/licenses/)
+* [Events](https://www.apache.org/events/current-event.html)
+* [Privacy](https://privacy.apache.org/policies/privacy-policy-public.html)
+* [Security](https://www.apache.org/security/)
+* [Sponsorship](https://www.apache.org/foundation/sponsorship.html)
+* [Thanks](https://www.apache.org/foundation/thanks.html)
+* [Code of Conduct](https://www.apache.org/foundation/policies/conduct.html)
+
+[](https://github.com/apache/reqsign)[](https://discord.gg/XQy8yGR2dg)
+
+# Community
+
+Apache Reqsign™ is a top-level project of the Apache Software Foundation, governed by its own Project Management Committee. It started inside[Apache OpenDAL™](https://opendal.apache.org/) and graduated to a standalone project in 2026; OpenDAL remains one of its largest users.
+
+## Where things happen[​](#where-things-happen "Direct link to Where things happen")
+
+* **Mailing list** — [dev@reqsign.apache.org](mailto:dev@reqsign.apache.org)([subscribe](mailto:dev-subscribe@reqsign.apache.org),[archives](https://lists.apache.org/list.html?dev@reqsign.apache.org)). Project decisions, release votes, and design discussions happen here.
+* **[GitHub issues](https://github.com/apache/reqsign/issues)** — bug reports and feature requests.
+* **[GitHub discussions](https://github.com/apache/reqsign/discussions)**— questions and longer design conversations.
+* **[Discord](https://discord.gg/XQy8yGR2dg)** — real-time chat, shared with the OpenDAL community.
+* **[Contributing guide](https://github.com/apache/reqsign/blob/main/CONTRIBUTING.md)**— how to build, test, and land a change.
+
+## Security[​](#security "Direct link to Security")
+
+Report security issues privately following the[ASF vulnerability handling process](https://www.apache.org/security/) — never through public issues.
+
+## The Apache Way[​](#the-apache-way "Direct link to The Apache Way")
+
+Reqsign follows the [Apache Way](https://www.apache.org/theapacheway/): community over code, open decisions on the mailing list, and releases voted by the PMC. Everyone is welcome — using, reporting, documenting, and reviewing are all contributions.
+
+* [Where things happen](#where-things-happen)
+* [Security](#security)
+* [The Apache Way](#the-apache-way)
+
+[![Apache Software Foundation](/./img/asf_logo_wide.svg)![Apache Software Foundation](/./img/asf_logo_wide.svg)](https://www.apache.org/)
+
+Copyright © 2022-2026, The Apache Software Foundation  
+Apache Reqsign, Reqsign, Apache, the Apache feather and the Apache Reqsign project logo are either registered trademarks or trademarks of the Apache Software Foundation.
+
+---
+
+---
+url: https://reqsign.apache.org/download/
+---
+# Download | Apache Reqsign™
+
+[Skip to main content](#%5F%5Fdocusaurus%5FskipToContent%5Ffallback)
+
+[![Apache Reqsign](/img/logo.svg)![Apache Reqsign](/img/logo_dark.svg)](/)
+
+[Docs](/docs/what-is-reqsign/)[Providers](/docs/providers/)[Download](/download/)[Community](/community/)
+
+[ASF](#)
+* [Foundation](https://www.apache.org/)
+* [License](https://www.apache.org/licenses/)
+* [Events](https://www.apache.org/events/current-event.html)
+* [Privacy](https://privacy.apache.org/policies/privacy-policy-public.html)
+* [Security](https://www.apache.org/security/)
+* [Sponsorship](https://www.apache.org/foundation/sponsorship.html)
+* [Thanks](https://www.apache.org/foundation/thanks.html)
+* [Code of Conduct](https://www.apache.org/foundation/policies/conduct.html)
+
+[](https://github.com/apache/reqsign)[](https://discord.gg/XQy8yGR2dg)
+
+# Download
+
+## Official Apache source releases[​](#official-apache-source-releases "Direct link to Official Apache source releases")
+
+The official distribution channel for Apache Reqsign™ is the source release published through the ASF mirror system. Each release ships a source archive with a PGP signature and SHA-512 checksum:
+
+* **[Download source releases](https://www.apache.org/dyn/closer.lua/reqsign/)**— via the ASF mirror resolver.
+* **[KEYS](https://downloads.apache.org/reqsign/KEYS)** — release managers' public signing keys.
+
+### Verifying a release[​](#verifying-a-release "Direct link to Verifying a release")
+
+```
+
+# Import the release signing keys once:
+
+curl -O https://downloads.apache.org/reqsign/KEYS
+
+gpg --import KEYS
+
+
+# Verify the signature and checksum of a downloaded artifact:
+
+gpg --verify apache-reqsign-X.Y.Z-src.tar.gz.asc
+
+sha512sum -c apache-reqsign-X.Y.Z-src.tar.gz.sha512
+
+
+```
+
+See the [ASF release verification guide](https://www.apache.org/dyn/closer.cgi#verify)for details on why and how to verify.
+
+## Rust convenience packages[​](#rust-convenience-packages "Direct link to Rust convenience packages")
+
+For day-to-day Rust development, releases are also published to crates.io. These packages are a convenience distribution built from the official source release — they do not replace it:
+
+```
+
+cargo add reqsign --features aws
+
+
+```
+
+* [reqsign on crates.io](https://crates.io/crates/reqsign) — the facade crate; see [Installation](/docs/getting-started/) for features.
+* Individual service crates (`reqsign-core`, `reqsign-aws-v4`, ...) are linked from the [API reference](/docs/reference/api/).
+
+## Release notes[​](#release-notes "Direct link to Release notes")
+
+Release notes for every version are published with the[GitHub releases](https://github.com/apache/reqsign/releases).
+
+## Historical releases[​](#historical-releases "Direct link to Historical releases")
+
+Older releases move out of the mirror system and remain permanently available in the [Apache archive](https://archive.apache.org/dist/reqsign/). Use the latest release unless you have a specific reason not to.
+
+* [Official Apache source releases](#official-apache-source-releases)  
+   * [Verifying a release](#verifying-a-release)
+* [Rust convenience packages](#rust-convenience-packages)
+* [Release notes](#release-notes)
+* [Historical releases](#historical-releases)
+
+[![Apache Software Foundation](/./img/asf_logo_wide.svg)![Apache Software Foundation](/./img/asf_logo_wide.svg)](https://www.apache.org/)
+
+Copyright © 2022-2026, The Apache Software Foundation  
+Apache Reqsign, Reqsign, Apache, the Apache feather and the Apache Reqsign project logo are either registered trademarks or trademarks of the Apache Software Foundation.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/architecture/
+---
+# Architecture | Apache Reqsign™
+
+# Architecture
+
+One page on how Reqsign is put together. Everything you compose is one of five pieces:
+
+```
+
+Signer
+
+├── Context            where I/O comes from (files, HTTP, env, commands)
+
+├── ProvideCredential  where credentials come from
+
+└── SignRequest        the provider's wire protocol
+
+
+Granter                same shape, for downscoping credentials
+
+├── Context
+
+├── ProvideCredential  (source credentials)
+
+└── GrantCredential    the provider's granting operation
+
+
+```
+
+Signers and credential types stay **service-specific on purpose** — the differences between SigV4, Shared Key, and OAuth are real, and hiding them breaks correctness. What every provider shares is this composition pattern.
+
+## Signer[​](#signer "Direct link to Signer")
+
+`Signer` composes the three pieces and adds a credential cache:
+
+```
+
+use reqsign::Signer;
+
+
+let signer = Signer::new(ctx, credential_provider, request_signer);
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+Each `sign` call: checks the cached credential (still valid, and usable until the operation's deadline?); asks the provider for a fresh one if not; then hands the request head and credential to the request signer, which mutates `req` in place.
+
+The exact behavior of `sign` — wire-ready URI ownership, atomicity on error,`expires_in` semantics — is contractual; see[Signing contracts](/docs/reference/signing-contracts/).
+
+Builders swap any component while keeping the others:
+
+```
+
+let signer = signer
+
+    .with_context(custom_ctx)
+
+    .with_credential_provider(static_provider) // clears the credential cache
+
+    .with_request_signer(other_signer);
+
+
+```
+
+## Context[​](#context "Direct link to Context")
+
+`Context` answers "where does I/O come from?" Credential providers need to read files, call metadata endpoints, inspect environment variables, and sometimes run CLIs — but Reqsign never hard-codes how. Every capability is a trait slot:
+
+| Capability         | Trait          | Default (default-context) |
+| ------------------ | -------------- | ------------------------- |
+| Read files         | FileRead       | TokioFileRead             |
+| Send HTTP requests | HttpSend       | ReqwestHttpSend           |
+| Read environment   | Env            | OsEnv                     |
+| Execute commands   | CommandExecute | TokioCommandExecute       |
+
+`Context::new()` wires **no-op stubs**, not silent fallbacks: a credential source that needs HTTP against a stub context returns an error instead of quietly doing nothing, so you always know which capabilities you granted. The facade's `default_context()` returns the full assembly in the table.
+
+```
+
+use reqsign::aws::{DefaultCredentialProvider, RequestSigner};
+
+use reqsign::{Context, OsEnv, Signer};
+
+use reqsign_command_execute_tokio::TokioCommandExecute;
+
+use reqsign_file_read_tokio::TokioFileRead;
+
+use reqsign_http_send_reqwest::ReqwestHttpSend;
+
+
+fn main() {
+
+    let ctx = Context::new()
+
+        .with_file_read(TokioFileRead)
+
+        .with_http_send(ReqwestHttpSend::default())
+
+        .with_env(OsEnv)
+
+        .with_command_execute(TokioCommandExecute);
+
+    let _signer = Signer::new(
+
+        ctx,
+
+        DefaultCredentialProvider::new(),
+
+        RequestSigner::new("s3", "us-east-1"),
+
+    );
+
+}
+
+
+```
+
+This explicit assembly also needs `reqsign-file-read-tokio`,`reqsign-command-execute-tokio`, and `reqsign-http-send-reqwest` as direct dependencies; `default_context()` supplies the same components through the facade.
+
+Why traits instead of feature flags: tests inject static env maps and canned HTTP responses without process-global mutation; sandboxes withhold capabilities by simply not providing them; and WASM targets provide browser-backed implementations. See[Custom runtimes & WASM](/docs/guides/custom-runtimes/).
+
+## ProvideCredential[​](#providecredential "Direct link to ProvideCredential")
+
+One trait behind every credential source — an env reader, a config-file parser, an IMDS client, an OIDC exchanger:
+
+```
+
+pub trait ProvideCredential {
+
+    type Credential;
+
+
+    async fn provide_credential(&self, ctx: &Context)
+
+        -> Result<Option<Self::Credential>>;
+
+}
+
+
+```
+
+The `Option` is the chain protocol:
+
+* `Ok(Some(credential))` — this source resolved a credential; use it.
+* `Ok(None)` — this source has nothing to offer (env var unset, file missing); **try the next source**.
+* `Err(e)` — this source failed (malformed file, network error). A directly installed provider propagates this error to the signer.
+
+`ProvideCredentialChain` logs errors and continues to the next provider, just as it does for `None`. It returns `Ok(None)` when no provider succeeds. Do not use this chain when a source failure must prevent fallback to another identity.
+
+Chains compose providers in order and take the first `Some`; because "not configured" is `None` rather than an error, a chain of ten sources stays quiet until one applies.
+
+`type Credential` is deliberately not a universal struct: AWS needs an access key pair plus optional session token; Azure models `SharedKey`,`SasToken`, and `BearerToken` as an enum. Each service crate defines the credential its signer consumes, and the type system keeps mismatches impossible. Working with chains and writing your own provider:[Loading credentials](/docs/guides/credentials/).
+
+## SignRequest[​](#signrequest "Direct link to SignRequest")
+
+`SignRequest` implements a provider's wire protocol: given a request head and a credential, produce that provider's exact authentication format.
+
+```
+
+pub trait SignRequest {
+
+    type Credential;
+
+
+    fn required_valid_until(
+
+        &self,
+
+        credential: &Self::Credential,
+
+        expires_in: Option<Duration>,
+
+    ) -> Timestamp;
+
+
+    async fn sign_request(
+
+        &self,
+
+        ctx: &Context,
+
+        req: &mut http::request::Parts,
+
+        credential: Option<&Self::Credential>,
+
+        expires_in: Option<Duration>,
+
+    ) -> Result<()>;
+
+}
+
+
+```
+
+`reqsign_aws_v4::RequestSigner` produces SigV4's canonical request and`Authorization` header — or `X-Amz-*` query parameters when `expires_in` is set. `reqsign_azure_storage::RequestSigner` produces Shared Key headers or appends a SAS token. The trait is shared; the wire behavior deliberately is not.
+
+`required_valid_until` is how signing stays ahead of expiration: before signing, the signer asks how long the credential must remain usable — "now" for a header signature, the full window for a presigned URL — and refreshes a cached credential that cannot cover it.
+
+## Credential caching and validity[​](#credential-caching-and-validity "Direct link to Credential caching and validity")
+
+Credential loading can be expensive (an IMDS round-trip, an OIDC exchange), so `Signer` and `Granter` cache what they load. Two methods on`SigningCredential` govern reuse:
+
+```
+
+pub trait SigningCredential {
+
+    /// May a cached credential be reused? Implementations may include a
+
+    /// proactive refresh window.
+
+    fn is_valid(&self) -> bool;
+
+
+    /// Is the credential usable at this exact timestamp? No buffers.
+
+    fn is_valid_at(&self, ts: Timestamp) -> bool;
+
+}
+
+
+```
+
+The two checks have different jobs: `is_valid` answers the _caching_question (refresh early rather than mid-flight); `is_valid_at` answers the_operation_ question against a deadline (a credential fine for header signing can be insufficient for a one-hour presign window). Both must reject credentials lacking the fields required for authentication.
+
+The reuse rule on every `sign` or `grant`:
+
+1. A cached credential is reused only if `is_valid()` **and** it satisfies the operation's deadline.
+2. Otherwise the provider is asked for a fresh credential, which only needs to satisfy the exact deadline.
+3. Errors returned by the configured provider are propagated without retry or reuse of the previous cached credential. A configured provider chain can handle errors internally by trying its next source, as described above.
+
+Replacing a signer's credential provider — or a granter's context or source provider — clears the cache: a credential loaded under one configuration is never reused under another.
+
+## Granter and GrantCredential[​](#granter-and-grantcredential "Direct link to Granter and GrantCredential")
+
+Signing proves a request is yours; granting gets you a _narrower_ credential first. Providers each have an operation for this (S3 Access Grants, S3 Express CreateSession, Azure user delegation SAS, GCP Credential Access Boundary); Reqsign unifies their shape without hiding their semantics:
+
+```
+
+pub trait GrantCredential {
+
+    type Credential: SigningCredential;
+
+
+    fn required_valid_until(
+
+        &self,
+
+        credential: &Self::Credential,
+
+        expires_in: Option<Duration>,
+
+    ) -> Timestamp;
+
+
+    async fn grant_credential(
+
+        &self,
+
+        ctx: &Context,
+
+        credential: &Self::Credential,
+
+        expires_in: Option<Duration>,
+
+    ) -> Result<Self::Credential>;
+
+}
+
+
+```
+
+```
+
+use reqsign::Granter;
+
+
+let granter = Granter::new(ctx, source_provider, granting_operation);
+
+let scoped = granter.grant(Some(Duration::from_secs(900))).await?;
+
+
+```
+
+`Granter` caches the _source_ credential with the same rules as `Signer`, and a granted result owns independent material — it never aliases the cached source, so using it after the source rotates is safe. The walkthrough lives in [Granting scoped access](/docs/guides/granting/).
+
+## Compiles everywhere: dyn pairs and MaybeSend[​](#compiles-everywhere-dyn-pairs-and-maybesend "Direct link to Compiles everywhere: dyn pairs and MaybeSend")
+
+Two mechanics keep this composition model portable:
+
+* Every async trait `Foo` has a `FooDyn` counterpart with a blanket implementation, so `Signer` stores `Arc<dyn FooDyn>` internally while you implement the ergonomic non-dyn trait.
+* Trait futures are `MaybeSend`: `Send` on native targets, relaxed on`wasm32-unknown-unknown`, which is why the crate compiles for the browser without an `async_trait` dependency.
+
+## Where to plug in[​](#where-to-plug-in "Direct link to Where to plug in")
+
+The same components are reachable at three levels — pick by how much you want to control:
+
+**The facade** (`reqsign` crate) — one dependency, feature flags per provider, `default_signer` entries that wire everything. Best for applications; still customizable through `with_*` builders.
+
+**Custom assembly** — the same components, wired explicitly. What`default_signer` does for you, written out:
+
+```
+
+use reqsign::aws::{DefaultCredentialProvider, RequestSigner};
+
+use reqsign::{Context, OsEnv, Signer};
+
+use reqsign_command_execute_tokio::TokioCommandExecute;
+
+use reqsign_file_read_tokio::TokioFileRead;
+
+use reqsign_http_send_reqwest::ReqwestHttpSend;
+
+
+fn main() {
+
+    let ctx = Context::new()
+
+        .with_file_read(TokioFileRead)
+
+        .with_http_send(ReqwestHttpSend::default())
+
+        .with_env(OsEnv)
+
+        .with_command_execute(TokioCommandExecute);
+
+    let _signer = Signer::new(
+
+        ctx,
+
+        DefaultCredentialProvider::new(),
+
+        RequestSigner::new("s3", "us-east-1"),
+
+    );
+
+}
+
+
+```
+
+**Service crates directly** — libraries supporting exactly one provider can skip the facade and depend on `reqsign-core` plus that service crate, letting the application choose context implementations:
+
+```
+
+[dependencies]
+
+reqsign-core = "3"
+
+reqsign-aws-v4 = "3"
+
+
+```
+
+| You are building                                   | Use                                                                                           |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| An application talking to one or more clouds       | facade + default\_signer                                                                      |
+| An application with a custom runtime or HTTP stack | facade + custom assembly                                                                      |
+| A library exposing one provider                    | that service crate directly                                                                   |
+| A WASM target                                      | either, without default-context — see [Custom runtimes & WASM](/docs/guides/custom-runtimes/) |
+
+---
+
+---
+url: https://reqsign.apache.org/docs/comparison/
+---
+# Reqsign vs vendor SDKs | Apache Reqsign™
+
+# Reqsign vs vendor SDKs
+
+If you are building your own HTTP client, SDK, proxy, or storage engine, the real decision is between two ways of getting requests signed: pull in each cloud's full SDK, or use a dedicated signing layer.
+
+| Reqsign                          | Vendor SDKs                                                                                                                                               |                                                                            |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| **Scope**                        | Signing, credential loading, scoped granting — nothing else                                                                                               | The cloud's full API surface: clients, request/response models, transports |
+| **HTTP client**                  | Yours — Reqsign mutates a plain http::request::Parts and hands it back                                                                                    | Bundled; requests flow through the SDK's own stack                         |
+| **Retries, pooling, middleware** | Yours                                                                                                                                                     | The SDK's                                                                  |
+| **Dependency footprint**         | One signing crate per provider, plus the runtime pieces you opt into                                                                                      | Per-cloud SDK trees, each with its own HTTP and TLS choices                |
+| **Multi-cloud**                  | One composition pattern (Context \+ ProvideCredential \+ SignRequest) across nine providers, protocols kept explicit                                      | One SDK per cloud, each with its own idioms                                |
+| **Custom runtimes / WASM**       | Pluggable I/O via [Context](/docs/architecture/#context), wasm32-unknown-unknown for a [verified subset](/docs/reference/versioning-and-targets/#targets) | Generally assumes the SDK's supported runtimes                             |
+| **Beyond signing**               | Out of scope by design                                                                                                                                    | Pagination, waiters, service helpers, management APIs                      |
+
+## When Reqsign fits[​](#when-reqsign-fits "Direct link to When Reqsign fits")
+
+You own the HTTP layer and want to keep it: a database's storage backend, a CLI, a gateway, an SDK of your own. You need wire-correct signatures, production-grade credential chains, and perhaps presigning or downscoped grants — without inheriting a vendor SDK's HTTP stack, retry policy, and dependency tree per cloud.
+
+## When a vendor SDK fits[​](#when-a-vendor-sdk-fits "Direct link to When a vendor SDK fits")
+
+You need broad coverage of one cloud's API surface — management operations, typed request/response models, service-specific helpers — and the SDK's bundled stack fits your application. Signing is a fraction of what those SDKs do; Reqsign replaces only that fraction.
+
+## Relationship to Apache OpenDAL[​](#relationship-to-apache-opendal "Direct link to Relationship to Apache OpenDAL")
+
+Reqsign started inside [Apache OpenDAL™](https://opendal.apache.org/) and graduated to a standalone Apache top-level project in 2026\. The two remain close, and the dependency points one way: OpenDAL's cloud storage services sign their requests with Reqsign; Reqsign does not depend on OpenDAL.
+
+The two serve different builders. Reqsign gives you signing primitives for a client you are writing yourself. OpenDAL is a ready-made data access layer — if what you actually want is to read and write storage behind one API rather than construct requests, use OpenDAL and you get Reqsign's signing underneath for free.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/getting-started/
+---
+# Getting Started | Apache Reqsign™
+
+# Getting Started
+
+Five minutes from an empty project to a signed AWS request. The same shape works for every provider — only the entry point differs.
+
+## 1\. Install[​](#1-install "Direct link to 1. Install")
+
+Add the `reqsign` facade with the feature for each provider you need (features are additive):
+
+```
+
+cargo add reqsign --features aws
+
+cargo add tokio --features full
+
+cargo add http anyhow
+
+
+```
+
+| Feature                                       | Enables                                      |
+| --------------------------------------------- | -------------------------------------------- |
+| aws                                           | AWS SigV4 (alias of aws-v4)                  |
+| aws-v4a                                       | AWS SigV4a multi-region signing              |
+| azure                                         | Azure Storage                                |
+| google                                        | Google Cloud                                 |
+| google-credential-access-boundary-client-side | Client-side CAB downscoping (implies google) |
+| aliyun                                        | Aliyun OSS                                   |
+| huaweicloud                                   | Huawei Cloud OBS                             |
+| oracle                                        | Oracle Cloud                                 |
+| tencent                                       | Tencent COS                                  |
+| volcengine                                    | Volcengine TOS                               |
+| full                                          | Everything above                             |
+
+The default `default-context` feature wires a ready-to-use runtime (Tokio file reading, reqwest HTTP, Tokio command execution). Keep it unless you are[bringing your own runtime](/docs/guides/custom-runtimes/). Requires Rust 1.86.0+.
+
+## 2\. Sign your first request[​](#2-sign-your-first-request "Direct link to 2. Sign your first request")
+
+This is the repository's compiled example — CI builds it on every commit:
+
+```
+
+use anyhow::Result;
+
+
+#[tokio::main]
+
+async fn main() -> Result<()> {
+
+    use reqsign::aws;
+
+    // Create a default signer for S3 in us-east-1
+
+    let signer = aws::default_signer("s3", "us-east-1");
+
+
+    // Build a request
+
+    let mut req = http::Request::builder()
+
+        .method(http::Method::GET)
+
+        .uri("https://s3.amazonaws.com/my-bucket/my-object")
+
+        .body(())
+
+        .unwrap()
+
+        .into_parts()
+
+        .0;
+
+
+    // Sign the request
+
+    signer.sign(&mut req, None).await?;
+
+
+    // Execute the request would require rebuilding with body
+
+    // In real usage, you'd use your HTTP client here
+
+    println!("Request signed successfully!");
+
+
+    Ok(())
+
+}
+
+
+```
+
+Three things happen here:
+
+1. `aws::default_signer("s3", "us-east-1")` composes the default runtime context with AWS's full credential chain — environment variables, shared profiles, SSO, ECS, IMDS, and more. See[Loading credentials](/docs/guides/credentials/).
+2. The request is built with the plain `http` crate. Reqsign signs`http::request::Parts` directly — there is no wrapper client to adopt.
+3. `signer.sign(&mut req, None).await?` mutates the request head in place, adding the `Authorization` header and companions. Passing`Some(duration)` instead selects query authentication where the provider supports it — see [Presigning](/docs/guides/presigning/).
+
+## 3\. Run it[​](#3-run-it "Direct link to 3. Run it")
+
+```
+
+AWS_ACCESS_KEY_ID=AKIDEXAMPLE \
+
+AWS_SECRET_ACCESS_KEY=example-secret \
+
+cargo run
+
+
+```
+
+The example signs the request and prints a confirmation; sending it is your HTTP client's job. Any placeholder credentials produce a structurally valid signature — the service rejects them, but the wire format is real.
+
+## Every provider, one pattern[​](#every-provider-one-pattern "Direct link to Every provider, one pattern")
+
+Swap the entry point and the rest of the code stays the same. Each entry composes that provider's own credential chain — the[provider pages](/docs/providers/) document exactly which sources:
+
+| Provider                                             | Entry                                           |
+| ---------------------------------------------------- | ----------------------------------------------- |
+| [AWS SigV4](/docs/providers/aws-sigv4/)              | aws::default\_signer(service, region)           |
+| [AWS SigV4a](/docs/providers/aws-sigv4a/)            | aws::v4a::default\_signer(service, region\_set) |
+| [Azure Storage](/docs/providers/azure-storage/)      | azure::default\_signer()                        |
+| [Google Cloud](/docs/providers/google/)              | google::default\_signer(service)                |
+| [Aliyun OSS](/docs/providers/aliyun-oss/)            | aliyun::default\_signer(bucket)                 |
+| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | huaweicloud::default\_signer(bucket)            |
+| [Oracle Cloud](/docs/providers/oracle/)              | oracle::default\_signer()                       |
+| [Tencent COS](/docs/providers/tencent-cos/)          | tencent::default\_signer()                      |
+| [Volcengine TOS](/docs/providers/volcengine-tos/)    | volcengine::default\_signer(region)             |
+
+A default signer is an ordinary `Signer`: replace any component and keep the rest —
+
+```
+
+async fn main() -> anyhow::Result<()> {
+
+    use reqsign::aws::{self, StaticCredentialProvider};
+
+    let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
+
+        StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
+
+    );
+
+
+    let provider = reqsign::aws::DefaultCredentialProvider::new().push_front(
+
+        StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
+
+    );
+
+    let _custom_chain_signer =
+
+        aws::default_signer("s3", "us-east-1").with_credential_provider(provider);
+
+
+    let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/my-object")
+
+        .body(())?
+
+        .into_parts()
+
+        .0;
+
+    signer.sign(&mut req, None).await?;
+
+    assert!(req.headers.contains_key("authorization"));
+
+    Ok(())
+
+}
+
+
+```
+
+## Where to go next[​](#where-to-go-next "Direct link to Where to go next")
+
+* Wire up credentials your way: [Loading credentials](/docs/guides/credentials/).
+* Hand out URLs instead of headers: [Presigning](/docs/guides/presigning/).
+* Understand the pieces you just used: [Architecture](/docs/architecture/).
+* Check what your provider supports: [provider matrix](/docs/providers/).
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/
+---
+# Providers | Apache Reqsign™
+
+# Providers
+
+Reqsign keeps each provider's signing protocol and credential semantics explicit instead of hiding them behind one abstraction. This matrix and every detail page are rendered from the[provider catalog](https://github.com/apache/reqsign/blob/main/website/data/providers.json). CI checks crate, feature, page, and source-path consistency. Maintainers review signing capabilities and credential-chain semantics against the referenced source; those behavioral claims are not inferred by the validator.
+
+| Provider                                             | Signing schemes                                      | Header | Query / presign | Granting | WASM |
+| ---------------------------------------------------- | ---------------------------------------------------- | ------ | --------------- | -------- | ---- |
+| [AWS SigV4](/docs/providers/aws-sigv4/)              | AWS Signature Version 4                              | ✓      | ✓               | ✓ 2      | ✓    |
+| [AWS SigV4a](/docs/providers/aws-sigv4a/)            | AWS Signature Version 4A                             | ✓      | ✓               | —        | ✓    |
+| [Azure Storage](/docs/providers/azure-storage/)      | Shared Key, SAS token, Entra ID bearer token         | ✓      | ✓               | ✓ 1      | ✓    |
+| [Google Cloud](/docs/providers/google/)              | OAuth 2.0 bearer token, V4 signed URLs               | ✓      | ✓               | ✓ 2      | —    |
+| [Aliyun OSS](/docs/providers/aliyun-oss/)            | OSS signature V1, OSS signature V2, OSS signature V4 | ✓      | ✓               | —        | ✓    |
+| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | OBS signature                                        | ✓      | ✓               | —        | —    |
+| [Oracle Cloud](/docs/providers/oracle/)              | OCI request signature                                | ✓      | —               | —        | —    |
+| [Tencent COS](/docs/providers/tencent-cos/)          | COS signature                                        | ✓      | ✓               | —        | ✓    |
+| [Volcengine TOS](/docs/providers/volcengine-tos/)    | TOS signature                                        | ✓      | ✓               | —        | —    |
+
+CI checks crate, feature, page, and source-path consistency; capability semantics are reviewed by maintainers. Found a mismatch? [Open an issue.](https://github.com/apache/reqsign/issues)
+
+Open a provider for its full capability sheet: credential sources, facade features, granting operations, and test coverage.
+
+## What "supported" means[​](#what-supported-means "Direct link to What "supported" means")
+
+For each provider, the detail page states precisely:
+
+* **Service scope** — which APIs the signer produces valid signatures for.
+* **Signing schemes** — the exact protocols implemented (e.g. SigV4, Shared Key, OSS V4).
+* **Credential sources** — which loading mechanisms the default chain composes.
+* **Request authentication** — whether header signing, query authentication, or both are available.
+* **Credential granting** — explicit downscoping operations, if any.
+* **WASM status** — whether CI verifies the provider for`wasm32-unknown-unknown`.
+* **Test coverage** — how the claims are exercised (mock servers, fixtures, gated live tests).
+
+Reqsign does not claim to support "every cloud" or every service of any cloud — only what this catalog declares and traces to source.
+
+## Out of scope[​](#out-of-scope "Direct link to Out of scope")
+
+* Sending requests: Reqsign signs; your HTTP client sends.
+* Response modeling, pagination, or service-specific request builders.
+* Providers or schemes not listed here. If you need one,[open an issue](https://github.com/apache/reqsign/issues) — the architecture is built for adding providers.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/what-is-reqsign/
+---
+# What is Reqsign? | Apache Reqsign™
+
+# What is Reqsign?
+
+Reqsign is a Rust library that signs HTTP requests for cloud provider APIs. It covers the three jobs a vendor SDK normally bundles with everything else:
+
+1. **Load credentials** — from environment variables, config files, instance metadata, OIDC federation, CLIs, and more, through per-provider default chains you can replace or extend.
+2. **Grant scoped access** — exchange broad credentials for downscoped ones (S3 Access Grants, S3 Express sessions, Azure user delegation SAS, GCP Credential Access Boundary) before a request is ever signed.
+3. **Sign requests** — mutate a plain `http::request::Parts` in place, adding authentication headers or query parameters that match each provider's protocol exactly.
+
+Everything else stays yours: the HTTP client, retries, connection pooling, and the runtime. Reqsign never sends your requests.
+
+```
+
+use reqsign::aws;
+
+
+// Credentials load from env, profiles, SSO, IMDS — the default chain.
+
+let signer = aws::default_signer("s3", "us-east-1");
+
+
+// Build the request with plain http types.
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://s3.amazonaws.com/my-bucket/my-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Who Reqsign is for[​](#who-reqsign-is-for "Direct link to Who Reqsign is for")
+
+* **SDK and HTTP client authors** who need wire-correct signing without inheriting a vendor SDK's HTTP stack and dependency tree.
+* **Infrastructure and library authors** embedding signing into storage engines, databases, proxies, or gateways, who care about runtime abstraction, credential injection, and failure atomicity.
+* **WASM and custom-runtime users** who cannot assume a filesystem, process environment, or Tokio, and need every I/O dependency to be pluggable.
+
+Reqsign is a signing layer, not a data-access API. Deciding between Reqsign and a full vendor SDK? See the[comparison](/docs/comparison/). (And if you want ready-made storage access rather than signing primitives,[Apache OpenDAL™](https://opendal.apache.org/) provides it — with Reqsign signing its requests underneath.)
+
+## What makes it different[​](#what-makes-it-different "Direct link to What makes it different")
+
+* **Explicit protocols.** Signers and credential types stay service-specific because the differences between SigV4, Shared Key, and OAuth are real. What's shared is one composition pattern: `Context` \+ `ProvideCredential` +`SignRequest`, assembled into a `Signer`.
+* **Documented wire contracts.** URI encoding ownership,[atomic request mutation](/docs/reference/signing-contracts/#atomic-request-mutation), credential[freshness](/docs/reference/signing-contracts/#credential-freshness) and[expiration](/docs/reference/signing-contracts/#expiration-semantics), and[secret redaction](/docs/reference/signing-contracts/#secret-redaction) are specified, not incidental.
+* **A runtime you control.** [Context](/docs/architecture/#context) makes file reading, HTTP sending, environment access, and command execution pluggable — down to `wasm32-unknown-unknown`.
+
+## Next steps[​](#next-steps "Direct link to Next steps")
+
+* [Install and sign your first request](/docs/getting-started/) — five minutes.
+* [Browse the provider matrix](/docs/providers/) — what each cloud supports.
+* [Understand the architecture](/docs/architecture/) — the five pieces you compose.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/guides/credentials/
+---
+# Loading credentials | Apache Reqsign™
+
+# Loading credentials
+
+Everything about getting credentials into a signer: use the default chain, bend it, or replace it entirely.
+
+## Use the default chain[​](#use-the-default-chain "Direct link to Use the default chain")
+
+Every service crate ships a `DefaultCredentialProvider` composing that provider's documented default chain — the same sources the official CLIs and SDKs consult, in a documented order. Each[provider page](/docs/providers/) lists its exact sources.
+
+```
+
+use reqsign::aws::DefaultCredentialProvider;
+
+
+// The documented default chain for AWS:
+
+// env → profiles → SSO → OIDC → process → ECS → IMDS
+
+let provider = DefaultCredentialProvider::new();
+
+
+```
+
+Every `DefaultCredentialProvider` exposes the same four entry points:
+
+```
+
+DefaultCredentialProvider::new();                // the documented default chain
+
+DefaultCredentialProvider::builder();            // default slots, then adjust
+
+DefaultCredentialProvider::with_chain(chain);    // bypass defaults entirely
+
+DefaultCredentialProvider::new().push_front(provider); // prepend a high-priority source
+
+
+```
+
+## Adjust the chain[​](#adjust-the-chain "Direct link to Adjust the chain")
+
+The builder pre-populates the default slots. Each slot has exactly two methods — one to replace it, one to remove it:
+
+```
+
+use reqsign::aws::{DefaultCredentialProvider, EnvCredentialProvider};
+
+
+// Replace the env slot, drop IMDS, keep everything else as documented.
+
+let provider = DefaultCredentialProvider::builder()
+
+    .env(EnvCredentialProvider::new())
+
+    .no_imds()
+
+    .build();
+
+
+```
+
+There are no `configure_*` or `disable_*(bool)` methods by design: a removed slot stays removed, and every slot is controlled by one positive and one removal method.
+
+## Fixed credentials[​](#fixed-credentials "Direct link to Fixed credentials")
+
+When the credential is decided elsewhere — tests, WASM, a control plane that injects keys — skip chains entirely:
+
+```
+
+use reqsign::aws::{self, StaticCredentialProvider};
+
+let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
+
+    StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
+
+);
+
+
+```
+
+Replacing a signer's credential provider clears its credential cache, so a credential from the old chain is never reused with the new configuration.
+
+## Implement your own source[​](#implement-your-own-source "Direct link to Implement your own source")
+
+When credentials come from somewhere Reqsign doesn't know — a secret manager, a sidecar, an in-house vault — implement `ProvideCredential`:
+
+```
+
+use bytes::Bytes;
+
+use reqsign::{Context, ProvideCredential, Result};
+
+use reqsign::aws::Credential;
+
+
+#[derive(Debug)]
+
+struct VaultCredentialProvider {
+
+    endpoint: String,
+
+}
+
+
+impl ProvideCredential for VaultCredentialProvider {
+
+    type Credential = Credential;
+
+
+    async fn provide_credential(&self, ctx: &Context)
+
+        -> Result<Option<Self::Credential>>
+
+    {
+
+        // Use the Context for I/O so your provider stays runtime-agnostic
+
+        // and testable — here, an HTTP call through ctx.
+
+        let req = http::Request::get(&self.endpoint).body(Bytes::new())?;
+
+        let resp = ctx.http_send(req).await?;
+
+
+        // Return Ok(None) when this source has nothing to offer,
+
+        // so a chain can continue to the next provider.
+
+        if resp.status() == http::StatusCode::NOT_FOUND {
+
+            return Ok(None);
+
+        }
+
+
+        let credential = parse_vault_response(resp.body())?;
+
+        Ok(Some(credential))
+
+    }
+
+}
+
+
+```
+
+The return-value protocol is what makes chains compose: `Ok(Some(_))`resolves and `Ok(None)` passes to the next source. `ProvideCredentialChain`also logs `Err(_)` and continues: a failing custom source can fall back to profiles, metadata, or another configured identity. If all sources fail or return `None`, the chain returns `Ok(None)`.
+
+Report "not configured" as `None` and real failures as errors. When failure must stop credential resolution, install your provider directly on the signer or implement a chain with that policy; prepending a provider does not enforce it. A provider installed directly has its errors propagated by `Signer`. See[Architecture § ProvideCredential](/docs/architecture/#providecredential).
+
+## Plug it in[​](#plug-it-in "Direct link to Plug it in")
+
+Highest priority in front of the default chain:
+
+```
+
+use reqsign::aws::DefaultCredentialProvider;
+
+
+let provider = DefaultCredentialProvider::new().push_front(VaultCredentialProvider {
+
+    endpoint: "http://127.0.0.1:8200/v1/aws/creds/my-role".into(),
+
+});
+
+
+```
+
+Or a fully explicit chain that bypasses the defaults:
+
+```
+
+use reqsign::ProvideCredentialChain;
+
+
+let chain = ProvideCredentialChain::new()
+
+    .push(VaultCredentialProvider { endpoint })
+
+    .push(EnvCredentialProvider::new());
+
+let provider = DefaultCredentialProvider::with_chain(chain);
+
+
+```
+
+Then hand it to a default signer (`.with_credential_provider(provider)`) or a custom `Signer::new`.
+
+## Freshness[​](#freshness "Direct link to Freshness")
+
+The credential type you return implements `SigningCredential`; set its expiration so[caching](/docs/architecture/#credential-caching-and-validity) refreshes it on time. Credentials without an expiration are cached until the provider is replaced.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/guides/custom-runtimes/
+---
+# Custom runtimes and WASM | Apache Reqsign™
+
+# Custom runtimes and WASM
+
+Everything I/O-shaped in Reqsign flows through[Context](/docs/architecture/#context). Replace any slot to run on your own runtime, add instrumentation, sandbox capabilities — or compile to WebAssembly, which is just the strictest custom runtime of all.
+
+## The four traits[​](#the-four-traits "Direct link to The four traits")
+
+| Trait          | Method                                                | Used for                                  |
+| -------------- | ----------------------------------------------------- | ----------------------------------------- |
+| FileRead       | file\_read(path) -> Result<Vec<u8>>                   | Config files, key files, token files      |
+| HttpSend       | http\_send(Request<Bytes>) -> Result<Response<Bytes>> | Metadata endpoints, STS/OIDC exchanges    |
+| Env            | var(key), vars(), home\_dir()                         | Environment-based sources, path expansion |
+| CommandExecute | command\_execute(cmd, args) -> Result<Output>         | CLI-backed sources (e.g. Azure CLI)       |
+
+(Signatures abbreviated — see[docs.rs/reqsign-core](https://docs.rs/reqsign-core) for the precise forms; all futures are `MaybeSend`.)
+
+The ready-made components the facade uses are ordinary implementations of these traits: `TokioFileRead`, `ReqwestHttpSend`, `TokioCommandExecute`, plus `OsEnv` from `reqsign-core`. Mix them freely with your own.
+
+## Example: an instrumented HTTP sender[​](#example-an-instrumented-http-sender "Direct link to Example: an instrumented HTTP sender")
+
+```
+
+use bytes::Bytes;
+
+use reqsign::{Context, HttpSend, Result};
+
+use reqsign_http_send_reqwest::ReqwestHttpSend;
+
+
+#[derive(Debug)]
+
+struct TracedHttpSend(ReqwestHttpSend);
+
+
+impl HttpSend for TracedHttpSend {
+
+    async fn http_send(&self, req: http::Request<Bytes>)
+
+        -> Result<http::Response<Bytes>>
+
+    {
+
+        let uri = req.uri().clone();
+
+        let started = std::time::Instant::now();
+
+        let resp = self.0.http_send(req).await;
+
+        log::debug!("credential fetch {} took {:?}", uri, started.elapsed());
+
+        resp
+
+    }
+
+}
+
+
+let ctx = Context::new().with_http_send(TracedHttpSend(ReqwestHttpSend::default()));
+
+
+```
+
+Slots you do not provide stay as no-op stubs that error when used — a credential source that needs a missing capability fails loudly instead of silently returning nothing. The same pattern gives you test doubles: an`Env` over a `HashMap`, an `HttpSend` over canned responses — see[Testing](/docs/guides/testing/).
+
+## WASM[​](#wasm "Direct link to WASM")
+
+Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
+
+* `reqsign-core`, `reqsign-aws-core`
+* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Tencent COS** (facade features `aws`, `aws-v4a`, `azure`, `aliyun`, `tencent`)
+
+The [provider matrix](/docs/providers/) marks WASM status per provider; treat providers outside this set as unsupported there until the catalog says otherwise.
+
+```
+
+rustup target add wasm32-unknown-unknown
+
+cargo build --target wasm32-unknown-unknown \
+
+  --no-default-features --features aws,azure
+
+
+```
+
+Two mechanics keep the crate WASM-clean: no direct filesystem, environment, or process access anywhere outside `Context` implementations, and trait futures that are `MaybeSend` — `Send` on native targets, relaxed on WASM.
+
+### Providing a browser runtime[​](#providing-a-browser-runtime "Direct link to Providing a browser runtime")
+
+There is no filesystem and no OS environment in a browser, so provide what your credential sources actually need — usually just HTTP:
+
+```
+
+use bytes::Bytes;
+
+use reqsign::{Context, HttpSend, Result, Signer};
+
+use reqsign::aws::{RequestSigner, StaticCredentialProvider};
+
+
+#[derive(Debug)]
+
+struct FetchHttpSend; // wraps fetch() via wasm-bindgen
+
+
+impl HttpSend for FetchHttpSend {
+
+    async fn http_send(&self, req: http::Request<Bytes>)
+
+        -> Result<http::Response<Bytes>>
+
+    {
+
+        todo!("drive the request through fetch()")
+
+    }
+
+}
+
+
+let ctx = Context::new().with_http_send(FetchHttpSend);
+
+let signer = Signer::new(
+
+    ctx,
+
+    StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
+
+    RequestSigner::new("s3", "us-east-1"),
+
+);
+
+
+```
+
+Static or externally-injected credentials are the norm on WASM — chains that read files or metadata endpoints have nothing to read in a browser.
+
+Credentials in browsers
+
+Anything delivered to a browser is readable by its user. Prefer[granted, downscoped credentials](/docs/guides/granting/) or short-lived tokens minted by your backend over long-lived keys.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/guides/granting/
+---
+# Scoped credential granting | Apache Reqsign™
+
+# Scoped credential granting
+
+Granting exchanges a broad credential for a narrower one _before_ any request is signed: scoped to a bucket, a prefix, a permission, a time window. Vendor SDKs rarely give these operations a common shape; Reqsign's[Granter](/docs/architecture/#granter-and-grantcredential) does, while keeping each provider's semantics explicit.
+
+## The operations[​](#the-operations "Direct link to The operations")
+
+| Provider      | Operation                                | Scopes to                                        |
+| ------------- | ---------------------------------------- | ------------------------------------------------ |
+| AWS SigV4     | S3 Access Grants (GetDataAccess)         | A registered grant: location, prefix, permission |
+| AWS SigV4     | S3 Express Session (CreateSession)       | One directory bucket, read-only or read-write    |
+| Azure Storage | User delegation SAS                      | Container/blob, permissions, validity window     |
+| Google Cloud  | Credential Access Boundary (server-side) | Buckets/prefixes via an STS exchange             |
+| Google Cloud  | Credential Access Boundary (client-side) | Same, derived locally without an STS round-trip  |
+
+Each operation is listed with source references on its[provider page](/docs/providers/).
+
+## Walkthrough: S3 Express session credentials[​](#walkthrough-s3-express-session-credentials "Direct link to Walkthrough: S3 Express session credentials")
+
+The same dependencies as [Getting Started](/docs/getting-started/) suffice. This example uses the default context for environment, file, and HTTP access:
+
+```
+
+use reqsign::aws::{
+
+    DefaultCredentialProvider, S3ExpressSessionConfig, S3ExpressSessionGrant,
+
+    S3ExpressSessionGranter, S3ExpressSessionMode,
+
+};
+
+use reqsign::{Granter, default_context};
+
+
+#[tokio::main]
+
+async fn main() -> anyhow::Result<()> {
+
+    let config = S3ExpressSessionConfig::from_bucket("my-bucket--usw2-az1--x-s3", "us-west-2")?;
+
+    let grant = S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly);
+
+    let granter = Granter::new(
+
+        default_context(),
+
+        DefaultCredentialProvider::new(),
+
+        S3ExpressSessionGranter::new(config, grant),
+
+    );
+
+    let scoped = granter.grant(None).await?;
+
+    // Keep the entire credential, including expires_in, when passing it on.
+
+    assert!(scoped.expires_in.is_some());
+
+    Ok(())
+
+}
+
+
+```
+
+## Signing with automatically refreshed sessions[​](#signing-with-automatically-refreshed-sessions "Direct link to Signing with automatically refreshed sessions")
+
+For a long-lived signer, use `S3ExpressSessionProvider`. It performs the same CreateSession exchange when credentials are needed, preserves their expiration, and lets `Signer` refresh the session. S3 Express uses the `s3express` signing service and the directory bucket's zonal endpoint:
+
+```
+
+use reqsign::aws::{
+
+    self, DefaultCredentialProvider, S3ExpressSessionGrant, S3ExpressSessionMode,
+
+    S3ExpressSessionProvider,
+
+};
+
+
+#[tokio::main]
+
+async fn main() -> anyhow::Result<()> {
+
+    let provider = S3ExpressSessionProvider::new(
+
+        "my-bucket--usw2-az1--x-s3",
+
+        DefaultCredentialProvider::new(),
+
+    )
+
+    .with_region("us-west-2")
+
+    .with_grant(S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly));
+
+    let signer = aws::default_signer("s3express", "us-west-2").with_credential_provider(provider);
+
+    let mut req = http::Request::get(
+
+        "https://my-bucket--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/object",
+
+    )
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+    // The signer caches the session with its expiration and refreshes as needed.
+
+    signer.sign(&mut req, None).await?;
+
+    Ok(())
+
+}
+
+
+```
+
+When passing a manually granted credential to another component, retain the entire credential, including `expires_in`. Reconstructing it with AWS's`StaticCredentialProvider` loses the expiration and automatic refresh behavior. Keep granted keys and session tokens out of logs.
+
+## Semantics to rely on[​](#semantics-to-rely-on "Direct link to Semantics to rely on")
+
+* The **source** credential is cached and revalidated per grant; the granted result owns independent material and never aliases the cache.
+* `expires_in` requests a validity window where the operation supports one; the operation's own maximum applies.
+* Errors returned by the configured source or grant operation propagate without retry or reuse of a stale cached source. A source configured as a credential chain can still fall back between its providers.
+
+Credential fields and types are provider-specific — see[docs.rs](https://docs.rs/reqsign-aws-v4) for the exact API.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/guides/presigning/
+---
+# Presigning and query authentication | Apache Reqsign™
+
+# Presigning and query authentication
+
+Providers authenticate requests in two places. **Headers** are the default: the signature travels with the request and dies with it. **The query string** embeds authentication in the URI itself, so whoever holds the URL can perform exactly that request with no credentials of their own — that is what "presigned URLs" are.
+
+```
+
+// Header signing:
+
+signer.sign(&mut req, None).await?;
+
+
+// Query authentication, valid for 1 hour (where supported):
+
+signer.sign(&mut req, Some(Duration::from_secs(3600))).await?;
+
+
+```
+
+| Situation                                                        | Mode                 |
+| ---------------------------------------------------------------- | -------------------- |
+| Your service makes the request itself                            | Header signing       |
+| A browser, another service, or a user uploads/downloads directly | Query authentication |
+| The credential itself is already scoped (SAS)                    | Query by nature      |
+
+## Produce a presigned URL[​](#produce-a-presigned-url "Direct link to Produce a presigned URL")
+
+```
+
+use reqsign::aws;
+
+use std::time::Duration;
+
+
+#[tokio::main]
+
+async fn main() -> anyhow::Result<()> {
+
+    let signer = aws::default_signer("s3", "us-east-1");
+
+    let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/report.csv")
+
+        .body(())?
+
+        .into_parts()
+
+        .0;
+
+    signer
+
+        .sign(&mut req, Some(Duration::from_secs(3600)))
+
+        .await?;
+
+    // Share req.uri over a trusted channel; it contains authentication material.
+
+    assert!(req.uri.query().is_some());
+
+    Ok(())
+
+}
+
+
+```
+
+For AWS this produces `X-Amz-Algorithm`, `X-Amz-Credential`,`X-Amz-Expires`, `X-Amz-Signature`, and companions in the query string. Other providers use their own parameter sets; the shape of the call is identical.
+
+## `expires_in` is service-specific[​](#expires%5Fin-is-service-specific "Direct link to expires_in-is-service-specific")
+
+Passing `Some(duration)` does **not** universally mean "presign" — the configured service signer and credential type determine how the duration is interpreted:
+
+* AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage, and Huawei Cloud OBS select query authentication with that validity window.
+* Azure Storage SAS credentials authenticate through the query string by nature; shared keys and bearer tokens sign headers.
+* Oracle Cloud bounds credential validity but produces **no** query authentication — header signing is its only mode.
+
+The [provider matrix](/docs/providers/) carries the authoritative header/query flags, and the[expiration contract](/docs/reference/signing-contracts/#expiration-semantics)states the exact semantics.
+
+## Before you ship one[​](#before-you-ship-one "Direct link to Before you ship one")
+
+* **The method and URI are part of the signature.** A URL presigned for`GET /report.csv` authorizes exactly that — not `PUT`, not another key.
+* **Credential validity must cover the window.** The signer refreshes a cached credential that would expire before `expires_in` elapses, and errors if no credential can cover the window — a URL that dies early is a bug, not a surprise. See[Credential freshness](/docs/reference/signing-contracts/#credential-freshness).
+* **Anyone with the URL is authorized.** Treat presigned URLs as secrets with a TTL: transmit over TLS, scope tightly, keep windows short.
+* **Never re-encode a presigned URI.** The signature covers the encoded bytes; a second encoding pass breaks it. See[Wire-ready URIs](/docs/reference/signing-contracts/#wire-ready-uris).
+* **Tighter blast radius:** [grant a downscoped credential](/docs/guides/granting/) first and presign with that.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/guides/testing/
+---
+# Testing with mocks | Apache Reqsign™
+
+# Testing with mocks
+
+Reqsign is built to be tested without touching real clouds: credentials are injectable, and every I/O path routes through[Context](/docs/architecture/#context).
+
+## Signing tests with fixed credentials[​](#signing-tests-with-fixed-credentials "Direct link to Signing tests with fixed credentials")
+
+Use fixed credentials to check signing without credential-source I/O. Signing still uses the current time, so this example checks the authentication header rather than asserting a timestamp-dependent signature:
+
+```
+
+use reqsign::{Context, Signer};
+
+use reqsign::aws::{RequestSigner, StaticCredentialProvider};
+
+
+let signer = Signer::new(
+
+    Context::new(), // no I/O needed with static credentials
+
+    StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
+
+    RequestSigner::new("s3", "us-east-1"),
+
+);
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://s3.amazonaws.com/test-bucket/test-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+signer.sign(&mut req, None).await?;
+
+assert!(req.headers.contains_key("authorization"));
+
+
+```
+
+Use obviously fake material (`AKIDEXAMPLE`) in fixtures — never real keys, not even expired ones.
+
+## Mocking the environment[​](#mocking-the-environment "Direct link to Mocking the environment")
+
+Credential chains read env vars and files through `Context`, so tests inject them without process-global mutation:
+
+```
+
+use reqsign::{Context, Env};
+
+
+#[derive(Debug)]
+
+struct StaticEnv(std::collections::HashMap<String, String>);
+
+
+impl Env for StaticEnv {
+
+    fn var(&self, key: &str) -> Option<String> {
+
+        self.0.get(key).cloned()
+
+    }
+
+    // ...remaining methods delegate similarly
+
+}
+
+
+let ctx = Context::new().with_env(StaticEnv(
+
+    [("AWS_ACCESS_KEY_ID".into(), "AKIDEXAMPLE".into()),
+
+     ("AWS_SECRET_ACCESS_KEY".into(), "example-secret-key".into())]
+
+    .into(),
+
+));
+
+
+```
+
+The same pattern applies to `HttpSend` (canned metadata/STS responses) and`FileRead` (in-memory profiles). This is exactly how the repository tests IMDS, ECS, SSO, and OIDC flows against local mock servers under[services/aws-v4/tests/mocks](https://github.com/apache/reqsign/tree/main/services/aws-v4/tests/mocks).
+
+## Integration tests against real services[​](#integration-tests-against-real-services "Direct link to Integration tests against real services")
+
+Per-service integration suites live under `services/<name>/tests/` and stay skipped unless their `REQSIGN_*` environment variables opt in — see each suite's README for the exact gate. CI wires secrets for them; locally you can run the mock-backed tests with plain `cargo test`.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/aliyun-oss/
+---
+# Aliyun OSS | Apache Reqsign™
+
+# Aliyun OSS
+
+Aliyun Object Storage Service requests signed with OSS signature V1, V2, or V4.
+
+OSS signature V1OSS signature V2OSS signature V4✓ header signing✓ query / presign✓ WASM[docs.rs/reqsign-aliyun-oss ↗](https://docs.rs/reqsign-aliyun-oss)
+
+expires\_in selects query-string authentication for presigned OSS URLs.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features aliyun
+
+
+```
+
+```
+
+use reqsign::aliyun;
+
+
+// Env, config files, ECS RAM roles, OIDC — resolved by the default chain.
+
+let signer = aliyun::default_signer("my-bucket");
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://my-bucket.oss-cn-hangzhou.aliyuncs.com/my-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. STS AssumeRole (when a role is configured)
+2. Environment variables
+3. OSS profile
+4. Credentials file
+5. CLI config file
+6. Credentials URI
+7. ECS RAM role metadata
+8. STS AssumeRole with OIDC
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [AssumeRoleCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.AssumeRoleCredentialProvider.html) — STS AssumeRole (when a role is configured)
+* [EnvCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.EnvCredentialProvider.html) — Environment variables
+* [OssProfileCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.OssProfileCredentialProvider.html) — OSS profile
+* [CredentialsFileCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.CredentialsFileCredentialProvider.html) — Credentials file
+* [ConfigFileCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.ConfigFileCredentialProvider.html) — CLI config file
+* [CredentialsUriCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.CredentialsUriCredentialProvider.html) — Credentials URI
+* [EcsRamRoleCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.EcsRamRoleCredentialProvider.html) — ECS RAM role metadata
+* [AssumeRoleWithOidcCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.AssumeRoleWithOidcCredentialProvider.html) — STS AssumeRole with OIDC
+* [StaticCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.StaticCredentialProvider.html) — Static access keys
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/aws-sigv4/
+---
+# AWS SigV4 | Apache Reqsign™
+
+# AWS SigV4
+
+AWS services that authenticate requests with Signature Version 4, addressed by service name and region (for example s3, sqs, execute-api).
+
+AWS Signature Version 4✓ header signing✓ query / presign✓ WASM[docs.rs/reqsign-aws-v4 ↗](https://docs.rs/reqsign-aws-v4)
+
+Query authentication produces presigned URLs with X-Amz-Expires derived from expires\_in.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features aws
+
+
+```
+
+```
+
+use reqsign::aws;
+
+
+// Credentials resolve through the default chain:
+
+// env → profiles → SSO → OIDC → process → ECS → IMDS.
+
+let signer = aws::default_signer("s3", "us-east-1");
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://s3.amazonaws.com/my-bucket/my-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Environment variables
+2. Shared config and credentials files
+3. IAM Identity Center (SSO)
+4. STS AssumeRoleWithWebIdentity (OIDC)
+5. External credential process
+6. ECS container credentials
+7. EC2 instance metadata (IMDSv2)
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.EnvCredentialProvider.html) — Environment variables
+* [ProfileCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ProfileCredentialProvider.html) — Shared config and credentials files
+* [SSOCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.SSOCredentialProvider.html) — IAM Identity Center (SSO)
+* [AssumeRoleWithWebIdentityCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.AssumeRoleWithWebIdentityCredentialProvider.html) — STS AssumeRoleWithWebIdentity (OIDC)
+* [ProcessCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ProcessCredentialProvider.html) — External credential process
+* [ECSCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ECSCredentialProvider.html) — ECS container credentials
+* [IMDSv2CredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.IMDSv2CredentialProvider.html) — EC2 instance metadata (IMDSv2)
+* [StaticCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.StaticCredentialProvider.html) — Static access keys
+* [AssumeRoleCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.AssumeRoleCredentialProvider.html) — STS AssumeRole
+* [CognitoIdentityCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.CognitoIdentityCredentialProvider.html) — Cognito Identity
+
+## Credential granting
+
+This provider can exchange credentials for downscoped ones before any request is signed — see [Granting scoped access](/docs/guides/granting/):
+
+* **S3 Access Grants** — GetDataAccess exchanges IAM credentials for grant-scoped credentials.
+* **S3 Express Session** — CreateSession issues bucket-scoped session credentials for S3 Express One Zone.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/aws-sigv4a/
+---
+# AWS SigV4a | Apache Reqsign™
+
+# AWS SigV4a
+
+AWS services that accept Signature Version 4A for multi-region requests, addressed by service name and a region set (for example s3 with us-east-1,us-west-2).
+
+AWS Signature Version 4A✓ header signing✓ query / presign✓ WASM[docs.rs/reqsign-aws-v4a ↗](https://docs.rs/reqsign-aws-v4a)
+
+Query authentication mirrors SigV4 presigning with the ECDSA-based SigV4a signature.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features aws-v4a
+
+
+```
+
+```
+
+use reqsign::aws::v4a::{default_signer, SigningRegionSet};
+
+
+// Same credential chain as SigV4; the signature covers a region set —
+
+// built for multi-region endpoints like S3 Multi-Region Access Points.
+
+let region_set = SigningRegionSet::new("us-east-1,us-west-2")?;
+
+let signer = default_signer("s3", region_set);
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://m1abcdefgh.mrap.accesspoint.s3-global.amazonaws.com/my-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Environment variables
+2. Shared config and credentials files
+3. IAM Identity Center (SSO)
+4. STS AssumeRoleWithWebIdentity (OIDC)
+5. External credential process
+6. ECS container credentials
+7. EC2 instance metadata (IMDSv2)
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.EnvCredentialProvider.html) — Environment variables
+* [ProfileCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ProfileCredentialProvider.html) — Shared config and credentials files
+* [SSOCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.SSOCredentialProvider.html) — IAM Identity Center (SSO)
+* [AssumeRoleWithWebIdentityCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.AssumeRoleWithWebIdentityCredentialProvider.html) — STS AssumeRoleWithWebIdentity (OIDC)
+* [ProcessCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ProcessCredentialProvider.html) — External credential process
+* [ECSCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ECSCredentialProvider.html) — ECS container credentials
+* [IMDSv2CredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.IMDSv2CredentialProvider.html) — EC2 instance metadata (IMDSv2)
+* [StaticCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.StaticCredentialProvider.html) — Static access keys
+* [AssumeRoleCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.AssumeRoleCredentialProvider.html) — STS AssumeRole
+* [CognitoIdentityCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.CognitoIdentityCredentialProvider.html) — Cognito Identity
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/azure-storage/
+---
+# Azure Storage | Apache Reqsign™
+
+# Azure Storage
+
+Azure Storage services (Blob, Queue, File) authenticating with account shared keys, SAS tokens, or Microsoft Entra ID bearer tokens.
+
+Shared KeySAS tokenEntra ID bearer token✓ header signing✓ query / presign✓ WASM[docs.rs/reqsign-azure-storage ↗](https://docs.rs/reqsign-azure-storage)
+
+SAS credentials authenticate through the query string; shared keys and bearer tokens sign headers.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features azure
+
+
+```
+
+```
+
+use reqsign::azure;
+
+
+// Shared key, SAS, or Entra ID (client secrets, workload identity,
+
+// managed identity, Azure CLI) — resolved by the default chain.
+
+let signer = azure::default_signer();
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://myaccount.blob.core.windows.net/my-container/my-blob")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Environment variables
+2. Azure CLI
+3. Entra ID client certificate
+4. Entra ID client secret
+5. Azure Pipelines federation
+6. Workload identity federation
+7. Managed identity (IMDS)
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.EnvCredentialProvider.html) — Environment variables
+* [AzureCliCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.AzureCliCredentialProvider.html) — Azure CLI
+* [ClientCertificateCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.ClientCertificateCredentialProvider.html) — Entra ID client certificate
+* [ClientSecretCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.ClientSecretCredentialProvider.html) — Entra ID client secret
+* [AzurePipelinesCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.AzurePipelinesCredentialProvider.html) — Azure Pipelines federation
+* [WorkloadIdentityCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.WorkloadIdentityCredentialProvider.html) — Workload identity federation
+* [ImdsCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.ImdsCredentialProvider.html) — Managed identity (IMDS)
+* [StaticCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.StaticCredentialProvider.html) — Static account key or SAS token
+
+## Credential granting
+
+This provider can exchange credentials for downscoped ones before any request is signed — see [Granting scoped access](/docs/guides/granting/):
+
+* **User Delegation SAS** — Exchanges an Entra ID bearer token for a user delegation key and derives scoped SAS tokens from it.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/google/
+---
+# Google Cloud | Apache Reqsign™
+
+# Google Cloud
+
+Google Cloud services that accept OAuth 2.0 bearer tokens, plus V4 signed URLs for Cloud Storage.
+
+OAuth 2.0 bearer tokenV4 signed URLs✓ header signing✓ query / presign— WASM[docs.rs/reqsign-google ↗](https://docs.rs/reqsign-google)
+
+Bearer tokens sign headers; expires\_in selects V4 signed URLs for Cloud Storage.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features google
+
+
+```
+
+```
+
+use reqsign::google;
+
+
+// Service account files, workload identity federation, VM metadata —
+
+// resolved by the default chain.
+
+let signer = google::default_signer("storage.googleapis.com");
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://storage.googleapis.com/my-bucket/my-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Application Default Credentials from GOOGLE\_APPLICATION\_CREDENTIALS
+2. Well-known gcloud ADC file
+3. VM metadata server
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.EnvCredentialProvider.html) — Application Default Credentials from GOOGLE\_APPLICATION\_CREDENTIALS
+* [WellKnownCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.WellKnownCredentialProvider.html) — Well-known gcloud ADC file
+* [VmMetadataCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.VmMetadataCredentialProvider.html) — VM metadata server
+* [StaticCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.StaticCredentialProvider.html) — Static service account JSON
+* [FileCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.FileCredentialProvider.html) — Credential file at a fixed path
+* [TokenCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.TokenCredentialProvider.html) — Pre-issued OAuth2 token
+* [AuthorizedUserCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.AuthorizedUserCredentialProvider.html) — Authorized user (gcloud) credentials
+* [ExternalAccountCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.ExternalAccountCredentialProvider.html) — External account (workload identity federation)
+* [ImpersonatedServiceAccountCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.ImpersonatedServiceAccountCredentialProvider.html) — Service account impersonation
+* [ServiceAccountTokenCredentialProvider](https://docs.rs/reqsign-google/latest/reqsign%5Fgoogle/struct.ServiceAccountTokenCredentialProvider.html) — OAuth2 token from a service account key or impersonation
+
+## Credential granting
+
+This provider can exchange credentials for downscoped ones before any request is signed — see [Granting scoped access](/docs/guides/granting/):
+
+* **Credential Access Boundary (server-side)** — Exchanges a token through the STS API for one downscoped by an access boundary.
+* **Credential Access Boundary (client-side)** — Derives a downscoped token locally without a round-trip to the STS API. Requires the google-credential-access-boundary-client-side facade feature.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/huaweicloud-obs/
+---
+# Huawei Cloud OBS | Apache Reqsign™
+
+# Huawei Cloud OBS
+
+Huawei Cloud Object Storage Service requests signed with the OBS signature.
+
+OBS signature✓ header signing✓ query / presign— WASM[docs.rs/reqsign-huaweicloud-obs ↗](https://docs.rs/reqsign-huaweicloud-obs)
+
+expires\_in selects query authentication with AccessKeyId, Expires, and Signature parameters.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features huaweicloud
+
+
+```
+
+```
+
+use reqsign::huaweicloud;
+
+
+// Environment credentials — resolved by the default chain.
+
+let signer = huaweicloud::default_signer("my-bucket");
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://my-bucket.obs.cn-north-4.myhuaweicloud.com/my-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Environment variables
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-huaweicloud-obs/latest/reqsign%5Fhuaweicloud%5Fobs/struct.EnvCredentialProvider.html) — Environment variables
+* [StaticCredentialProvider](https://docs.rs/reqsign-huaweicloud-obs/latest/reqsign%5Fhuaweicloud%5Fobs/struct.StaticCredentialProvider.html) — Static access keys
+* [ConfigCredentialProvider](https://docs.rs/reqsign-huaweicloud-obs/latest/reqsign%5Fhuaweicloud%5Fobs/struct.ConfigCredentialProvider.html) — Config-based credentials
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/oracle/
+---
+# Oracle Cloud | Apache Reqsign™
+
+# Oracle Cloud
+
+Oracle Cloud Infrastructure services authenticating with the OCI HTTP request signature.
+
+OCI request signature✓ header signing— query / presign— WASM[docs.rs/reqsign-oracle ↗](https://docs.rs/reqsign-oracle)
+
+Header signing only; expires\_in is not interpreted as query authentication.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features oracle
+
+
+```
+
+```
+
+use reqsign::oracle;
+
+
+// Env and the OCI config file (~/.oci/config) — resolved by the default chain.
+
+let signer = oracle::default_signer();
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://objectstorage.us-ashburn-1.oraclecloud.com/n/my-namespace/b/my-bucket/o/my-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Environment variables
+2. OCI config file (\~/.oci/config)
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-oracle/latest/reqsign%5Foracle/struct.EnvCredentialProvider.html) — Environment variables
+* [ConfigFileCredentialProvider](https://docs.rs/reqsign-oracle/latest/reqsign%5Foracle/struct.ConfigFileCredentialProvider.html) — OCI config file (\~/.oci/config)
+* [StaticCredentialProvider](https://docs.rs/reqsign-oracle/latest/reqsign%5Foracle/struct.StaticCredentialProvider.html) — Static API key material
+* [ConfigCredentialProvider](https://docs.rs/reqsign-oracle/latest/reqsign%5Foracle/struct.ConfigCredentialProvider.html) — Explicit config object
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/tencent-cos/
+---
+# Tencent COS | Apache Reqsign™
+
+# Tencent COS
+
+Tencent Cloud Object Storage requests signed with the COS signature.
+
+COS signature✓ header signing✓ query / presign✓ WASM[docs.rs/reqsign-tencent-cos ↗](https://docs.rs/reqsign-tencent-cos)
+
+expires\_in selects q-sign query authentication for presigned COS URLs.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features tencent
+
+
+```
+
+```
+
+use reqsign::tencent;
+
+
+// Env, config, OIDC federation — resolved by the default chain.
+
+let signer = tencent::default_signer();
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://my-bucket-1250000000.cos.ap-guangzhou.myqcloud.com/my-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Environment variables
+2. STS AssumeRoleWithWebIdentity (OIDC)
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-tencent-cos/latest/reqsign%5Ftencent%5Fcos/struct.EnvCredentialProvider.html) — Environment variables
+* [AssumeRoleWithWebIdentityCredentialProvider](https://docs.rs/reqsign-tencent-cos/latest/reqsign%5Ftencent%5Fcos/struct.AssumeRoleWithWebIdentityCredentialProvider.html) — STS AssumeRoleWithWebIdentity (OIDC)
+* [StaticCredentialProvider](https://docs.rs/reqsign-tencent-cos/latest/reqsign%5Ftencent%5Fcos/struct.StaticCredentialProvider.html) — Static access keys
+* [ConfigCredentialProvider](https://docs.rs/reqsign-tencent-cos/latest/reqsign%5Ftencent%5Fcos/struct.ConfigCredentialProvider.html) — Config-based credentials
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/volcengine-tos/
+---
+# Volcengine TOS | Apache Reqsign™
+
+# Volcengine TOS
+
+Volcengine Torch Object Storage requests signed with the TOS signature.
+
+TOS signature✓ header signing✓ query / presign— WASM[docs.rs/reqsign-volcengine-tos ↗](https://docs.rs/reqsign-volcengine-tos)
+
+expires\_in selects query-string authentication for presigned TOS URLs.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features volcengine
+
+
+```
+
+```
+
+use reqsign::volcengine;
+
+
+// Environment variables — resolved by the default chain.
+
+let signer = volcengine::default_signer("cn-beijing");
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://my-bucket.tos-cn-beijing.volces.com/my-object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Environment variables
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-volcengine-tos/latest/reqsign%5Fvolcengine%5Ftos/struct.EnvCredentialProvider.html) — Environment variables
+* [StaticCredentialProvider](https://docs.rs/reqsign-volcengine-tos/latest/reqsign%5Fvolcengine%5Ftos/struct.StaticCredentialProvider.html) — Static access keys
+
+---
+
+---
+url: https://reqsign.apache.org/docs/reference/api/
+---
+# API Reference | Apache Reqsign™
+
+# API Reference
+
+Precise, per-item API documentation lives on docs.rs, generated from the source of every release. This site owns concepts, guides, and contracts; the rustdoc owns signatures.
+
+## Facade[​](#facade "Direct link to Facade")
+
+* [reqsign](https://docs.rs/reqsign) — feature-gated entry point with`default_context()` and per-provider `default_signer` modules.
+
+## Core[​](#core "Direct link to Core")
+
+* [reqsign-core](https://docs.rs/reqsign-core) — `Context`, `Signer`,`Granter`, and the `ProvideCredential` / `SignRequest` /`GrantCredential` / `SigningCredential` traits.
+
+## Service crates[​](#service-crates "Direct link to Service crates")
+
+* [reqsign-aws-v4](https://docs.rs/reqsign-aws-v4)
+* [reqsign-aws-v4a](https://docs.rs/reqsign-aws-v4a)
+* [reqsign-aws-core](https://docs.rs/reqsign-aws-core) — shared AWS credential chain and canonicalization
+* [reqsign-azure-storage](https://docs.rs/reqsign-azure-storage)
+* [reqsign-google](https://docs.rs/reqsign-google)
+* [reqsign-aliyun-oss](https://docs.rs/reqsign-aliyun-oss)
+* [reqsign-huaweicloud-obs](https://docs.rs/reqsign-huaweicloud-obs)
+* [reqsign-oracle](https://docs.rs/reqsign-oracle)
+* [reqsign-tencent-cos](https://docs.rs/reqsign-tencent-cos)
+* [reqsign-volcengine-tos](https://docs.rs/reqsign-volcengine-tos)
+
+## Context components[​](#context-components "Direct link to Context components")
+
+* [reqsign-file-read-tokio](https://docs.rs/reqsign-file-read-tokio)
+* [reqsign-http-send-reqwest](https://docs.rs/reqsign-http-send-reqwest)
+* [reqsign-command-execute-tokio](https://docs.rs/reqsign-command-execute-tokio)
+
+---
+
+---
+url: https://reqsign.apache.org/docs/reference/signing-contracts/
+---
+# Signing contracts | Apache Reqsign™
+
+# Signing contracts
+
+Reqsign's behavior at the edges is specified, not incidental. This page is the reference for the six contracts `sign` and `grant` uphold; each is backed by the API documentation in `reqsign-core` and exercised by tests.
+
+## Wire-ready URIs[​](#wire-ready-uris "Direct link to Wire-ready URIs")
+
+**The contract:** `sign` takes a _wire-ready_ request head. The URI you pass is the URI that goes on the wire — built-in signers require an authority and expect path and query data to be **percent-encoded exactly once** before the call. Signing does not perform general-purpose URI encoding for the caller.
+
+Signature protocols canonicalize the URI (SigV4 builds its canonical request from the encoded path and sorted query). If the signer re-encoded your input, an already-encoded `%2F` would double-encode while a raw space got "helpfully" fixed — and the signed bytes would depend on who encoded last. Exactly-once encoding, owned by the caller, removes the ambiguity: what you signed is what you send.
+
+```
+
+// Object key: "reports/2026 Q1.csv" — encode once when building the URI:
+
+let uri = "https://s3.amazonaws.com/my-bucket/reports/2026%20Q1.csv";
+
+
+```
+
+Rules of thumb: encode path segments and query values once, when constructing the URI; never pass a decoded "pretty" URI expecting a fix-up; never re-encode after signing (for presigned URLs this breaks the signature); relative URIs are not signable. Some service crates export percent-encoding helpers tuned to their provider's canonicalization (for example `reqsign-volcengine-tos`'s `percent_encode_path`).
+
+## Atomic request mutation[​](#atomic-request-mutation "Direct link to Atomic request mutation")
+
+**The contract:** if credential loading or request signing returns an error, the request is **unchanged**. On success, only `req.uri` and `req.headers`may change; the method, version, and extensions retain their input values.
+
+```
+
+match signer.sign(&mut req, None).await {
+
+    Ok(()) => { /* req is signed: uri and/or headers updated, nothing else */ }
+
+    Err(e) => { /* req is byte-for-byte what you built */ }
+
+}
+
+
+```
+
+Without atomicity, an error path could leave a half-signed request — an`Authorization` header from one attempt, query parameters from another — forcing callers to rebuild requests defensively around every failure. With it: retries reuse the original request as-is, fallback signing is safe, and a request never carries remnants of a signature that was not fully produced. The guarantee covers the request head; bodies are never touched.
+
+## Credential freshness[​](#credential-freshness "Direct link to Credential freshness")
+
+**The contract:** a cached credential is reused only when it is fresh according to `SigningCredential::is_valid` **and** usable through the operation's deadline (`required_valid_until`). A freshly loaded credential only needs to satisfy the exact operation deadline. Provider errors are returned without internal retry and without falling back to the previously cached credential.
+
+The two validity checks have different jobs — `is_valid()` answers the_caching_ question and may include a proactive refresh window;`is_valid_at(ts)` answers the _operation_ question with no buffers (see[Architecture](/docs/architecture/#credential-caching-and-validity)). Deadlines come from the operation: essentially "now" for header signing, the full window for a presigned URL — so a credential expiring in five minutes triggers a refresh rather than producing a URL that dies early.
+
+## Expiration semantics[​](#expiration-semantics "Direct link to Expiration semantics")
+
+**The contract:** `expires_in` is a _service-specific validity input_. It does not universally select query authentication — the configured service signer and credential type determine how the duration is interpreted.
+
+| Interpretation                                         | Providers                                                                                                          |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs), Huawei Cloud OBS |
+| Bounds credential validity; header signing regardless  | Oracle Cloud                                                                                                       |
+| Requests a granted credential's validity window        | Granting operations (subject to the operation's own maximum)                                                       |
+
+Whatever the provider does with it, one obligation is universal: the credential used must remain usable for the full window — the signer refreshes or errors rather than producing an artifact that dies early. And three things it never means: it never _shortens_ a credential's own lifetime; it never overrides a provider-side maximum (S3 presign caps at 7 days — exceeding a cap is a provider-side error, not silent truncation); and `None` never means "no expiry" for the artifact (header signatures still embed timestamps with provider-defined validity).
+
+## Secret redaction[​](#secret-redaction "Direct link to Secret redaction")
+
+**The contract:** formatting Reqsign types with `Debug` does not reveal secret material. Credential types implement `Debug` by hand, wrapping sensitive fields in a `Redact` helper; composite types like `Signer` print structure, not contents. Non-sensitive metadata (like expiration) prints normally so logs stay useful.
+
+```
+
+log::debug!("loaded: {credential:?}");
+
+// Credential { access_key_id: Redacted, secret_access_key: Redacted, ... }
+
+
+```
+
+Redaction covers _accidental_ leaks — `{:?}` in a log line, a panic message, an error chain. It cannot protect secrets you extract on purpose: accessor methods return real values, and a signed request's `Authorization` header or presigned URI **contains derived authentication material** — log a presigned URI and you have logged a usable capability. Redact at your logging layer, and give custom `ProvideCredential` implementations a manual `Debug` over redacted fields too. Report suspected leaks through the[ASF security process](https://www.apache.org/security/), never the public issue tracker.
+
+## Errors and retries[​](#errors-and-retries "Direct link to Errors and retries")
+
+**The contract:** The signer and granter propagate errors returned by their configured provider; you own retries. `sign` and`grant` perform no internal retries, no fallback signers, and no silent reuse of stale credentials. Combined with atomic mutation, any error leaves the request head unchanged — free to retry, reroute, or fail. This does not prevent a `ProvideCredentialChain` from trying later sources after individual provider errors; see [Loading credentials](/docs/guides/credentials/).
+
+`reqsign_core::Error` carries an `ErrorKind` designed for retry decisions:
+
+| Kind              | Meaning                                  | Sensible default                |
+| ----------------- | ---------------------------------------- | ------------------------------- |
+| CredentialInvalid | Credential missing, expired, or unusable | Refresh source, then retry      |
+| PermissionDenied  | Authenticated but not authorized         | Do not retry                    |
+| ConfigInvalid     | Malformed profile/config input           | Fix configuration; do not retry |
+| RequestInvalid    | The request cannot be signed as given    | Fix the request; do not retry   |
+| RateLimited       | A credential endpoint throttled us       | Retry with backoff              |
+| Unexpected        | Transient or unclassified failure        | Retry with backoff, bounded     |
+
+Errors preserve their source chain (`std::error::Error::source`), so transport details from a metadata fetch or STS exchange stay inspectable.
+
+Why no built-in retry: Reqsign sits _inside_ clients that already have retry policies — an HTTP middleware, a storage layer, a job runner. A second, inner retry loop multiplies attempts invisibly and turns rate limits into storms. Most callers simply propagate signing errors to the layer that already retries requests.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/reference/versioning-and-targets/
+---
+# Versioning and targets | Apache Reqsign™
+
+# Versioning and targets
+
+## Versioning[​](#versioning "Direct link to Versioning")
+
+Reqsign publishes many crates on three tracks:
+
+| Track           | Crates                                                                                                                         | Scheme                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Core + services | reqsign-core, reqsign-aws-core, every reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio | Lockstep major (currently 3.x)                                                      |
+| Reqwest adapter | reqsign-http-send-reqwest                                                                                                      | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
+| Facade          | reqsign                                                                                                                        | Independent (currently 0.20.x)                                                      |
+
+Lockstep means any `3.x` service crate composes with any `3.x` core; mixing majors fails to compile — the trait definitions are the compatibility boundary, and Cargo enforces it.
+
+Applications should depend on the facade and let it pin compatible components; libraries should depend on `reqsign-core` plus their service crates with major-only bounds, leaving context implementations to the application:
+
+```
+
+# Application:
+
+reqsign = { version = "0.20", features = ["aws"] }
+
+
+# Library:
+
+reqsign-core = "3"
+
+reqsign-aws-v4 = "3"
+
+
+```
+
+Every release ships as an ASF source release plus crates.io packages — see[Download](/download/). Release notes and migration steps for breaking majors are published with each[GitHub release](https://github.com/apache/reqsign/releases).
+
+## Targets[​](#targets "Direct link to Targets")
+
+**Rust version.** The workspace declares `rust-version = "1.86.0"` — the minimum supported Rust. CI tracks stable; MSRV bumps are treated as observable changes, not patch-level noise.
+
+**Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
+
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, and Tencent COS providers. The[provider matrix](/docs/providers/) is the authoritative per-provider status; the [Custom runtimes & WASM guide](/docs/guides/custom-runtimes/)covers building and browser-backed contexts.
+
+**Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
+
+---
