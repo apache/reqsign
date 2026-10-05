@@ -50,7 +50,8 @@ const ALL_ROLES: u8 =
 /// individual `storage.objects.*` permission names. It accepts IAM role
 /// identifiers prefixed with `inRole:`. These constants deliberately expose only
 /// the well-known predefined Cloud Storage object roles, preventing callers from
-/// injecting raw role identifiers or binding a grant to a mutable custom role.
+/// supplying arbitrary roles through this convenience API. Use
+/// [`CredentialAccessBoundaryRule::new`] for caller-selected IAM roles.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct CredentialAccessBoundaryPermissions(u8);
 
@@ -118,20 +119,104 @@ impl BitOrAssign for CredentialAccessBoundaryPermissions {
     }
 }
 
+/// A caller-defined Cloud Storage Credential Access Boundary rule.
+///
+/// The caller owns the authorization policy, including any changes to custom
+/// roles. Reqsign checks bucket names, role identifier structure, non-empty
+/// conditions, and size/rule limits before granting. Google validates role
+/// existence, permissions, and CEL syntax and semantics.
+///
+/// Use [`CredentialAccessBoundaryGrant::new`] and
+/// [`CredentialAccessBoundaryGrant::with_rule`] to combine explicit rules with
+/// the existing typed convenience constructors. Rules are evaluated as a union.
 #[derive(Clone)]
-struct CredentialAccessBoundaryRule {
+pub struct CredentialAccessBoundaryRule {
     bucket: String,
-    object_prefix: Option<String>,
-    permissions: CredentialAccessBoundaryPermissions,
+    permissions: RulePermissions,
+    condition: Option<RuleCondition>,
 }
 
-/// A typed, bound Google Cloud Storage Credential Access Boundary.
+#[derive(Clone)]
+enum RulePermissions {
+    Typed(CredentialAccessBoundaryPermissions),
+    Explicit(Vec<String>),
+}
+
+#[derive(Clone)]
+enum RuleCondition {
+    ObjectPrefix(String),
+    Expression(String),
+}
+
+impl Debug for CredentialAccessBoundaryRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CredentialAccessBoundaryRule")
+            .finish_non_exhaustive()
+    }
+}
+
+impl CredentialAccessBoundaryRule {
+    /// Create a bucket-wide rule with caller-selected IAM role identifiers.
+    ///
+    /// Each role must include `inRole:` followed by `roles/ROLE`,
+    /// `projects/PROJECT/roles/ROLE`, or `organizations/ORGANIZATION/roles/ROLE`.
+    /// Individual permission names are not accepted. Role order and spelling
+    /// are preserved; no roles are added or substituted.
+    /// Validation is deferred until the grant is used, as with typed grants.
+    pub fn new(
+        bucket: impl Into<String>,
+        roles: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        Self {
+            bucket: bucket.into(),
+            permissions: RulePermissions::Explicit(roles.into_iter().map(Into::into).collect()),
+            condition: None,
+        }
+    }
+
+    /// Set a caller-authored CEL availability condition, preserved verbatim.
+    ///
+    /// The caller must escape literals and choose the intended authorization
+    /// semantics. Reqsign checks only that the expression is non-empty and
+    /// within the size limit; it does not parse or evaluate arbitrary CEL.
+    /// `objectListPrefix` conditions authorize list requests, not individual
+    /// results within a listing.
+    ///
+    /// Explicit expressions require [`ServerSideCredentialAccessBoundaryGranter`].
+    /// The client-side granter cannot compile arbitrary CEL and rejects these
+    /// rules before I/O rather than omitting their conditions.
+    pub fn with_condition(mut self, expression: impl Into<String>) -> Self {
+        self.condition = Some(RuleCondition::Expression(expression.into()));
+        self
+    }
+}
+
+/// A bound Google Cloud Storage Credential Access Boundary.
 ///
 /// Use [`CredentialAccessBoundaryGrant::for_bucket`] for bucket-wide access or
 /// [`CredentialAccessBoundaryGrant::for_object_prefix`] for a non-empty object
 /// prefix. Prefix grants generate the CEL expression internally, including the
-/// `objectListPrefix` check required for safely listing objects. Bucket and
+/// `objectListPrefix` check that authorizes list requests. Bucket and
 /// prefix values are never normalized.
+///
+/// Use [`CredentialAccessBoundaryGrant::new`] with an explicit
+/// [`CredentialAccessBoundaryRule`] for other roles or conditions. For example,
+/// this policy accepts the exact list prefix `table` while restricting object
+/// access to `table/` (excluding sibling object prefixes such as `table-other/`):
+///
+/// ```
+/// use reqsign_google::{CredentialAccessBoundaryGrant, CredentialAccessBoundaryRule};
+///
+/// let condition = "resource.name.startsWith('projects/_/buckets/example-bucket/objects/table/') || \
+///     api.getAttribute('storage.googleapis.com/objectListPrefix', '') == 'table' || \
+///     api.getAttribute('storage.googleapis.com/objectListPrefix', '').startsWith('table/')";
+/// let grant = CredentialAccessBoundaryGrant::new(
+///     CredentialAccessBoundaryRule::new("example-bucket", [
+///         "inRole:roles/storage.legacyObjectReader",
+///         "inRole:roles/storage.objectViewer",
+///     ]).with_condition(condition),
+/// );
+/// ```
 ///
 /// Additional rules can be added explicitly. Google evaluates CAB rules as a
 /// union and allows at most ten rules.
@@ -149,6 +234,17 @@ impl Debug for CredentialAccessBoundaryGrant {
 }
 
 impl CredentialAccessBoundaryGrant {
+    /// Create a Credential Access Boundary from a caller-defined rule.
+    pub fn new(rule: CredentialAccessBoundaryRule) -> Self {
+        Self { rules: vec![rule] }
+    }
+
+    /// Add a caller-defined rule. All rules are evaluated as a union.
+    pub fn with_rule(mut self, rule: CredentialAccessBoundaryRule) -> Self {
+        self.rules.push(rule);
+        self
+    }
+
     /// Create a bucket-wide Credential Access Boundary.
     pub fn for_bucket(
         bucket: impl Into<String>,
@@ -157,8 +253,8 @@ impl CredentialAccessBoundaryGrant {
         Self {
             rules: vec![CredentialAccessBoundaryRule {
                 bucket: bucket.into(),
-                object_prefix: None,
-                permissions,
+                condition: None,
+                permissions: RulePermissions::Typed(permissions),
             }],
         }
     }
@@ -175,8 +271,8 @@ impl CredentialAccessBoundaryGrant {
         Self {
             rules: vec![CredentialAccessBoundaryRule {
                 bucket: bucket.into(),
-                object_prefix: Some(object_prefix.into()),
-                permissions,
+                condition: Some(RuleCondition::ObjectPrefix(object_prefix.into())),
+                permissions: RulePermissions::Typed(permissions),
             }],
         }
     }
@@ -191,8 +287,8 @@ impl CredentialAccessBoundaryGrant {
     ) -> Self {
         self.rules.push(CredentialAccessBoundaryRule {
             bucket: bucket.into(),
-            object_prefix: None,
-            permissions,
+            condition: None,
+            permissions: RulePermissions::Typed(permissions),
         });
         self
     }
@@ -208,8 +304,8 @@ impl CredentialAccessBoundaryGrant {
     ) -> Self {
         self.rules.push(CredentialAccessBoundaryRule {
             bucket: bucket.into(),
-            object_prefix: Some(object_prefix.into()),
-            permissions,
+            condition: Some(RuleCondition::ObjectPrefix(object_prefix.into())),
+            permissions: RulePermissions::Typed(permissions),
         });
         self
     }
@@ -267,16 +363,46 @@ impl CredentialAccessBoundaryGrant {
 impl CredentialAccessBoundaryRule {
     fn to_wire(&self) -> Result<AccessBoundaryRule> {
         validate_bucket_name(&self.bucket)?;
-        let available_permissions = self.permissions.roles()?;
+        let available_permissions = match &self.permissions {
+            RulePermissions::Typed(permissions) => permissions
+                .roles()?
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            RulePermissions::Explicit(roles) => {
+                if roles.is_empty() {
+                    return Err(Error::request_invalid(
+                        "credential access boundary roles must not be empty",
+                    ));
+                }
+                for role in roles {
+                    validate_role(role)?;
+                }
+                roles.clone()
+            }
+        };
         let available_resource = format!(
             "//storage.googleapis.com/projects/_/buckets/{}",
             self.bucket
         );
 
         let availability_condition = self
-            .object_prefix
-            .as_deref()
-            .map(|prefix| build_prefix_condition(&self.bucket, prefix))
+            .condition
+            .as_ref()
+            .map(|condition| match condition {
+                RuleCondition::ObjectPrefix(prefix) => build_prefix_condition(&self.bucket, prefix),
+                RuleCondition::Expression(expression) => {
+                    if expression.trim().is_empty() {
+                        return Err(Error::request_invalid(
+                            "credential access boundary condition must not be empty",
+                        ));
+                    }
+                    validate_condition_size(expression)?;
+                    Ok(AvailabilityCondition {
+                        expression: expression.clone(),
+                    })
+                }
+            })
             .transpose()?;
 
         Ok(AccessBoundaryRule {
@@ -303,7 +429,7 @@ struct AccessBoundary {
 #[serde(rename_all = "camelCase")]
 struct AccessBoundaryRule {
     available_resource: String,
-    available_permissions: Vec<&'static str>,
+    available_permissions: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     availability_condition: Option<AvailabilityCondition>,
 }
@@ -311,6 +437,38 @@ struct AccessBoundaryRule {
 #[derive(Serialize)]
 struct AvailabilityCondition {
     expression: String,
+}
+
+fn validate_role(role: &str) -> Result<()> {
+    let valid = role.strip_prefix("inRole:").is_some_and(|identifier| {
+        let parts: Vec<_> = identifier.split('/').collect();
+        let valid_shape = matches!(
+            parts.as_slice(),
+            ["roles", _] | ["projects" | "organizations", _, "roles", _]
+        );
+        valid_shape
+            && parts.iter().all(|part| {
+                !part.is_empty()
+                    && part
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+            })
+    });
+    if !valid {
+        return Err(Error::request_invalid(
+            "credential access boundary role identifier is invalid",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_condition_size(expression: &str) -> Result<()> {
+    if expression.chars().count() > MAX_CONDITION_CHARACTERS {
+        return Err(Error::request_invalid(
+            "credential access boundary condition exceeds the size limit",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_bucket_name(bucket: &str) -> Result<()> {
@@ -383,11 +541,7 @@ fn build_prefix_condition(bucket: &str, prefix: &str) -> Result<AvailabilityCond
          api.getAttribute(\"storage.googleapis.com/objectListPrefix\", \"\")\
          .startsWith({list_prefix_literal})"
     );
-    if expression.chars().count() > MAX_CONDITION_CHARACTERS {
-        return Err(Error::request_invalid(
-            "credential access boundary condition exceeds the size limit",
-        ));
-    }
+    validate_condition_size(&expression)?;
 
     Ok(AvailabilityCondition { expression })
 }
@@ -504,6 +658,69 @@ mod tests {
             .expect("condition must be a string");
         assert!(expression.contains("objects//leading//nested/"));
         assert!(expression.ends_with(r#".startsWith("/leading//nested/")"#));
+    }
+
+    #[test]
+    fn explicit_rules_preserve_expressions_and_redact_debug() {
+        let expression = r#"resource.name.endsWith("quote\\\"/雪&suffix")"#;
+        let rule = CredentialAccessBoundaryRule::new(
+            "sensitive-bucket",
+            ["inRole:projects/sensitive-project/roles/custom_role"],
+        )
+        .with_condition(expression);
+        let grant = CredentialAccessBoundaryGrant::new(rule.clone());
+        let options: serde_json::Value =
+            serde_json::from_str(&grant.options_json().unwrap()).unwrap();
+        assert_eq!(
+            options["accessBoundary"]["accessBoundaryRules"][0]["availabilityCondition"]["expression"],
+            expression
+        );
+        for debug in [format!("{rule:?}"), format!("{grant:?}")] {
+            assert!(!debug.contains("sensitive"));
+            assert!(!debug.contains(expression));
+        }
+    }
+
+    #[test]
+    fn explicit_rules_retain_rule_and_size_limits() {
+        let rule = CredentialAccessBoundaryRule::new(
+            "example-bucket",
+            ["inRole:roles/storage.objectViewer"],
+        );
+        let mut grant = CredentialAccessBoundaryGrant::new(rule.clone());
+        for _ in 1..MAX_ACCESS_BOUNDARY_RULES {
+            grant = grant.with_rule(rule.clone());
+        }
+        grant
+            .validate()
+            .expect("ten explicit rules must be accepted");
+        assert_eq!(
+            grant.with_rule(rule.clone()).validate().unwrap_err().kind(),
+            ErrorKind::RequestInvalid
+        );
+
+        let empty_expression_size = serde_json::to_string(&AccessBoundary {
+            access_boundary_rules: vec![AccessBoundaryRule {
+                availability_condition: Some(AvailabilityCondition {
+                    expression: String::new(),
+                }),
+                ..rule.to_wire().unwrap()
+            }],
+        })
+        .unwrap()
+        .chars()
+        .count();
+        let remaining = MAX_ACCESS_BOUNDARY_CHARACTERS - empty_expression_size;
+        CredentialAccessBoundaryGrant::new(rule.clone().with_condition("x".repeat(remaining)))
+            .validate()
+            .expect("explicit boundary at the size limit must be accepted");
+        assert_eq!(
+            CredentialAccessBoundaryGrant::new(rule.with_condition("x".repeat(remaining + 1)))
+                .validate()
+                .unwrap_err()
+                .kind(),
+            ErrorKind::RequestInvalid
+        );
     }
 
     #[test]

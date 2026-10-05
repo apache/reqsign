@@ -18,7 +18,7 @@
 # All configurations could be found here: https://github.com/apache/infrastructure-asfyaml/
 
 github:
-  description: "Signing HTTP requests without heavy SDKs."
+  description: "Apache Reqsign: Signing HTTP requests without heavy SDKs."
   homepage: https://docs.rs/reqsign
   labels:
     - rust
@@ -87,7 +87,7 @@ github:
       restrict_deletion: true
       restrict_force_push: true
 notifications:
-  commits: commits@opendal.apache.org
-  issues: commits@opendal.apache.org
-  pullrequests: commits@opendal.apache.org
-  discussions: dev@opendal.apache.org
+  commits: commits@reqsign.apache.org
+  issues: commits@reqsign.apache.org
+  pullrequests: commits@reqsign.apache.org
+  discussions: dev@reqsign.apache.org

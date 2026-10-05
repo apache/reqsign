@@ -1,12 +1,12 @@
 # Rust release helpers
 
-These scripts define and publish the crates.io package set for Apache OpenDAL
-reqsign.
+These scripts define and publish the crates.io package set for Apache Reqsign.
 
 ## Publish plan
 
 `plan.py` reads `cargo metadata --no-deps`, selects workspace packages that can
-publish to crates.io, and orders them by non-dev local dependencies.
+publish to crates.io, and orders them by non-dev local dependencies using
+Python's `TopologicalSorter`.
 
 ```bash
 python3 .github/scripts/release_rust/plan.py
@@ -37,20 +37,33 @@ Trusted Publishing cannot create the first version of a crate.
   credentials.
 - `apply` authenticates every existing crate before any write, publishes a
   dependency-free `0.0.0` namespace reservation for each missing name,
-  configures the exact `apache/opendal-reqsign`, `release.yml`, `release`
+  configures the exact `apache/reqsign`, `release.yml`, `release`
   Trusted Publisher, enables `trustpub_only`, and performs a final authenticated
   audit.
 - `verify` checks public crate metadata and `trustpub_only`. It cannot verify
   ownership or the exact Trusted Publisher because those APIs require
   authentication.
 
-The protected `rust-bootstrap` workflow always runs the authenticated audit,
-including when discovery finds no missing names. It never changes an
-established crate. Existing crates must be migrated independently before the
+The protected `rust-bootstrap` job audits the complete plan before any write,
+including when no names are missing. It never changes an established crate. Existing crates must be migrated independently before the
 workflow can succeed.
+
+Published crate metadata may still reference the former repository URL or the
+former project name in a `0.0.0` placeholder description. The audit accepts that
+historical metadata, but every Trusted Publisher must target `apache/reqsign`.
+New placeholders and releases use the current project name and repository URL.
 
 Version `0.0.0` is an irreversible namespace reservation. It is not an ASF
 software release and contains no implementation.
+
+The local dispatch helper uses GitHub REST API version `2026-03-10` to obtain
+the exact workflow run ID, then checks its commit and waits for completion.
+
+These are repository-specific scripts: run them with normal Python (without
+`-O` or `PYTHONOPTIMIZE`, which disable assertions). Cargo and crates.io response
+fields are used directly; unexpected package or publisher state fails an
+assertion. Failed API requests stop the run; rerun after resolving the failure.
+Only Cargo publish rate limits and public metadata propagation are retried.
 
 ## Tests
 

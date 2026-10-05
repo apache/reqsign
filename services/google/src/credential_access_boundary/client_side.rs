@@ -871,20 +871,16 @@ fn serialize_restrictions(grant: &CredentialAccessBoundaryGrant) -> Result<Vec<u
         .rules
         .iter()
         .map(|rule| {
-            let available_resource = format!(
-                "//storage.googleapis.com/projects/_/buckets/{}",
-                rule.bucket
-            );
-            let available_permissions = rule
-                .permissions
-                .roles()?
-                .into_iter()
-                .map(str::to_owned)
-                .collect();
-            let compiled_availability_condition = rule
-                .object_prefix
-                .as_deref()
-                .map(|prefix| prefix_condition_expr(&rule.bucket, prefix));
+            let wire = rule.to_wire()?;
+            let available_resource = wire.available_resource;
+            let available_permissions = wire.available_permissions;
+            let compiled_availability_condition = match &rule.condition {
+                None => None,
+                Some(super::RuleCondition::ObjectPrefix(prefix)) => Some(prefix_condition_expr(&rule.bucket, prefix)),
+                Some(super::RuleCondition::Expression(_)) => return Err(Error::request_invalid(
+                    "explicit CEL conditions require server-side credential access boundary exchange",
+                )),
+            };
             Ok(ClientSideAccessBoundaryRule {
                 available_resource,
                 available_permissions,

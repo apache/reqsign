@@ -28,14 +28,14 @@
 mod constants;
 
 mod credential;
-pub use credential::{Credential, ServiceAccount, Token};
+pub use credential::{Credential, OAuth2Credentials, ServiceAccount, Token};
 
 mod credential_access_boundary;
 #[cfg(feature = "credential-access-boundary-client-side")]
 pub use credential_access_boundary::ClientSideCredentialAccessBoundaryGranter;
 pub use credential_access_boundary::{
     CredentialAccessBoundaryGrant, CredentialAccessBoundaryPermissions,
-    ServerSideCredentialAccessBoundaryGranter,
+    CredentialAccessBoundaryRule, ServerSideCredentialAccessBoundaryGranter,
 };
 
 mod service_account_impersonation;
@@ -49,8 +49,8 @@ pub use sign_request::RequestSigner;
 
 mod provide_credential;
 pub use provide_credential::{
-    DefaultCredentialProvider, DefaultCredentialProviderBuilder, EnvCredentialProvider,
-    ExternalAccountConfig, ExternalAccountCredentialProvider, FileCredentialProvider,
-    ServiceAccountTokenCredentialProvider, StaticCredentialProvider, TokenCredentialProvider,
-    VmMetadataCredentialProvider, WellKnownCredentialProvider,
+    AuthorizedUserCredentialProvider, DefaultCredentialProvider, DefaultCredentialProviderBuilder,
+    EnvCredentialProvider, ExternalAccountConfig, ExternalAccountCredentialProvider,
+    FileCredentialProvider, ServiceAccountTokenCredentialProvider, StaticCredentialProvider,
+    TokenCredentialProvider, VmMetadataCredentialProvider, WellKnownCredentialProvider,
 };
