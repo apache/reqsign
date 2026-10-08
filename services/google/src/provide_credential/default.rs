@@ -320,6 +320,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_default_provider_external_account_without_format() -> Result<()> {
+        #[derive(Debug, Clone, Default)]
+        struct ExternalAccountHttpSend {
+            uris: Arc<Mutex<Vec<String>>>,
+        }
+
+        impl HttpSend for ExternalAccountHttpSend {
+            async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+                self.uris.lock().unwrap().push(req.uri().to_string());
+                let body = match req.uri().to_string().as_str() {
+                    "http://localhost/subject-token" => {
+                        assert_eq!(req.method(), http::Method::GET);
+                        Bytes::from_static(b"  test-subject-token\n")
+                    }
+                    "https://sts.googleapis.com/v1/token" => {
+                        assert_eq!(req.method(), http::Method::POST);
+                        let params: HashMap<_, _> =
+                            form_urlencoded::parse(req.body()).into_owned().collect();
+                        assert_eq!(params.get("subject_token").unwrap(), "test-subject-token");
+                        Bytes::from_static(
+                            br#"{"access_token":"federated-token","token_type":"Bearer","expires_in":3600}"#,
+                        )
+                    }
+                    uri => panic!("unexpected request or credential fallback: {uri}"),
+                };
+                Ok(http::Response::builder().status(200).body(body).unwrap())
+            }
+        }
+
+        for source in [
+            serde_json::json!({"file": "/var/run/oidc-token"}),
+            serde_json::json!({"url": "http://localhost/subject-token"}),
+        ] {
+            let config = serde_json::json!({
+                "type": "external_account",
+                "audience": "//iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p/providers/q",
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                "token_url": "https://sts.googleapis.com/v1/token",
+                "credential_source": source,
+            });
+            let file_read = MockFileRead::new(HashMap::from([
+                (
+                    "/adc.json".to_string(),
+                    serde_json::to_vec(&config).unwrap(),
+                ),
+                (
+                    "/var/run/oidc-token".to_string(),
+                    b"  test-subject-token\n".to_vec(),
+                ),
+            ]));
+            let http = ExternalAccountHttpSend::default();
+            let ctx = Context::new()
+                .with_file_read(file_read.clone())
+                .with_http_send(http.clone())
+                .with_env(StaticEnv {
+                    home_dir: None,
+                    envs: HashMap::from([(
+                        GOOGLE_APPLICATION_CREDENTIALS.to_string(),
+                        "/adc.json".to_string(),
+                    )]),
+                });
+
+            let credential = DefaultCredentialProvider::new()
+                .provide_credential(&ctx)
+                .await?
+                .expect("external account credential must exist");
+            assert_eq!(credential.token.unwrap().access_token, "federated-token");
+            if source.get("file").is_some() {
+                assert_eq!(
+                    *file_read.paths.lock().unwrap(),
+                    ["/adc.json", "/var/run/oidc-token"]
+                );
+                assert_eq!(
+                    *http.uris.lock().unwrap(),
+                    ["https://sts.googleapis.com/v1/token"]
+                );
+            } else {
+                assert_eq!(*file_read.paths.lock().unwrap(), ["/adc.json"]);
+                assert_eq!(
+                    *http.uris.lock().unwrap(),
+                    [
+                        "http://localhost/subject-token",
+                        "https://sts.googleapis.com/v1/token"
+                    ]
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_default_provider_builder_default_chain() {
         let provider = DefaultCredentialProvider::builder().build();
 
