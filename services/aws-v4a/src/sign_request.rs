@@ -25,15 +25,15 @@ use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{DerSignature, SigningKey};
 use reqsign_aws_core::Credential;
 use reqsign_aws_core::signing::{
-    append_query_fragment, append_query_pairs, canonical_request_string, canonicalize_headers,
-    canonicalize_query,
+    append_query_fragment, append_query_pairs, canonical_request_string_with_encoding,
+    canonicalize_headers, canonicalize_query,
 };
 use reqsign_core::hash::{hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, Result, SignRequest, SigningCredential, SigningRequest};
 use zeroize::Zeroizing;
 
-use crate::SigningRegionSet;
+use crate::{PercentEncodingMode, SigningRegionSet};
 
 const ALGORITHM: &str = "AWS4-ECDSA-P256-SHA256";
 const X_AMZ_REGION_SET: &str = "x-amz-region-set";
@@ -45,6 +45,7 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 pub struct RequestSigner {
     service: String,
     region_set: SigningRegionSet,
+    percent_encoding_mode: PercentEncodingMode,
     time: Option<Timestamp>,
 }
 
@@ -54,8 +55,31 @@ impl RequestSigner {
         Self {
             service: service.to_string(),
             region_set,
+            percent_encoding_mode: PercentEncodingMode::Single,
             time: None,
         }
+    }
+
+    /// Set the canonical URI percent-encoding mode for header and query signing.
+    ///
+    /// The default is [`PercentEncodingMode::Single`] for compatibility with S3
+    /// and existing callers. Select [`PercentEncodingMode::Double`] when the
+    /// target service requires another encoding pass over the wire-ready path.
+    /// This does not modify the outgoing URI, normalize paths, or change payload
+    /// hashing. The mode is not inferred from the service name or endpoint.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use reqsign_aws_v4a::{PercentEncodingMode, RequestSigner, SigningRegionSet};
+    ///
+    /// let signer = RequestSigner::new("execute-api", SigningRegionSet::new("*")?)
+    ///     .with_percent_encoding_mode(PercentEncodingMode::Double);
+    /// # Ok::<(), reqsign_core::Error>(())
+    /// ```
+    pub fn with_percent_encoding_mode(mut self, mode: PercentEncodingMode) -> Self {
+        self.percent_encoding_mode = mode;
+        self
     }
 
     /// Specify the signing time.
@@ -132,7 +156,11 @@ impl SignRequest for RequestSigner {
             &self.region_set,
         );
         let canonical_query = canonicalize_query(&signing_request, &authentication_query);
-        let canonical_request = canonical_request_string(&signing_request, &canonical_query)?;
+        let canonical_request = canonical_request_string_with_encoding(
+            &signing_request,
+            &canonical_query,
+            self.percent_encoding_mode,
+        )?;
         let encoded_request = hex_sha256(canonical_request.as_bytes());
 
         let scope = format!("{}/{}/aws4_request", now.format_date(), self.service);
@@ -284,8 +312,9 @@ mod tests {
     use anyhow::Result as AnyResult;
     use aws_credential_types::Credentials;
     use aws_sigv4::http_request::{
-        PayloadChecksumKind, PercentEncodingMode, SignableBody, SignableRequest, SignatureLocation,
-        SigningSettings,
+        PayloadChecksumKind, PercentEncodingMode as AwsPercentEncodingMode, SessionTokenMode,
+        SignableBody, SignableRequest, SignatureLocation, SigningSettings,
+        UriPathNormalizationMode,
     };
     use aws_sigv4::sign::v4a;
     use http::Request;
@@ -294,12 +323,16 @@ mod tests {
     use pretty_assertions::assert_eq;
     use reqsign_core::ErrorKind;
 
+    use crate::PercentEncodingMode;
+
     // AWS CRT SigV4a get-vanilla test vector.
     const ACCESS_KEY_ID: &str = "AKIDEXAMPLE";
     const SECRET_ACCESS_KEY: &str = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
     const HEADER_STRING_TO_SIGN: &str = "AWS4-ECDSA-P256-SHA256\n20150830T123600Z\n20150830/service/aws4_request\ncf59db423e841c8b7e3444158185aa261b724a5c27cbe762676f3eed19f4dc02";
     const RAW_QUERY: &str =
         "slash=%2F&literal-plus=+&double=%252F&dup=first&dup=second&empty=&flag&";
+    const ENCODING_QUERY: &str = "key=value&slash=%2F&empty=&dup=first&dup=second";
+    const CANONICAL_ENCODING_QUERY: &str = "dup=first&dup=second&empty=&key=value&slash=%2F";
 
     fn credential() -> Credential {
         Credential {
@@ -435,102 +468,253 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn matches_aws_sdk_request_fields() -> AnyResult<()> {
-        let now: Timestamp = "2015-08-30T12:36:00Z".parse()?;
-
-        for expires_in in [None, Some(Duration::from_secs(3600))] {
-            let mut expected =
-                Request::get("https://example.amazonaws.com/object?key=value").body(())?;
-            let mut settings = SigningSettings::default();
-            settings.percent_encoding_mode = PercentEncodingMode::Double;
-            settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
-            if let Some(expires_in) = expires_in {
-                settings.signature_location = SignatureLocation::QueryParams;
-                settings.expires_in = Some(expires_in);
-            }
-
-            let identity = Credentials::new(
-                ACCESS_KEY_ID,
-                SECRET_ACCESS_KEY,
-                None,
-                None,
-                "hardcoded-credentials",
+    // Assemble the expected canonical request independently of the production
+    // canonicalization helpers so a shared encoding bug cannot mask a regression.
+    fn encoding_string_to_sign(canonical_path: &str, expires_in: Option<Duration>) -> String {
+        let canonical_request = if let Some(expires_in) = expires_in {
+            format!(
+                "GET\n{canonical_path}\n\
+                 X-Amz-Algorithm=AWS4-ECDSA-P256-SHA256\
+                 &X-Amz-Credential=AKIDEXAMPLE%2F20150830%2Fservice%2Faws4_request\
+                 &X-Amz-Date=20150830T123600Z&X-Amz-Expires={}\
+                 &X-Amz-Region-Set=us-east-1&X-Amz-SignedHeaders=host\
+                 &{CANONICAL_ENCODING_QUERY}\n\
+                 host:example.amazonaws.com\n\nhost\nUNSIGNED-PAYLOAD",
+                expires_in.as_secs(),
             )
-            .into();
-            let params = v4a::SigningParams::builder()
-                .identity(&identity)
-                .region_set("us-east-1")
-                .name("service")
-                .time(now.as_system_time())
-                .settings(settings)
-                .build()?;
-            let output = aws_sigv4::http_request::sign(
-                SignableRequest::new(
-                    expected.method().as_str(),
-                    expected.uri().to_string(),
-                    expected.headers().iter().map(|(name, value)| {
-                        (
-                            name.as_str(),
-                            std::str::from_utf8(value.as_bytes())
-                                .expect("header must be valid UTF-8"),
-                        )
-                    }),
-                    SignableBody::UnsignedPayload,
-                )?,
-                &params.into(),
-            )?;
-            output.into_parts().0.apply_to_request_http1x(&mut expected);
+        } else {
+            format!(
+                "GET\n{canonical_path}\n{CANONICAL_ENCODING_QUERY}\n\
+                 host:example.amazonaws.com\n\
+                 x-amz-content-sha256:UNSIGNED-PAYLOAD\n\
+                 x-amz-date:20150830T123600Z\n\
+                 x-amz-region-set:us-east-1\n\n\
+                 host;x-amz-content-sha256;x-amz-date;x-amz-region-set\nUNSIGNED-PAYLOAD"
+            )
+        };
+        format!(
+            "AWS4-ECDSA-P256-SHA256\n20150830T123600Z\n20150830/service/aws4_request\n{}",
+            hex_sha256(canonical_request.as_bytes()),
+        )
+    }
 
-            let (mut actual_parts, actual_body) =
-                Request::get("https://example.amazonaws.com/object?key=value")
-                    .body(())?
-                    .into_parts();
-            signer()
-                .sign_request(
-                    &Context::new(),
-                    &mut actual_parts,
-                    Some(&credential()),
-                    expires_in,
-                )
-                .await?;
-            let actual = Request::from_parts(actual_parts, actual_body);
+    fn verify_encoding_signature(request: &Request<()>, string_to_sign: &str) -> AnyResult<()> {
+        let signature = if let Some(authorization) = request.headers().get(header::AUTHORIZATION) {
+            authorization
+                .to_str()?
+                .rsplit_once(", Signature=")
+                .expect("authorization must contain signature")
+                .1
+                .to_string()
+        } else {
+            form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+                .find(|(key, _)| key == "X-Amz-Signature")
+                .expect("presigned request must contain signature")
+                .1
+                .into_owned()
+        };
+        let signature_bytes = hex::decode(signature)?;
+        let signature = DerSignature::try_from(signature_bytes.as_slice())
+            .expect("signature must use DER encoding");
+        let key = generate_signing_key(ACCESS_KEY_ID, SECRET_ACCESS_KEY)?;
+        assert!(
+            key.verifying_key()
+                .verify(string_to_sign.as_bytes(), &signature)
+                .is_ok(),
+            "signature must verify the expected canonical request for {}",
+            request.uri(),
+        );
+        Ok(())
+    }
 
-            assert_eq!(comparable_headers(&actual), comparable_headers(&expected));
-            assert_eq!(comparable_query(&actual), comparable_query(&expected));
+    fn sign_with_aws_sdk(
+        uri: &str,
+        mode: AwsPercentEncodingMode,
+        expires_in: Option<Duration>,
+    ) -> AnyResult<Request<()>> {
+        let now: Timestamp = "2015-08-30T12:36:00Z".parse()?;
+        let mut request = Request::get(uri).body(())?;
+        let mut settings = SigningSettings::default();
+        settings.percent_encoding_mode = mode;
+        settings.uri_path_normalization_mode = UriPathNormalizationMode::Disabled;
+        settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
+        settings.session_token_mode = SessionTokenMode::Include;
+        settings.excluded_headers = None;
+        settings.expires_in = expires_in;
+        settings.signature_location = if expires_in.is_some() {
+            SignatureLocation::QueryParams
+        } else {
+            SignatureLocation::Headers
+        };
+
+        let identity = Credentials::new(
+            ACCESS_KEY_ID,
+            SECRET_ACCESS_KEY,
+            None,
+            None,
+            "hardcoded-credentials",
+        )
+        .into();
+        let params = v4a::SigningParams::builder()
+            .identity(&identity)
+            .region_set("us-east-1")
+            .name("service")
+            .time(now.as_system_time())
+            .settings(settings)
+            .build()?;
+        let output = aws_sigv4::http_request::sign(
+            SignableRequest::new(
+                request.method().as_str(),
+                request.uri().to_string(),
+                request.headers().iter().map(|(name, value)| {
+                    (
+                        name.as_str(),
+                        std::str::from_utf8(value.as_bytes()).expect("header must be valid UTF-8"),
+                    )
+                }),
+                SignableBody::UnsignedPayload,
+            )?,
+            &params.into(),
+        )?;
+        output.into_parts().0.apply_to_request_http1x(&mut request);
+        Ok(request)
+    }
+
+    #[tokio::test]
+    async fn encoding_modes_match_aws_sdk_signatures() -> AnyResult<()> {
+        // SDK Single preserves the wire path verbatim, so compare using already
+        // canonical escapes. Reqsign's legacy decode/re-encode cases are below.
+        for (path, double_path) in [
+            ("/object", "/object"),
+            ("/percent%25name", "/percent%2525name"),
+            ("/slash%2Fname", "/slash%252Fname"),
+            ("/space%20name", "/space%2520name"),
+            ("/at%40name", "/at%2540name"),
+            ("/equal%3Dname", "/equal%253Dname"),
+            ("/unicode%E4%B8%AD", "/unicode%25E4%25B8%25AD"),
+            ("//a/./b/../c/", "//a/./b/../c/"),
+        ] {
+            for (mode, sdk_mode, canonical_path) in [
+                (None, AwsPercentEncodingMode::Single, path),
+                (
+                    Some(PercentEncodingMode::Single),
+                    AwsPercentEncodingMode::Single,
+                    path,
+                ),
+                (
+                    Some(PercentEncodingMode::Double),
+                    AwsPercentEncodingMode::Double,
+                    double_path,
+                ),
+            ] {
+                for expires_in in [None, Some(Duration::from_secs(3600))] {
+                    let uri = format!("https://example.amazonaws.com{path}?{ENCODING_QUERY}");
+                    let expected = sign_with_aws_sdk(&uri, sdk_mode, expires_in)?;
+                    let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
+                    let request_signer = match mode {
+                        Some(mode) => signer().with_percent_encoding_mode(mode),
+                        None => signer(),
+                    };
+                    request_signer
+                        .sign_request(&Context::new(), &mut parts, Some(&credential()), expires_in)
+                        .await?;
+                    let actual = Request::from_parts(parts, body);
+                    assert_eq!(comparable_headers(&actual), comparable_headers(&expected));
+                    assert_eq!(comparable_query(&actual), comparable_query(&expected));
+                    assert_eq!(actual.uri().path(), path);
+                    if expires_in.is_some() {
+                        assert!(
+                            actual
+                                .uri()
+                                .query()
+                                .expect("presigned request has query")
+                                .starts_with(&format!("{ENCODING_QUERY}&"))
+                        );
+                    } else {
+                        assert_eq!(actual.uri().to_string(), uri);
+                    }
+
+                    // ECDSA signatures may differ. Both must verify against the
+                    // same literal canonical path, not merely have equal fields.
+                    let string_to_sign = encoding_string_to_sign(canonical_path, expires_in);
+                    verify_encoding_signature(&expected, &string_to_sign)?;
+                    verify_encoding_signature(&actual, &string_to_sign)?;
+                }
+            }
         }
         Ok(())
     }
 
     #[tokio::test]
-    async fn preserves_existing_wire_query() -> AnyResult<()> {
-        let original_uri = format!("https://example.amazonaws.com/object%2Fname?{RAW_QUERY}");
-        let mut header_parts = Request::get(&original_uri).body(())?.into_parts().0;
-        signer()
-            .sign_request(
-                &Context::new(),
-                &mut header_parts,
-                Some(&credential()),
-                None,
-            )
-            .await?;
-        assert_eq!(header_parts.uri.to_string(), original_uri);
+    async fn encoding_modes_preserve_their_path_semantics() -> AnyResult<()> {
+        for (mode, path, canonical_path) in [
+            (None, "/raw@/a=b/%7E/%2f", "/raw%40/a%3Db/~/%2F"),
+            (
+                Some(PercentEncodingMode::Single),
+                "/raw@/a=b/%7E/%2f",
+                "/raw%40/a%3Db/~/%2F",
+            ),
+            (
+                Some(PercentEncodingMode::Double),
+                "/raw@/a=b/%7E/%2f/%FF//a/./b/../",
+                "/raw%40/a%3Db/%257E/%252f/%25FF//a/./b/../",
+            ),
+        ] {
+            for expires_in in [None, Some(Duration::from_secs(3600))] {
+                let uri = format!("https://example.amazonaws.com{path}?{ENCODING_QUERY}");
+                let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
+                let request_signer = match mode {
+                    Some(mode) => signer().with_percent_encoding_mode(mode),
+                    None => signer(),
+                };
+                request_signer
+                    .sign_request(&Context::new(), &mut parts, Some(&credential()), expires_in)
+                    .await?;
+                let actual = Request::from_parts(parts, body);
+                assert_eq!(actual.uri().path(), path);
+                if expires_in.is_some() {
+                    assert!(
+                        actual
+                            .uri()
+                            .query()
+                            .expect("presigned request has query")
+                            .starts_with(&format!("{ENCODING_QUERY}&"))
+                    );
+                } else {
+                    assert_eq!(actual.uri().to_string(), uri);
+                }
+                verify_encoding_signature(
+                    &actual,
+                    &encoding_string_to_sign(canonical_path, expires_in),
+                )?;
+            }
+        }
+        Ok(())
+    }
 
-        let mut query_parts = Request::get(&original_uri).body(())?.into_parts().0;
-        signer()
-            .sign_request(
-                &Context::new(),
-                &mut query_parts,
-                Some(&credential()),
-                Some(Duration::from_secs(60)),
-            )
-            .await?;
-        assert!(
-            query_parts
-                .uri
-                .to_string()
-                .starts_with(&format!("{original_uri}X-Amz-Algorithm="))
-        );
+    #[tokio::test]
+    async fn preserves_existing_wire_query_in_both_encoding_modes() -> AnyResult<()> {
+        let original_uri = format!("https://example.amazonaws.com/object%2Fname?{RAW_QUERY}");
+        for mode in [PercentEncodingMode::Single, PercentEncodingMode::Double] {
+            for expires_in in [None, Some(Duration::from_secs(60))] {
+                let mut parts = Request::get(&original_uri).body(())?.into_parts().0;
+                signer()
+                    .with_percent_encoding_mode(mode)
+                    .sign_request(&Context::new(), &mut parts, Some(&credential()), expires_in)
+                    .await?;
+                assert_eq!(parts.uri.path(), "/object%2Fname");
+                if expires_in.is_some() {
+                    assert!(
+                        parts
+                            .uri
+                            .to_string()
+                            .starts_with(&format!("{original_uri}X-Amz-Algorithm="))
+                    );
+                } else {
+                    assert_eq!(parts.uri.to_string(), original_uri);
+                }
+            }
+        }
         Ok(())
     }
 

@@ -19,28 +19,44 @@ use std::fmt::Write;
 use std::time::Duration;
 
 use http::{HeaderValue, Uri, header};
-use percent_encoding::{percent_decode_str, utf8_percent_encode};
+use percent_encoding::{AsciiSet, percent_decode_str, utf8_percent_encode};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Result, SigningRequest};
 
-use crate::Credential;
 use crate::constants::{
     AWS_QUERY_ENCODE_SET, AWS_URI_ENCODE_SET, X_AMZ_CONTENT_SHA_256, X_AMZ_DATE,
     X_AMZ_S3_SESSION_TOKEN, X_AMZ_SECURITY_TOKEN,
 };
+use crate::{Credential, PercentEncodingMode};
+
+static AWS_URI_DOUBLE_ENCODE_SET: AsciiSet = AWS_URI_ENCODE_SET.remove(b'/');
 
 /// Build the canonical request shared by AWS SigV4-family algorithms.
 pub fn canonical_request_string(
     request: &SigningRequest,
     canonical_query: &[(String, String)],
 ) -> Result<String> {
+    canonical_request_string_with_encoding(request, canonical_query, PercentEncodingMode::Single)
+}
+
+/// Build an AWS canonical request with the selected URI percent-encoding mode.
+///
+/// The mode only affects the canonical URI, not the request's wire URI or query.
+pub fn canonical_request_string_with_encoding(
+    request: &SigningRequest,
+    canonical_query: &[(String, String)],
+    percent_encoding_mode: PercentEncodingMode,
+) -> Result<String> {
     let mut output = String::with_capacity(256);
 
     writeln!(output, "{}", request.method)
         .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write method: {e}")))?;
-    writeln!(output, "{}", canonical_uri(&request.path)?).map_err(|e| {
-        reqsign_core::Error::unexpected(format!("failed to write encoded path: {e}"))
-    })?;
+    writeln!(
+        output,
+        "{}",
+        canonical_uri_with_encoding(&request.path, percent_encoding_mode)?
+    )
+    .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write encoded path: {e}")))?;
     writeln!(
         output,
         "{}",
@@ -194,8 +210,26 @@ pub fn canonicalize_query(
     query
 }
 
-/// Encode a wire-ready path for use in an AWS canonical request.
+/// Encode a wire-ready path with the default single-encoding behavior.
 pub fn canonical_uri(path: &str) -> Result<String> {
+    canonical_uri_with_encoding(path, PercentEncodingMode::Single)
+}
+
+/// Encode a wire-ready path for use in an AWS canonical request.
+///
+/// This does not normalize path segments or modify the original wire path.
+pub fn canonical_uri_with_encoding(
+    path: &str,
+    percent_encoding_mode: PercentEncodingMode,
+) -> Result<String> {
+    if percent_encoding_mode == PercentEncodingMode::Double {
+        // The input is already the caller's encoded wire path. Do not decode it:
+        // doing so would lose percent-escape spelling and reject non-UTF-8 bytes.
+        return Ok(utf8_percent_encode(path, &AWS_URI_DOUBLE_ENCODE_SET).to_string());
+    }
+
+    // Keep the existing single-encoding behavior, including escape normalization
+    // and rejection of percent-encoded non-UTF-8 bytes, for S3 compatibility.
     path.split('/')
         .map(|segment| {
             let decoded = percent_decode_str(segment).decode_utf8().map_err(|e| {
@@ -245,4 +279,93 @@ pub fn append_query_fragment(uri: &Uri, fragment: &str) -> Result<Uri> {
     value.parse().map_err(|e| {
         reqsign_core::Error::request_invalid("failed to append signing query").with_source(e)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::Request;
+
+    #[test]
+    fn canonical_uri_encoding_modes() -> Result<()> {
+        let cases = [
+            ("/", "/", "/"),
+            ("/a%25b", "/a%25b", "/a%2525b"),
+            ("/a%2Fb", "/a%2Fb", "/a%252Fb"),
+            ("/a%20b", "/a%20b", "/a%2520b"),
+            ("/a%40b", "/a%40b", "/a%2540b"),
+            ("/a%3Db", "/a%3Db", "/a%253Db"),
+            ("/a@b=c", "/a%40b%3Dc", "/a%40b%3Dc"),
+            ("/a%2fb%3d", "/a%2Fb%3D", "/a%252fb%253d"),
+            ("/%7E/%41", "/~/A", "/%257E/%2541"),
+            (
+                "/%E4%B8%AD%E6%96%87",
+                "/%E4%B8%AD%E6%96%87",
+                "/%25E4%25B8%25AD%25E6%2596%2587",
+            ),
+            ("/a//./b/../c/", "/a//./b/../c/", "/a//./b/../c/"),
+            ("/-._~AZaz09", "/-._~AZaz09", "/-._~AZaz09"),
+        ];
+
+        assert_eq!(PercentEncodingMode::default(), PercentEncodingMode::Single);
+        for (wire_path, single, double) in cases {
+            assert_eq!(canonical_uri(wire_path)?, single, "default: {wire_path}");
+            assert_eq!(
+                canonical_uri_with_encoding(wire_path, PercentEncodingMode::Single)?,
+                single,
+                "single: {wire_path}"
+            );
+            assert_eq!(
+                canonical_uri_with_encoding(wire_path, PercentEncodingMode::Double)?,
+                double,
+                "double: {wire_path}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn double_encoding_does_not_decode_non_utf8_escapes() -> Result<()> {
+        for (wire_path, double) in [("/%FF", "/%25FF"), ("/%C3%28", "/%25C3%2528")] {
+            assert!(canonical_uri(wire_path).is_err());
+            assert!(canonical_uri_with_encoding(wire_path, PercentEncodingMode::Single).is_err());
+            assert_eq!(
+                canonical_uri_with_encoding(wire_path, PercentEncodingMode::Double)?,
+                double
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn encoding_changes_only_the_canonical_uri() -> Result<()> {
+        let mut parts = Request::get("https://example.com/a%2Fb?key=%25")
+            .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+            .body(())
+            .expect("request must be valid")
+            .into_parts()
+            .0;
+        let original_uri = parts.uri.clone();
+        let request = SigningRequest::build(&mut parts)?;
+        let canonical_query = canonicalize_query(&request, &[]);
+        let default = canonical_request_string(&request, &canonical_query)?;
+        let single = canonical_request_string_with_encoding(
+            &request,
+            &canonical_query,
+            PercentEncodingMode::Single,
+        )?;
+        let double = canonical_request_string_with_encoding(
+            &request,
+            &canonical_query,
+            PercentEncodingMode::Double,
+        )?;
+
+        assert_eq!(default, single);
+        assert_eq!(single.lines().nth(1), Some("/a%2Fb"));
+        assert_eq!(double.lines().nth(1), Some("/a%252Fb"));
+        assert_eq!(double, single.replacen("/a%2Fb", "/a%252Fb", 1));
+        assert_eq!(request.path, "/a%2Fb");
+        assert_eq!(parts.uri, original_uri);
+        Ok(())
+    }
 }

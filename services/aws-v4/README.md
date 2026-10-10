@@ -34,6 +34,29 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+## Canonical URI Encoding
+
+The signer defaults to `PercentEncodingMode::Single`, preserving existing S3
+behavior. For a service that requires double URI encoding, select it explicitly:
+
+```rust
+use reqsign_aws_v4::{PercentEncodingMode, RequestSigner};
+
+let signer = RequestSigner::new("execute-api", "us-east-1")
+    .with_percent_encoding_mode(PercentEncodingMode::Double);
+```
+
+Both header signing and presigning use this setting. Supply the final wire-ready
+URI: a path of `/a%20b` is signed as `/a%2520b` in Double mode, while the outgoing
+path remains `/a%20b`. Double encodes the original path without decoding it; a
+literal `@` becomes `%40`, while an existing `%40` becomes `%2540`. It preserves
+literal `/` separators and does not normalize paths or change payload hashing.
+The service name and endpoint do not automatically select a mode.
+
+Single retains Reqsign's existing per-segment decode/re-encode behavior, including
+normalizing escape spelling and rejecting percent-encoded invalid UTF-8. It is
+not a raw-path pass-through for noncanonical wire paths.
+
 ## Default Credential Chain
 
 `DefaultCredentialProvider::new()` builds the documented AWS default chain:
