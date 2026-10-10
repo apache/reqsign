@@ -17,3 +17,24 @@ let signer = RequestSigner::new("s3", region_set);
 
 Credential providers and shared AWS types are re-exported from
 `reqsign-aws-core`.
+
+## Canonical URI Encoding
+
+`RequestSigner` defaults to `PercentEncodingMode::Single` for compatibility with
+existing S3 callers. Both header signing and presigning can opt into Double:
+
+```rust
+use reqsign_aws_v4a::{PercentEncodingMode, RequestSigner, SigningRegionSet};
+
+let signer = RequestSigner::new("execute-api", SigningRegionSet::new("*")?)
+    .with_percent_encoding_mode(PercentEncodingMode::Double);
+# Ok::<(), reqsign_core::Error>(())
+```
+
+The input URI must already be wire-ready. Double applies one additional encoding
+pass to its original path without decoding it: `/a%20b` becomes `/a%2520b` only in
+the canonical request. The outgoing path is unchanged, literal `/` separators are
+preserved, and path normalization and payload hashing are unaffected. Single
+keeps the existing per-segment decode/re-encode behavior, including escape
+normalization and rejection of percent-encoded invalid UTF-8. Neither the service
+name nor the endpoint automatically selects a mode.

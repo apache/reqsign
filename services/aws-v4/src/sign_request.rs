@@ -15,13 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::Credential;
+use crate::{Credential, PercentEncodingMode};
 use http::request::Parts;
 use http::{HeaderValue, header};
 use log::debug;
 use reqsign_aws_core::signing::{
-    append_query_fragment, append_query_pairs, canonical_request_string, canonicalize_headers,
-    canonicalize_headers_with_standard_session_token, canonicalize_query,
+    append_query_fragment, append_query_pairs, canonical_request_string_with_encoding,
+    canonicalize_headers, canonicalize_headers_with_standard_session_token, canonicalize_query,
 };
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
@@ -38,6 +38,7 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 pub struct RequestSigner {
     service: String,
     region: String,
+    percent_encoding_mode: PercentEncodingMode,
     use_standard_session_token: bool,
 
     time: Option<Timestamp>,
@@ -49,6 +50,7 @@ impl RequestSigner {
         Self {
             service: service.into(),
             region: region.into(),
+            percent_encoding_mode: PercentEncodingMode::Single,
             use_standard_session_token: false,
 
             time: None,
@@ -87,6 +89,27 @@ impl RequestSigner {
     /// [`UploadPartCopy`]: https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
     pub fn with_standard_session_token(mut self) -> Self {
         self.use_standard_session_token = true;
+        self
+    }
+
+    /// Set the canonical URI percent-encoding mode for header and query signing.
+    ///
+    /// The default is [`PercentEncodingMode::Single`] for compatibility with S3
+    /// and existing callers. Select [`PercentEncodingMode::Double`] when the
+    /// target service requires another encoding pass over the wire-ready path.
+    /// This does not modify the outgoing URI, normalize paths, or change payload
+    /// hashing. The mode is not inferred from the service name or endpoint.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use reqsign_aws_v4::{PercentEncodingMode, RequestSigner};
+    ///
+    /// let signer = RequestSigner::new("execute-api", "us-east-1")
+    ///     .with_percent_encoding_mode(PercentEncodingMode::Double);
+    /// ```
+    pub fn with_percent_encoding_mode(mut self, mode: PercentEncodingMode) -> Self {
+        self.percent_encoding_mode = mode;
         self
     }
 
@@ -170,7 +193,11 @@ impl SignRequest for RequestSigner {
         let canonical_query = canonicalize_query(&signed_req, &authentication_query);
 
         // build canonical request and string to sign.
-        let creq = canonical_request_string(&signed_req, &canonical_query)?;
+        let creq = canonical_request_string_with_encoding(
+            &signed_req,
+            &canonical_query,
+            self.percent_encoding_mode,
+        )?;
         let encoded_req = hex_sha256(creq.as_bytes());
 
         // Scope: "20220313/<region>/<service>/aws4_request"
@@ -306,20 +333,22 @@ fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StaticCredentialProvider;
+    use crate::{PercentEncodingMode, StaticCredentialProvider};
     use anyhow::Result;
     use aws_credential_types::Credentials;
     use aws_sigv4::http_request::PayloadChecksumKind;
-    use aws_sigv4::http_request::PercentEncodingMode;
+    use aws_sigv4::http_request::PercentEncodingMode as AwsPercentEncodingMode;
+    use aws_sigv4::http_request::SessionTokenMode;
     use aws_sigv4::http_request::SignableBody;
     use aws_sigv4::http_request::SignableRequest;
     use aws_sigv4::http_request::SignatureLocation;
     use aws_sigv4::http_request::SigningSettings;
+    use aws_sigv4::http_request::UriPathNormalizationMode;
     use aws_sigv4::sign::v4;
     use http::Request;
     use http::header;
     use reqsign_aws_core::constants::X_AMZ_CONTENT_SHA_256;
-    use reqsign_aws_core::signing::canonical_uri;
+    use reqsign_aws_core::signing::{canonical_request_string, canonical_uri};
     use reqsign_core::{ErrorKind, ProvideCredential, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -351,7 +380,7 @@ mod tests {
         session_token_name_override: Option<&'static str>,
     ) -> Result<Request<&'static str>> {
         let mut settings = SigningSettings::default();
-        settings.percent_encoding_mode = PercentEncodingMode::Double;
+        settings.percent_encoding_mode = AwsPercentEncodingMode::Double;
         settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         settings.session_token_name_override = session_token_name_override;
         if presigned {
@@ -951,6 +980,300 @@ mod tests {
         assert_eq!(format_query(l), format_query(r), "{name} query mismatch");
     }
 
+    fn encoding_request(uri: &str) -> Result<Request<&'static str>> {
+        Ok(Request::get(uri)
+            .header("x-custom", "encoding-test")
+            .body("")?)
+    }
+
+    fn aws_signed_encoding_request(
+        uri: &str,
+        now: Timestamp,
+        mode: PercentEncodingMode,
+        presigned: bool,
+    ) -> Result<Request<&'static str>> {
+        let mut request = encoding_request(uri)?;
+        let mut settings = SigningSettings::default();
+        settings.percent_encoding_mode = match mode {
+            PercentEncodingMode::Single => AwsPercentEncodingMode::Single,
+            PercentEncodingMode::Double => AwsPercentEncodingMode::Double,
+        };
+        // Match reqsign's other signing choices so only URI encoding varies.
+        settings.uri_path_normalization_mode = UriPathNormalizationMode::Disabled;
+        settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
+        settings.session_token_mode = SessionTokenMode::Include;
+        settings.session_token_name_override = None;
+        settings.excluded_headers = None;
+        settings.signature_location = if presigned {
+            SignatureLocation::QueryParams
+        } else {
+            SignatureLocation::Headers
+        };
+        settings.expires_in = presigned.then_some(Duration::from_secs(60));
+
+        let identity = Credentials::new(
+            TEST_ACCESS_KEY,
+            TEST_SECRET_KEY,
+            Some(TEST_SESSION_TOKEN.to_string()),
+            None,
+            "hardcoded-credentials",
+        )
+        .into();
+        let params = v4::SigningParams::builder()
+            .identity(&identity)
+            .region("us-east-1")
+            .name("execute-api")
+            .time(now.as_system_time())
+            .settings(settings)
+            .build()
+            .expect("signing params must be valid");
+        let output = aws_sigv4::http_request::sign(
+            SignableRequest::new(
+                request.method().as_str(),
+                request.uri().to_string(),
+                request
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.to_str().unwrap())),
+                SignableBody::UnsignedPayload,
+            )?,
+            &params.into(),
+        )?;
+        let (instructions, _) = output.into_parts();
+        instructions.apply_to_request_http1x(&mut request);
+        Ok(request)
+    }
+
+    async fn reqsign_signed_encoding_request(
+        uri: &str,
+        now: Timestamp,
+        mode: Option<PercentEncodingMode>,
+        presigned: bool,
+    ) -> Result<Request<&'static str>> {
+        let credential = Credential {
+            access_key_id: TEST_ACCESS_KEY.to_string(),
+            secret_access_key: TEST_SECRET_KEY.to_string(),
+            session_token: Some(TEST_SESSION_TOKEN.to_string()),
+            expires_in: Some(now + Duration::from_secs(3600)),
+        };
+        let mut signer = RequestSigner::new("execute-api", "us-east-1").with_time(now);
+        if let Some(mode) = mode {
+            signer = signer.with_percent_encoding_mode(mode);
+        }
+        let (mut parts, body) = encoding_request(uri)?.into_parts();
+        signer
+            .sign_request(
+                &Context::new(),
+                &mut parts,
+                Some(&credential),
+                presigned.then_some(Duration::from_secs(60)),
+            )
+            .await?;
+        Ok(Request::from_parts(parts, body))
+    }
+
+    async fn check_encoding_signatures_match_aws_sigv4(presigned: bool) -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        // Both implementations agree on Single for canonically encoded wire
+        // paths. Noncanonical inputs are covered separately below.
+        let encoded_paths = [
+            "/",
+            "/percent%25",
+            "/encoded%2Fslash",
+            "/space%20here",
+            "/user%40example.com",
+            "/key%3Dvalue",
+            "/%E4%BD%A0%E5%A5%BD/%C3%A9",
+            "/literal%252Fescape",
+            "/unreserved-._~/a//b/./c/../d/",
+        ];
+        let double_only_paths = [
+            "/user@example.com/key=value",
+            "/lowercase%2fslash/%c3%a9",
+            "/encoded%7Etilde",
+            "/invalid-utf8%FF",
+            "/a//b/./c/../d/",
+        ];
+        const QUERY: &str = "z=last&slash=%2f&dup=two&dup=one&empty=&flag&double=%252F";
+
+        for mode in [PercentEncodingMode::Single, PercentEncodingMode::Double] {
+            let mut paths = encoded_paths.to_vec();
+            if mode == PercentEncodingMode::Double {
+                paths.extend(double_only_paths);
+            }
+            for path in paths {
+                let uri = format!("https://example.com{path}?{QUERY}");
+                let expected = aws_signed_encoding_request(&uri, now, mode, presigned)?;
+                let actual =
+                    reqsign_signed_encoding_request(&uri, now, Some(mode), presigned).await?;
+                let name = format!("{mode:?}, presigned={presigned}, path={path}");
+                compare_request(&name, &expected, &actual);
+                assert_eq!(actual.uri().path(), path, "{name} changed wire path");
+                if presigned {
+                    assert!(
+                        actual.uri().to_string().starts_with(&format!("{uri}&")),
+                        "{name} changed existing wire query"
+                    );
+                    assert!(actual.uri().query().unwrap().contains("X-Amz-Signature="));
+                } else {
+                    assert_eq!(actual.uri().to_string(), uri, "{name} changed wire URI");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn canonical_uri_encoding_header_signatures_match_aws_sigv4() -> Result<()> {
+        check_encoding_signatures_match_aws_sigv4(false).await
+    }
+
+    #[tokio::test]
+    async fn canonical_uri_encoding_query_signatures_match_aws_sigv4() -> Result<()> {
+        check_encoding_signatures_match_aws_sigv4(true).await
+    }
+
+    #[tokio::test]
+    async fn canonical_uri_encoding_defaults_to_single_and_preserves_wire_bytes() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let path = "/a//b/./c/../user@example.com/%2f/%7E/key=value/%25";
+        let uri = format!("https://example.com{path}?{RAW_QUERY}");
+
+        for presigned in [false, true] {
+            let default = reqsign_signed_encoding_request(&uri, now, None, presigned).await?;
+            let single = reqsign_signed_encoding_request(
+                &uri,
+                now,
+                Some(PercentEncodingMode::Single),
+                presigned,
+            )
+            .await?;
+            let double = reqsign_signed_encoding_request(
+                &uri,
+                now,
+                Some(PercentEncodingMode::Double),
+                presigned,
+            )
+            .await?;
+            assert_eq!(default.headers(), single.headers());
+            assert_eq!(default.uri(), single.uri());
+            if presigned {
+                assert_ne!(single.uri(), double.uri());
+            } else {
+                assert_ne!(
+                    single.headers()[header::AUTHORIZATION],
+                    double.headers()[header::AUTHORIZATION]
+                );
+            }
+            for request in [&default, &single, &double] {
+                assert_eq!(request.uri().path(), path);
+                assert_eq!(request.headers()["x-custom"], "encoding-test");
+                if presigned {
+                    // RAW_QUERY ends with '&'; the existing fragment, including
+                    // duplicate keys, literal '+', and empty pairs, stays exact.
+                    assert!(request.uri().to_string().starts_with(&uri));
+                    assert!(
+                        request
+                            .uri()
+                            .query()
+                            .unwrap()
+                            .starts_with(&format!("{RAW_QUERY}X-Amz-Algorithm="))
+                    );
+                } else {
+                    assert_eq!(request.uri().to_string(), uri);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn single_encoding_retains_legacy_canonicalization_differences() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        for (wire_path, legacy_path) in [
+            (
+                "/user@example.com/key=value",
+                "/user%40example.com/key%3Dvalue",
+            ),
+            ("/lowercase%2fslash/%c3%a9", "/lowercase%2Fslash/%C3%A9"),
+            ("/encoded%7Etilde", "/encoded~tilde"),
+        ] {
+            assert_eq!(canonical_uri(wire_path)?, legacy_path);
+            let uri = format!("https://example.com{wire_path}");
+            let legacy_uri = format!("https://example.com{legacy_path}");
+            for presigned in [false, true] {
+                let actual = reqsign_signed_encoding_request(
+                    &uri,
+                    now,
+                    Some(PercentEncodingMode::Single),
+                    presigned,
+                )
+                .await?;
+                // SDK Single leaves the path verbatim. Legacy reqsign Single
+                // decodes and re-encodes each segment, so compare its signature
+                // against the SDK signing that explicitly canonicalized path.
+                let expected = aws_signed_encoding_request(
+                    &legacy_uri,
+                    now,
+                    PercentEncodingMode::Single,
+                    presigned,
+                )?;
+                compare_request(wire_path, &expected, &actual);
+                assert_eq!(actual.uri().path(), wire_path);
+
+                let sdk_wire =
+                    aws_signed_encoding_request(&uri, now, PercentEncodingMode::Single, presigned)?;
+                if presigned {
+                    let signature = |request: &Request<&str>| {
+                        form_urlencoded::parse(request.uri().query().unwrap().as_bytes())
+                            .find(|(name, _)| name == "X-Amz-Signature")
+                            .expect("presigned signature must exist")
+                            .1
+                            .into_owned()
+                    };
+                    assert_ne!(signature(&actual), signature(&sdk_wire));
+                } else {
+                    assert_ne!(
+                        actual.headers()[header::AUTHORIZATION],
+                        sdk_wire.headers()[header::AUTHORIZATION]
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn single_encoding_retains_invalid_utf8_rejection() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let credential = s3_express_credential(now);
+        for mode in [None, Some(PercentEncodingMode::Single)] {
+            for presigned in [false, true] {
+                let mut signer = RequestSigner::new("execute-api", "us-east-1").with_time(now);
+                if let Some(mode) = mode {
+                    signer = signer.with_percent_encoding_mode(mode);
+                }
+                let mut parts = encoding_request("https://example.com/invalid%FF?raw=%2f")?
+                    .into_parts()
+                    .0;
+                let original = parts.clone();
+                let error = signer
+                    .sign_request(
+                        &Context::new(),
+                        &mut parts,
+                        Some(&credential),
+                        presigned.then_some(Duration::from_secs(60)),
+                    )
+                    .await
+                    .expect_err("Single must retain its legacy UTF-8 validation");
+                assert_eq!(error.kind(), ErrorKind::RequestInvalid);
+                assert_eq!(parts.uri, original.uri);
+                assert_eq!(parts.headers, original.headers);
+            }
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn canonicalization_preserves_wire_uri() -> Result<()> {
         let credential = Credential {
@@ -1058,7 +1381,7 @@ mod tests {
         let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
-        ss.percent_encoding_mode = PercentEncodingMode::Double;
+        ss.percent_encoding_mode = AwsPercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         let id = Credentials::new(
             "access_key_id",
@@ -1133,7 +1456,7 @@ mod tests {
         let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
-        ss.percent_encoding_mode = PercentEncodingMode::Double;
+        ss.percent_encoding_mode = AwsPercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         ss.signature_location = SignatureLocation::QueryParams;
         ss.expires_in = Some(Duration::from_secs(3600));
@@ -1215,7 +1538,7 @@ mod tests {
         let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
-        ss.percent_encoding_mode = PercentEncodingMode::Double;
+        ss.percent_encoding_mode = AwsPercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         let id = Credentials::new(
             "access_key_id",
@@ -1293,7 +1616,7 @@ mod tests {
         let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
-        ss.percent_encoding_mode = PercentEncodingMode::Double;
+        ss.percent_encoding_mode = AwsPercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         ss.signature_location = SignatureLocation::QueryParams;
         ss.expires_in = Some(Duration::from_secs(3600));
