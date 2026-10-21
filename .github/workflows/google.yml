@@ -86,7 +86,7 @@ jobs:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load workload identity configuration
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           export-env: true
         env:
@@ -167,7 +167,7 @@ jobs:
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load Google service-account credential
         id: load_secrets
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         env:
           GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
       - name: Set up service-account credential file
@@ -203,7 +203,7 @@ jobs:
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load Google service-account credential
         id: load_secrets
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         env:
           GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
       - name: Set up environment credential file
@@ -239,7 +239,7 @@ jobs:
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load Google service-account credential
         id: load_secrets
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         env:
           GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
       - name: Set up well-known service-account credential
@@ -274,7 +274,7 @@ jobs:
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load Google service-account credential
         id: load_secrets
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         env:
           GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
       - name: Set up default credential file
@@ -310,7 +310,7 @@ jobs:
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load Google service-account credential
         id: load_secrets
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         env:
           GOOGLE_CREDENTIAL_BASE64: op://reqsign/google/credential_base64
       - name: Test ServiceAccountTokenCredentialProvider and server-side CAB
@@ -339,7 +339,7 @@ jobs:
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load authorized-user credential
         id: load_secrets
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         env:
           GOOGLE_AUTHORIZED_USER_BASE64: op://reqsign/google/authorized_user_base64
       - name: Set up authorized-user credential
@@ -380,7 +380,7 @@ jobs:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load workload identity configuration
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           export-env: true
         env:
@@ -433,7 +433,7 @@ jobs:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load workload identity configuration
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           export-env: true
         env:
@@ -476,7 +476,7 @@ jobs:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load workload identity configuration
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           export-env: true
         env:
@@ -519,7 +519,7 @@ jobs:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load workload identity configuration
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           export-env: true
         env:
@@ -591,7 +591,7 @@ jobs:
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load impersonated ADC credential
         id: load_secrets
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         env:
           GOOGLE_IMPERSONATED_ADC_BASE64: op://reqsign/google/impersonated_sa_base64
       - name: Set up impersonated ADC credential
@@ -633,7 +633,7 @@ jobs:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load Google control-plane configuration
-        uses: 1Password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           export-env: true
         env:
