@@ -128,7 +128,8 @@ pub mod external_account {
     pub struct UrlSource {
         /// The URL to fetch credentials from.
         pub url: String,
-        /// The format of the response.
+        /// The format of the response. Defaults to plain text when omitted.
+        #[serde(default)]
         pub format: Format,
         /// Optional headers to include in the request.
         pub headers: Option<std::collections::HashMap<String, String>>,
@@ -140,7 +141,8 @@ pub mod external_account {
     pub struct FileSource {
         /// The file path to read credentials from.
         pub file: String,
-        /// The format of the file.
+        /// The format of the file. Defaults to plain text when omitted.
+        #[serde(default)]
         pub format: Format,
     }
 
@@ -181,7 +183,7 @@ pub mod external_account {
     }
 
     /// Format for parsing credentials.
-    #[derive(Clone, Deserialize, Debug)]
+    #[derive(Clone, Default, Deserialize, Debug)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum Format {
         /// JSON format.
@@ -190,6 +192,7 @@ pub mod external_account {
             subject_token_field_name: String,
         },
         /// Plain text format.
+        #[default]
         Text,
     }
 
@@ -433,6 +436,42 @@ mod tests {
         let data = br#"{"wrong_field": "test-token"}"#;
         let result = format.parse(data);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_external_account_source_explicit_format() {
+        for source in [
+            serde_json::json!({"file": "/path/to/token"}),
+            serde_json::json!({"url": "http://localhost/token"}),
+        ] {
+            for (format, data) in [
+                (serde_json::json!({"type": "text"}), "test-token"),
+                (
+                    serde_json::json!({"type": "json", "subject_token_field_name": "id_token"}),
+                    r#"{"id_token":"test-token"}"#,
+                ),
+            ] {
+                let mut source = source.clone();
+                source["format"] = format;
+                let source: external_account::Source = serde_json::from_value(source).unwrap();
+                let format = match source {
+                    external_account::Source::File(source) => source.format,
+                    external_account::Source::Url(source) => source.format,
+                    _ => panic!("expected file or URL source"),
+                };
+                assert_eq!(format.parse(data.as_bytes()).unwrap(), "test-token");
+            }
+
+            for invalid_format in [
+                serde_json::Value::Null,
+                serde_json::json!({"type": "unsupported"}),
+                serde_json::json!({"type": "json"}),
+            ] {
+                let mut source = source.clone();
+                source["format"] = invalid_format;
+                assert!(serde_json::from_value::<external_account::Source>(source).is_err());
+            }
+        }
     }
 
     #[test]

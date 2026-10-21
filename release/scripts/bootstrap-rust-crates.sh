@@ -19,134 +19,34 @@
 
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_dir="$(git -C "${script_dir}" rev-parse --show-toplevel)"
-cd "${repo_dir}"
+cd "$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)"
+test "$#" -eq 0
+test -z "$(git status --porcelain)"
 
-for command in gh git jq python3; do
-  command -v "${command}" >/dev/null || {
-    echo "required command is unavailable: ${command}" >&2
-    exit 1
-  }
-done
-
-if [[ "$#" -ne 0 ]]; then
-  echo "usage: $0" >&2
-  exit 1
-fi
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "the release checkout must be clean" >&2
-  exit 1
-fi
-
-apache_remote="$(
-  git remote -v |
-    awk '$2 ~ /github.com[:\/]apache\/opendal-reqsign(\.git)?$/ && $3 == "(fetch)" { print $1; exit }'
-)"
-if [[ -z "${apache_remote}" ]]; then
-  echo "cannot find a git remote for apache/opendal-reqsign" >&2
-  exit 1
-fi
-
-git fetch "${apache_remote}" main
-source_commit="$(git rev-parse FETCH_HEAD)"
-if [[ "$(git rev-parse HEAD)" != "${source_commit}" ]]; then
-  echo "the release checkout must be at the current apache/opendal-reqsign main: ${source_commit}" >&2
-  exit 1
-fi
-
-git cat-file -e \
-  "${source_commit}:.github/workflows/bootstrap_rust_crates.yml"
-git cat-file -e \
-  "${source_commit}:.github/scripts/release_rust/bootstrap.py"
-
-repo="apache/opendal-reqsign"
+repo="apache/reqsign"
 workflow="bootstrap_rust_crates.yml"
-environment="rust-bootstrap"
-if ! environment_json="$(gh api "repos/${repo}/environments/${environment}")"; then
-  echo "GitHub environment ${environment} is not configured" >&2
-  exit 1
-fi
-if ! jq -e \
-  '[.protection_rules[]? | select(.type == "required_reviewers")] | length > 0' \
-  >/dev/null <<<"${environment_json}"; then
-  echo "GitHub environment ${environment} must require reviewers" >&2
-  exit 1
-fi
+git fetch "https://github.com/${repo}.git" main
+source_commit="$(git rev-parse FETCH_HEAD)"
+test "$(git rev-parse HEAD)" = "${source_commit}"
 
-run_title="Bootstrap Rust crates at ${source_commit}"
-started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+gh api "repos/${repo}/environments/rust-bootstrap" |
+  jq -e '[.protection_rules[] | select(.type == "required_reviewers")] | length > 0' >/dev/null
 
-if ! dispatch_output="$(
-  gh workflow run "${workflow}" \
-    --repo "${repo}" \
-    --ref main 2>&1
-)"; then
-  echo "${dispatch_output}" >&2
-  exit 1
-fi
-echo "${dispatch_output}"
-
+# The versioned dispatch API returns the exact run; no polling or title matching.
 run_id="$(
-  sed -nE \
-    's#.*github\.com/apache/opendal-reqsign/actions/runs/([0-9]+).*#\1#p' \
-    <<<"${dispatch_output}" |
-    tail -n 1
+  gh api --method POST \
+    -H 'X-GitHub-Api-Version: 2026-03-10' \
+    "repos/${repo}/actions/workflows/${workflow}/dispatches" \
+    -f ref=main \
+    -F return_run_details=true |
+    jq -er '.workflow_run_id'
 )"
-deadline=$((SECONDS + 120))
-while [[ -z "${run_id}" && ${SECONDS} -lt ${deadline} ]]; do
-  runs="$(
-    gh run list \
-      --repo "${repo}" \
-      --workflow "${workflow}" \
-      --event workflow_dispatch \
-      --limit 50 \
-      --json databaseId,displayTitle,headSha,createdAt
-  )"
-  run_id="$(
-    jq -r \
-      --arg title "${run_title}" \
-      --arg head_sha "${source_commit}" \
-      --arg started_at "${started_at}" \
-      '[.[]
-        | select(
-            .displayTitle == $title
-            and .headSha == $head_sha
-            and .createdAt >= $started_at
-          )
-       ]
-       | sort_by(.createdAt)
-       | last
-       | .databaseId // empty' \
-      <<<"${runs}"
-  )"
-  if [[ -z "${run_id}" ]]; then
-    sleep 2
-  fi
-done
-
-if [[ -z "${run_id}" ]]; then
-  echo "could not resolve the dispatched ${workflow} run" >&2
-  exit 1
-fi
-
-run_head_sha="$(
-  gh run view "${run_id}" --repo "${repo}" --json headSha --jq '.headSha'
-)"
-if [[ "${run_head_sha}" != "${source_commit}" ]]; then
-  echo "workflow run ${run_id} uses ${run_head_sha}, expected ${source_commit}" >&2
-  exit 1
-fi
+run_head_sha="$(gh run view "${run_id}" --repo "${repo}" --json headSha --jq '.headSha')"
+test "${run_head_sha}" = "${source_commit}"
 
 echo "Waiting for crates.io bootstrap run ${run_id}"
 if ! gh run watch "${run_id}" --repo "${repo}" --exit-status; then
   gh run view "${run_id}" --repo "${repo}" --log-failed
   exit 1
 fi
-
-gh run view "${run_id}" \
-  --repo "${repo}" \
-  --json displayTitle,headSha,status,conclusion,url \
-  --jq '{title: .displayTitle, head_sha: .headSha, status, conclusion, url}'
-
 python3 .github/scripts/release_rust/bootstrap.py verify

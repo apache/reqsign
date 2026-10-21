@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-FROM public.ecr.aws/docker/library/rust:1.88-bookworm AS builder
+FROM docker.io/library/rust:1.88-bookworm AS builder
 
 WORKDIR /workspace
 COPY . .
@@ -24,7 +24,7 @@ RUN cargo test -p reqsign-aws-v4 --test main --release --no-run && \
     test -n "${test_binary}" && \
     cp "${test_binary}" /tmp/reqsign-aws-live-test
 
-FROM public.ecr.aws/docker/library/debian:bookworm-slim
+FROM docker.io/library/debian:bookworm-slim
 
 RUN apt-get update && \
     apt-get install --yes --no-install-recommends ca-certificates libssl3 && \

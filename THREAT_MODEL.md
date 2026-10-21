@@ -17,11 +17,11 @@
   under the License.
 -->
 
-# Apache OpenDAL Reqsign Threat Model
+# Apache Reqsign Threat Model
 
 ## 1. Status
 
-This document defines the security boundary for Apache OpenDAL Reqsign. The
+This document defines the security boundary for Apache Reqsign. The
 documentation is for maintainers, security reporters, downstream users, Apache
 OpenDAL integrators, direct `reqsign` users, and automated security scanners
 that need to decide whether a report describes a Reqsign vulnerability or a
@@ -29,7 +29,7 @@ responsibility of the embedding application, a cloud provider, or a deployment.
 
 The canonical disclosure process is documented in [SECURITY.md](./SECURITY.md).
 Reports that may affect reqsign security should be sent privately to
-`private@opendal.apache.org` before public disclosure. If you are unsure where
+`private@reqsign.apache.org` before public disclosure. If you are unsure where
 to send the report, use `security@apache.org`.
 
 ## 2. Purpose
@@ -587,8 +587,8 @@ We will revisit this threat model when any of the following changes:
 
 ## 10. Relationship To OpenDAL And Other Hosts
 
-Reqsign is a sub-project related to Apache OpenDAL, and OpenDAL is the primary
-integration this model expects maintainers to consider. Reqsign is still a
+Apache Reqsign is a top-level ASF project. OpenDAL remains the
+primary integration this model expects maintainers to consider. Reqsign is a
 reusable library: direct `reqsign` users and other embedding applications get
 the same Reqsign security properties and retain the same host-application
 responsibilities.

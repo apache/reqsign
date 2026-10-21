@@ -66,10 +66,8 @@ jobs:
 
   publish:
     name: Publish Workspace
-    if: >-
-      github.event_name == 'push' &&
-      startsWith(github.ref, 'refs/tags/') &&
-      !contains(github.ref, '-')
+    # The push trigger accepts only formal release tags.
+    if: github.event_name == 'push'
     needs: validate
     runs-on: ubuntu-24.04
     environment: release

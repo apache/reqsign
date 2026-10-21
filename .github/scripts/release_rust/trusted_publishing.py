@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -18,145 +17,51 @@
 
 import json
 import os
-import urllib.error
-import urllib.parse
 import urllib.request
-from collections.abc import Iterator
 from contextlib import contextmanager
 
-
-DEFAULT_REGISTRY_URL = "https://crates.io"
-USER_AGENT = (
-    "apache-opendal-reqsign-release/1.0 (https://github.com/apache/opendal-reqsign)"
-)
+REGISTRY_URL = "https://crates.io"
+USER_AGENT = "apache-reqsign-release/1.0 (https://github.com/apache/reqsign)"
 
 
-def _response_error(operation: str, error: urllib.error.HTTPError) -> RuntimeError:
-    try:
-        response = error.read().decode("utf-8", errors="replace")
-    finally:
-        error.close()
-    try:
-        details = json.loads(response)
-        errors = details.get("errors", [])
-        response = "; ".join(item["detail"] for item in errors)
-    except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
-        pass
-    return RuntimeError(f"{operation} failed with HTTP {error.code}: {response}")
-
-
-def _request_json(request: urllib.request.Request, operation: str) -> dict[str, object]:
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            result = json.load(response)
-    except urllib.error.HTTPError as error:
-        raise _response_error(operation, error) from None
-    except urllib.error.URLError as error:
-        raise RuntimeError(f"{operation} failed: {error.reason}") from None
-    if not isinstance(result, dict):
-        raise RuntimeError(f"{operation} returned an invalid response")
-    return result
-
-
-def _oidc_request_url(request_url: str, audience: str) -> str:
-    parsed = urllib.parse.urlsplit(request_url)
-    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    query.append(("audience", audience))
-    return urllib.parse.urlunsplit(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            urllib.parse.urlencode(query),
-            parsed.fragment,
-        )
-    )
-
-
-def _mask_secret(value: str) -> None:
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        print(f"::add-mask::{value}", flush=True)
-
-
-def request_trusted_publishing_token(
-    registry_url: str = DEFAULT_REGISTRY_URL,
-) -> str:
-    request_url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL")
-    request_token = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
-    if not request_url or not request_token:
-        raise RuntimeError(
-            "GitHub OIDC is unavailable; grant this job `id-token: write`"
-        )
-
-    audience = registry_url.rstrip("/")
-    for prefix in ("https://", "http://"):
-        if audience.startswith(prefix):
-            audience = audience.removeprefix(prefix)
-            break
-    oidc_request = urllib.request.Request(
-        _oidc_request_url(request_url, audience),
-        headers={
-            "Authorization": f"Bearer {request_token}",
-            "User-Agent": USER_AGENT,
-        },
-    )
-    oidc_response = _request_json(oidc_request, "requesting a GitHub OIDC token")
-    jwt = oidc_response.get("value")
-    if not isinstance(jwt, str) or not jwt:
-        raise RuntimeError("GitHub OIDC response did not contain a token")
-    _mask_secret(jwt)
-
-    token_request = urllib.request.Request(
-        f"{registry_url.rstrip('/')}/api/v1/trusted_publishing/tokens",
-        data=json.dumps({"jwt": jwt}).encode(),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-        method="POST",
-    )
-    token_response = _request_json(
-        token_request, "exchanging a crates.io Trusted Publishing token"
-    )
-    token = token_response.get("token")
-    if not isinstance(token, str) or not token:
-        raise RuntimeError(
-            "crates.io Trusted Publishing response did not contain a token"
-        )
-    _mask_secret(token)
-    return token
-
-
-def revoke_trusted_publishing_token(
-    token: str, registry_url: str = DEFAULT_REGISTRY_URL
-) -> None:
+def request_json(url: str, *, headers=None, body=None):
     request = urllib.request.Request(
-        f"{registry_url.rstrip('/')}/api/v1/trusted_publishing/tokens",
+        url,
+        data=json.dumps(body).encode() if body is not None else None,
         headers={
-            "Authorization": f"Bearer {token}",
             "User-Agent": USER_AGENT,
+            "Content-Type": "application/json",
+            **(headers or {}),
         },
-        method="DELETE",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30):
-            return
-    except urllib.error.HTTPError as error:
-        raise _response_error(
-            "revoking a crates.io Trusted Publishing token", error
-        ) from None
-    except urllib.error.URLError as error:
-        raise RuntimeError(
-            f"revoking a crates.io Trusted Publishing token failed: {error.reason}"
-        ) from None
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.load(response)
 
 
 @contextmanager
-def temporary_trusted_publishing_token(
-    registry_url: str = DEFAULT_REGISTRY_URL,
-) -> Iterator[str]:
-    token = request_trusted_publishing_token(registry_url)
+def temporary_trusted_publishing_token():
+    request_url = os.environ["ACTIONS_ID_TOKEN_REQUEST_URL"]
+    separator = "&" if "?" in request_url else "?"
+    jwt = request_json(
+        f"{request_url}{separator}audience=crates.io",
+        headers={
+            "Authorization": f"Bearer {os.environ['ACTIONS_ID_TOKEN_REQUEST_TOKEN']}"
+        },
+    )["value"]
+    assert jwt, "GitHub returned an empty OIDC token"
+    print(f"::add-mask::{jwt}", flush=True)
+    token = request_json(
+        f"{REGISTRY_URL}/api/v1/trusted_publishing/tokens", body={"jwt": jwt}
+    )["token"]
+    assert token, "crates.io returned an empty Trusted Publishing token"
+    print(f"::add-mask::{token}", flush=True)
     try:
         yield token
     finally:
-        revoke_trusted_publishing_token(token, registry_url)
+        request = urllib.request.Request(
+            f"{REGISTRY_URL}/api/v1/trusted_publishing/tokens",
+            headers={"Authorization": f"Bearer {token}", "User-Agent": USER_AGENT},
+            method="DELETE",
+        )
+        with urllib.request.urlopen(request, timeout=30):
+            pass

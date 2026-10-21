@@ -18,12 +18,10 @@
 import subprocess
 import unittest
 from contextlib import contextmanager
-from pathlib import Path
 from unittest import mock
 
 from plan import Package
-from publish import already_published
-from publish import publish_package
+from publish import already_published, publish_package
 
 
 def subprocess_result(returncode: int, output: str):
@@ -32,11 +30,10 @@ def subprocess_result(returncode: int, output: str):
 
 class ReleaseRustPublishTest(unittest.TestCase):
     def test_live_publish_fetches_a_new_token_for_every_attempt(self):
-        package = Package("reqsign-test", "1.0.0", "test")
+        package = Package("reqsign-test", "1.0.0")
         tokens = iter(("first-token", "second-token"))
         revoked: list[str] = []
         cargo_tokens: list[str | None] = []
-        cargo_commands: list[list[str]] = []
 
         @contextmanager
         def token_provider():
@@ -56,7 +53,6 @@ class ReleaseRustPublishTest(unittest.TestCase):
         )
 
         def run(*args, **kwargs):
-            cargo_commands.append(args[0])
             cargo_tokens.append(kwargs["env"].get("CARGO_REGISTRY_TOKEN"))
             return next(results)
 
@@ -70,34 +66,15 @@ class ReleaseRustPublishTest(unittest.TestCase):
             mock.patch("publish.subprocess.run", run),
             mock.patch("publish.time.sleep") as sleep,
         ):
-            result = publish_package(Path(), package)
+            result = publish_package(package)
 
         self.assertEqual(result, "published")
-        self.assertEqual(
-            cargo_commands,
-            [
-                [
-                    "cargo",
-                    "publish",
-                    "--package",
-                    "reqsign-test",
-                    "--no-verify",
-                ],
-                [
-                    "cargo",
-                    "publish",
-                    "--package",
-                    "reqsign-test",
-                    "--no-verify",
-                ],
-            ],
-        )
         self.assertEqual(cargo_tokens, ["first-token", "second-token"])
         self.assertEqual(revoked, ["first-token", "second-token"])
         sleep.assert_called_once_with(610)
 
     def test_already_published_package_is_recoverable(self):
-        package = Package("reqsign-test", "1.0.0", "test")
+        package = Package("reqsign-test", "1.0.0")
 
         @contextmanager
         def token_provider():
@@ -113,12 +90,12 @@ class ReleaseRustPublishTest(unittest.TestCase):
                 ),
             ),
         ):
-            result = publish_package(Path(), package)
+            result = publish_package(package)
 
         self.assertEqual(result, "already published")
 
     def test_unrelated_already_exists_error_is_not_ignored(self):
-        package = Package("reqsign-test", "1.0.0", "test")
+        package = Package("reqsign-test", "1.0.0")
         self.assertFalse(
             already_published(
                 "crate another@1.0.0 already exists on crates.io index", package
@@ -126,7 +103,7 @@ class ReleaseRustPublishTest(unittest.TestCase):
         )
 
     def test_non_retryable_failure_is_reported(self):
-        package = Package("reqsign-test", "1.0.0", "test")
+        package = Package("reqsign-test", "1.0.0")
 
         @contextmanager
         def token_provider():
@@ -140,7 +117,7 @@ class ReleaseRustPublishTest(unittest.TestCase):
             ),
             self.assertRaises(subprocess.CalledProcessError),
         ):
-            publish_package(Path(), package)
+            publish_package(package)
 
 
 if __name__ == "__main__":

@@ -130,7 +130,7 @@ jobs:
 
               const stdout = await runAsfml([
                 'search',
-                'dev@opendal.apache.org',
+                'dev@reqsign.apache.org',
                 title,
                 '--since',
                 '7d',

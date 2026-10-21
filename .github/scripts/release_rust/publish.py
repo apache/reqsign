@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -16,19 +15,14 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import argparse
 import os
 import re
 import subprocess
 import time
-from datetime import datetime
-from datetime import timezone
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 
-from plan import PROJECT_DIR
-from plan import Package
-from plan import plan
+from plan import PROJECT_DIR, Package, plan
 from trusted_publishing import temporary_trusted_publishing_token
 
 
@@ -37,7 +31,7 @@ def parse_retry_after(output: str) -> int:
     if match:
         value = match.group(1).strip().rstrip(".")
         for parser in (
-            lambda text: parsedate_to_datetime(text),
+            parsedate_to_datetime,
             lambda text: datetime.fromisoformat(text.replace("Z", "+00:00")),
         ):
             try:
@@ -70,7 +64,7 @@ def already_published(output: str, package: Package) -> bool:
     )
 
 
-def publish_package(project_dir: Path, package: Package) -> str:
+def publish_package(package: Package) -> str:
     command = [
         "cargo",
         "publish",
@@ -86,7 +80,7 @@ def publish_package(project_dir: Path, package: Package) -> str:
             env["CARGO_REGISTRY_TOKEN"] = token
             process = subprocess.run(
                 command,
-                cwd=project_dir,
+                cwd=PROJECT_DIR,
                 check=False,
                 env=env,
                 text=True,
@@ -116,21 +110,7 @@ def publish_package(project_dir: Path, package: Package) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Publish reqsign crates with fresh OIDC credentials."
-    )
-    parser.add_argument(
-        "--project-dir",
-        type=Path,
-        default=PROJECT_DIR,
-        help="Path to the repository root.",
-    )
-    args = parser.parse_args()
-    project_dir = args.project_dir.resolve()
-
-    results: list[tuple[Package, str]] = []
-    for package in plan(project_dir):
-        results.append((package, publish_package(project_dir, package)))
+    results = [(package, publish_package(package)) for package in plan()]
 
     print("Publish plan completed:", flush=True)
     for package, result in results:

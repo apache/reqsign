@@ -16,7 +16,6 @@
 // under the License.
 
 use crate::Credential;
-use ini::Ini;
 use log::debug;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
@@ -30,8 +29,13 @@ use serde::Deserialize;
 /// Process credentials are typically configured in ~/.aws/config:
 /// ```ini
 /// [profile my-process-profile]
-/// credential_process = /path/to/credential/helper --arg1 value1
+/// credential_process = "/path/to/credential helper" --arg1 "value with spaces"
 /// ```
+///
+/// Double quotes preserve spaces in executable paths and arguments. Backslashes
+/// are literal, including in Windows paths. Commands are executed as a program
+/// and argument vector without shell expansion. Unmatched double quotes and an
+/// empty executable name are rejected before execution.
 ///
 /// # Output Format
 /// The process must output JSON with the following structure:
@@ -84,42 +88,17 @@ impl ProcessCredentialProvider {
         }
 
         // Otherwise, load from config file
-        // Priority: 1. self.profile, 2. AWS_PROFILE env var, 3. "default"
-        let profile_name = self
-            .profile
-            .clone()
-            .or_else(|| ctx.env_var("AWS_PROFILE"))
-            .unwrap_or_else(|| "default".to_string());
+        let mut shared = crate::SharedConfig::new();
+        if let Some(profile) = &self.profile {
+            shared = shared.with_profile(profile);
+        }
+        let profile_name = shared.profile_name(ctx);
         self.load_command_from_config(ctx, &profile_name).await
     }
 
     async fn load_command_from_config(&self, ctx: &Context, profile: &str) -> Result<String> {
-        // Load AWS config file
-        let config_path = ctx
-            .env_var("AWS_CONFIG_FILE")
-            .unwrap_or_else(|| "~/.aws/config".to_string());
-
-        let expanded_path = if config_path.starts_with("~/") {
-            match ctx.expand_home_dir(&config_path) {
-                Some(expanded) => expanded,
-                None => return Err(Error::config_invalid("failed to expand home directory")),
-            }
-        } else {
-            config_path
-        };
-
-        let content = ctx.file_read(&expanded_path).await.map_err(|_| {
-            Error::config_invalid(format!("failed to read config file: {expanded_path}"))
-        })?;
-
-        let conf = Ini::load_from_str(&String::from_utf8_lossy(&content))
-            .map_err(|e| Error::config_invalid(format!("failed to parse config file: {e}")))?;
-
-        let profile_section = if profile == "default" {
-            profile.to_string()
-        } else {
-            format!("profile {profile}")
-        };
+        let conf = crate::SharedConfig::new().load_config_file(ctx).await?;
+        let profile_section = crate::config::config_section(profile);
 
         let section = conf.section(Some(profile_section)).ok_or_else(|| {
             Error::config_invalid(format!("profile '{profile}' not found in config"))
@@ -142,19 +121,12 @@ impl ProcessCredentialProvider {
     ) -> Result<ProcessCredentialOutput> {
         debug!("executing credential process: {command}");
 
-        // Parse command into program and arguments
-        let parts: Vec<&str> = command.split_whitespace().collect();
-        if parts.is_empty() {
-            return Err(Error::config_invalid(
-                "credential_process command is empty".to_string(),
-            ));
-        }
-
-        let program = parts[0];
-        let args = &parts[1..];
+        let parts = parse_command(command)?;
+        let program = parts[0].as_str();
+        let args: Vec<&str> = parts[1..].iter().map(String::as_str).collect();
 
         // Execute the process using Context's command executor
-        let output = ctx.command_execute(program, args).await?;
+        let output = ctx.command_execute(program, &args).await?;
 
         if !output.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -180,6 +152,49 @@ impl ProcessCredentialProvider {
 
         Ok(creds)
     }
+}
+
+// AWS uses double quotes to group whitespace, with literal backslashes for
+// Windows paths. Shell parsers would add escaping and single-quote semantics.
+fn parse_command(command: &str) -> Result<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut part = String::new();
+    let mut quoted = false;
+    let mut started = false;
+
+    for ch in command.chars() {
+        match ch {
+            '"' => {
+                quoted = !quoted;
+                started = true;
+            }
+            ch if ch.is_whitespace() && !quoted => {
+                if started {
+                    parts.push(std::mem::take(&mut part));
+                    started = false;
+                }
+            }
+            ch => {
+                part.push(ch);
+                started = true;
+            }
+        }
+    }
+
+    if quoted {
+        return Err(Error::config_invalid(
+            "credential_process command has unmatched double quotes",
+        ));
+    }
+    if started {
+        parts.push(part);
+    }
+    if parts.first().is_none_or(String::is_empty) {
+        return Err(Error::config_invalid(
+            "credential_process command has an empty executable",
+        ));
+    }
+    Ok(parts)
 }
 
 #[derive(Debug, Deserialize)]
@@ -222,10 +237,11 @@ impl ProvideCredential for ProcessCredentialProvider {
 mod tests {
     use super::*;
     use reqsign_command_execute_tokio::TokioCommandExecute;
-    use reqsign_core::{OsEnv, StaticEnv};
+    use reqsign_core::{CommandExecute, CommandOutput, ErrorKind, FileRead, OsEnv, StaticEnv};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
 
     #[tokio::test]
     async fn test_process_provider_no_config() {
@@ -244,13 +260,153 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[tokio::test]
-    async fn test_process_provider_with_command() {
-        let _provider = ProcessCredentialProvider::new()
-            .with_command("echo '{\"Version\": 1, \"AccessKeyId\": \"test_key\", \"SecretAccessKey\": \"test_secret\"}'");
+    #[derive(Debug, Clone, Default)]
+    struct RecordingCommandExecute {
+        calls: Arc<Mutex<Vec<Vec<String>>>>,
+    }
 
-        // This test would need a real command that outputs valid JSON
-        // In practice, you'd use a mock or test helper
+    impl CommandExecute for RecordingCommandExecute {
+        async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
+            self.calls.lock().unwrap().push(
+                std::iter::once(program)
+                    .chain(args.iter().copied())
+                    .map(str::to_string)
+                    .collect(),
+            );
+            Ok(CommandOutput {
+                status: 0,
+                stdout: br#"{"Version":1,"AccessKeyId":"test_key","SecretAccessKey":"test_secret","SessionToken":"test_token","Expiration":"2030-01-01T00:00:00Z"}"#.to_vec(),
+                stderr: Vec::new(),
+            })
+        }
+    }
+
+    #[derive(Debug)]
+    struct ConfigFile(String);
+
+    impl FileRead for ConfigFile {
+        async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+            assert_eq!(path, "/aws/config");
+            Ok(self.0.as_bytes().to_vec())
+        }
+    }
+
+    // Exercise the same commands through both public configuration entrances.
+    fn command_context(
+        command: &str,
+        profile: Option<&str>,
+        executor: RecordingCommandExecute,
+    ) -> (ProcessCredentialProvider, Context) {
+        let provider = ProcessCredentialProvider::new();
+        let ctx = Context::new().with_command_execute(executor);
+        match profile {
+            None => (provider.with_command(command), ctx),
+            Some(profile) => {
+                let section = if profile == "default" {
+                    "default".to_string()
+                } else {
+                    format!("profile {profile}")
+                };
+                let ctx = ctx
+                    .with_env(StaticEnv {
+                        home_dir: None,
+                        envs: HashMap::from([("AWS_CONFIG_FILE".into(), "/aws/config".into())]),
+                    })
+                    .with_file_read(ConfigFile(format!(
+                        "[{section}]\ncredential_process = {command}\n"
+                    )));
+                (provider.with_profile(profile), ctx)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_command_arguments() {
+        let cases: &[(&str, &[&str])] = &[
+            ("helper", &["helper"]),
+            ("  helper\t--role  value  ", &["helper", "--role", "value"]),
+            (
+                r#"credential-helper --role "role with spaces""#,
+                &["credential-helper", "--role", "role with spaces"],
+            ),
+            (
+                r#""/opt/credential tools/helper" plain "parameter with spaces""#,
+                &[
+                    "/opt/credential tools/helper",
+                    "plain",
+                    "parameter with spaces",
+                ],
+            ),
+            (
+                r#""C:\Program Files\helper.exe" "C:\new folder\test\" C:\temp\file"#,
+                &[
+                    r"C:\Program Files\helper.exe",
+                    r"C:\new folder\test\",
+                    r"C:\temp\file",
+                ],
+            ),
+            (r#"helper "" " " tail"#, &["helper", "", " ", "tail"]),
+            (
+                r#"helper --role="role with spaces""#,
+                &["helper", "--role=role with spaces"],
+            ),
+            (
+                r#"helper "$HOME" %USERPROFILE% "$(whoami)" "`whoami`" "*.json" "~" "|" ";" 'literal'"#,
+                &[
+                    "helper",
+                    "$HOME",
+                    "%USERPROFILE%",
+                    "$(whoami)",
+                    "`whoami`",
+                    "*.json",
+                    "~",
+                    "|",
+                    ";",
+                    "'literal'",
+                ],
+            ),
+        ];
+        for profile in [None, Some("default"), Some("example")] {
+            for (command, expected) in cases {
+                let executor = RecordingCommandExecute::default();
+                let (provider, ctx) = command_context(command, profile, executor.clone());
+                let credential = provider.provide_credential(&ctx).await.unwrap().unwrap();
+                assert_eq!(credential.access_key_id, "test_key");
+                assert_eq!(credential.secret_access_key, "test_secret");
+                assert_eq!(credential.session_token.as_deref(), Some("test_token"));
+                assert!(credential.expires_in.is_some());
+                assert_eq!(
+                    *executor.calls.lock().unwrap(),
+                    vec![expected.to_vec()],
+                    "{command:?} via {profile:?}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_invalid_process_commands_do_not_execute() {
+        for profile in [None, Some("default"), Some("example")] {
+            for command in [
+                "",
+                "   ",
+                r#""""#,
+                r#""" arg"#,
+                r#""helper"#,
+                r#"helper "unfinished"#,
+                r#"helper value""#,
+            ] {
+                let executor = RecordingCommandExecute::default();
+                let (provider, ctx) = command_context(command, profile, executor.clone());
+                let error = provider.provide_credential(&ctx).await.unwrap_err();
+                assert_eq!(
+                    error.kind(),
+                    ErrorKind::ConfigInvalid,
+                    "{command:?} via {profile:?}"
+                );
+                assert!(executor.calls.lock().unwrap().is_empty());
+            }
+        }
     }
 
     #[test]

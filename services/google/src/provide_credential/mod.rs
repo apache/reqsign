@@ -39,7 +39,10 @@ pub use token::TokenCredentialProvider;
 mod service_account_token;
 pub use service_account_token::ServiceAccountTokenCredentialProvider;
 
+mod oauth;
+
 mod authorized_user;
+pub use authorized_user::AuthorizedUserCredentialProvider;
 mod external_account;
 pub use external_account::{ExternalAccountConfig, ExternalAccountCredentialProvider};
 

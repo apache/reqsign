@@ -35,9 +35,15 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// 5. Process credentials
 /// 6. ECS (IAM Roles for Tasks) & Container credentials
 /// 7. EC2 IMDSv2
+///
+/// Once SSO configuration is selected, SSO errors stop resolution to avoid
+/// silently switching identities. An absent SSO configuration continues the chain.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
+    #[cfg(not(target_arch = "wasm32"))]
+    sso: Option<SSOCredentialProvider>,
+    fallback: ProvideCredentialChain<Credential>,
 }
 
 impl Default for DefaultCredentialProvider {
@@ -59,7 +65,12 @@ impl DefaultCredentialProvider {
 
     /// Create with a custom credential chain.
     pub fn with_chain(chain: ProvideCredentialChain<Credential>) -> Self {
-        Self { chain }
+        Self {
+            chain,
+            #[cfg(not(target_arch = "wasm32"))]
+            sso: None,
+            fallback: ProvideCredentialChain::new(),
+        }
     }
 
     /// Add a credential provider to the front of the default chain.
@@ -250,40 +261,50 @@ impl DefaultCredentialProviderBuilder {
             chain = chain.push(p);
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(p) = self.sso {
-                chain = chain.push(p);
-            }
-        }
+        let mut fallback = ProvideCredentialChain::new();
 
         if let Some(p) = self.web_identity {
-            chain = chain.push(p);
+            fallback = fallback.push(p);
         }
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(p) = self.process {
-                chain = chain.push(p);
+                fallback = fallback.push(p);
             }
         }
 
         if let Some(p) = self.ecs {
-            chain = chain.push(p);
+            fallback = fallback.push(p);
         }
 
         if let Some(p) = self.imds {
-            chain = chain.push(p);
+            fallback = fallback.push(p);
         }
 
-        DefaultCredentialProvider::with_chain(chain)
+        DefaultCredentialProvider {
+            chain,
+            #[cfg(not(target_arch = "wasm32"))]
+            sso: self.sso,
+            fallback,
+        }
     }
 }
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        self.chain.provide_credential(ctx).await
+        if let Some(credential) = self.chain.provide_credential(ctx).await? {
+            return Ok(Some(credential));
+        }
+        // SSO selects an identity. Its failure must not switch to a later source.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(sso) = &self.sso {
+            if let Some(credential) = sso.provide_credential(ctx).await? {
+                return Ok(Some(credential));
+            }
+        }
+        self.fallback.provide_credential(ctx).await
     }
 }
 
@@ -641,7 +662,7 @@ mod tests {
             .expect_err("selected SSO profile must be loaded before cache lookup");
         assert_eq!(ErrorKind::ConfigInvalid, error.kind());
         assert_eq!(
-            "No valid SSO token found. Please run 'aws sso login' first",
+            "SSO token cache not found. Please run 'aws sso login' for the selected profile",
             error.to_string()
         );
 

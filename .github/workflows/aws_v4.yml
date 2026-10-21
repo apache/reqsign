@@ -63,10 +63,10 @@ jobs:
         id: check
         run: |
           if [[ "${{ github.event_name }}" == "push" || ( "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.head.repo.fork }}" == "false" && "${{ github.actor }}" != "dependabot[bot]" ) ]]; then
-            echo "has_secrets=true" >> $GITHUB_OUTPUT
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Integration tests will be executed (base repository and non-dependabot PR)"
           else
-            echo "has_secrets=false" >> $GITHUB_OUTPUT
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Integration tests will be skipped (forked repository, dependabot PR, or no secrets available)"
           fi
 
@@ -742,6 +742,11 @@ jobs:
           log_file=/var/log/reqsign-live-test.log
           (
             set -euo pipefail
+            # Package installation can exceed the memory available on t3.nano.
+            fallocate -l 1G /var/reqsign-ci.swap
+            chmod 600 /var/reqsign-ci.swap
+            mkswap /var/reqsign-ci.swap
+            swapon /var/reqsign-ci.swap
             dnf install --assumeyes docker
             systemctl enable --now docker
             aws ecr get-login-password --region '${AWS_REGION}' | docker login --username AWS --password-stdin '${IMAGE_URI%/*}'
