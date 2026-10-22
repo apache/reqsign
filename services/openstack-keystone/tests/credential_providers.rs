@@ -15,402 +15,469 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use std::env;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
-use reqsign_core::{Context, OsEnv, ProvideCredential, Signer, SigningCredential, StaticEnv};
+use bytes::Bytes;
+use http::{Request, Response, StatusCode};
+use reqsign_core::{
+    Context, Error, HttpSend, OsEnv, ProvideCredential, Result, Signer, SigningCredential,
+    StaticEnv,
+};
+use reqsign_file_read_tokio::TokioFileRead;
+use reqsign_http_send_reqwest::ReqwestHttpSend;
 use reqsign_openstack_keystone::{
     Credential, DefaultCredentialProvider, EnvCredentialProvider, KeystoneCredentialProvider,
     RequestSigner,
 };
-use std::collections::HashMap;
 
-fn default_context() -> Context {
-    Context::new()
-        .with_file_read(reqsign_file_read_tokio::TokioFileRead)
-        .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default())
-        .with_env(OsEnv)
+const AUTH_URL: &str = "https://keystone.example.com/v3";
+const SUBJECT_TOKEN: &str = "subject-token-value";
+const SWIFT_PUBLIC_URL: &str = "https://swift.example.com/v1/AUTH_test";
+const SWIFT_INTERNAL_URL: &str = "http://swift-internal:8080/v1/AUTH_test";
+
+/// A catalog as Keystone returns it for a project scoped token. The internal
+/// endpoint only carries `region_id`, the field Keystone fills in since v3.2;
+/// the public endpoint still carries the deprecated `region` as well.
+const SCOPED_CATALOG: &str = r#"[
+  {
+    "type": "object-store",
+    "endpoints": [
+      {
+        "interface": "public",
+        "url": "https://swift.example.com/v1/AUTH_test",
+        "region_id": "RegionOne",
+        "region": "RegionOne"
+      },
+      {
+        "interface": "internal",
+        "url": "http://swift-internal:8080/v1/AUTH_test",
+        "region_id": "RegionOne"
+      }
+    ]
+  },
+  {
+    "type": "identity",
+    "endpoints": [
+      {
+        "interface": "public",
+        "url": "https://keystone.example.com/v3",
+        "region_id": "RegionOne"
+      }
+    ]
+  }
+]"#;
+
+/// Mock Keystone that records the requests a provider sends and replies with a
+/// scripted token response.
+#[derive(Clone, Debug)]
+struct MockKeystone {
+    requests: Arc<Mutex<Vec<Request<Bytes>>>>,
+    status: StatusCode,
+    subject_token: Option<&'static str>,
+    expires_at: Option<&'static str>,
+    catalog: &'static str,
+    transport_error: Option<&'static str>,
 }
 
-/// Test KeystoneCredentialProvider against a mock Keystone server.
-///
-/// This test requires the mock server to be running:
-/// ```bash
-/// python3 tests/mocks/keystone_mock_server.py 5000 &
-/// ```
-///
-/// And the following env var:
-/// - REQSIGN_OPENSTACK_KEYSTONE_TEST_MOCK=on
-#[tokio::test]
-async fn test_keystone_credential_provider_with_mock() {
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    if env::var("REQSIGN_OPENSTACK_KEYSTONE_TEST_MOCK").unwrap_or_default() != "on" {
-        return;
+impl MockKeystone {
+    fn scoped() -> Self {
+        Self {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            status: StatusCode::CREATED,
+            subject_token: Some(SUBJECT_TOKEN),
+            expires_at: Some("2126-01-01T00:00:00.000000Z"),
+            catalog: SCOPED_CATALOG,
+            transport_error: None,
+        }
     }
 
-    let mock_url = env::var("REQSIGN_OPENSTACK_KEYSTONE_MOCK_URL")
-        .unwrap_or("http://127.0.0.1:5000/v3".into());
+    fn unscoped() -> Self {
+        Self {
+            catalog: "[]",
+            ..Self::scoped()
+        }
+    }
 
-    let ctx = default_context();
+    fn without_expiration() -> Self {
+        Self {
+            expires_at: None,
+            ..Self::scoped()
+        }
+    }
 
-    let provider = KeystoneCredentialProvider::new(&mock_url)
+    fn without_subject_token() -> Self {
+        Self {
+            subject_token: None,
+            ..Self::scoped()
+        }
+    }
+
+    fn unauthorized() -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            subject_token: None,
+            ..Self::scoped()
+        }
+    }
+
+    fn transport_failure() -> Self {
+        Self {
+            transport_error: Some("connection refused"),
+            ..Self::scoped()
+        }
+    }
+
+    fn request_count(&self) -> usize {
+        self.requests.lock().expect("lock poisoned").len()
+    }
+
+    fn last_request(&self) -> Request<Bytes> {
+        self.requests
+            .lock()
+            .expect("lock poisoned")
+            .last()
+            .expect("provider must send a request")
+            .clone()
+    }
+}
+
+impl HttpSend for MockKeystone {
+    async fn http_send(&self, request: Request<Bytes>) -> Result<Response<Bytes>> {
+        self.requests.lock().expect("lock poisoned").push(request);
+
+        if let Some(message) = self.transport_error {
+            return Err(Error::unexpected(message));
+        }
+
+        let expires_at = match self.expires_at {
+            Some(expires_at) => format!("\"{expires_at}\""),
+            None => "null".to_string(),
+        };
+        let body = format!(
+            r#"{{"token":{{"expires_at":{expires_at},"catalog":{}}}}}"#,
+            self.catalog
+        );
+
+        let mut response = Response::builder().status(self.status);
+        if let Some(subject_token) = self.subject_token {
+            response = response.header("X-Subject-Token", subject_token);
+        }
+
+        Ok(response
+            .body(Bytes::from(body))
+            .expect("response must build"))
+    }
+}
+
+fn scoped_provider(auth_url: &str) -> KeystoneCredentialProvider {
+    KeystoneCredentialProvider::new(auth_url)
         .with_username("testuser")
         .with_password("testpass")
         .with_user_domain_name("Default")
         .with_project_name("testproject")
-        .with_project_domain_name("Default");
+        .with_project_domain_name("Default")
+}
 
-    let cred = provider
+fn envs(envs: impl IntoIterator<Item = (&'static str, &'static str)>) -> HashMap<String, String> {
+    envs.into_iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()))
+        .collect()
+}
+
+#[tokio::test]
+async fn keystone_provider_authenticates_and_returns_catalog() {
+    let mock = MockKeystone::scoped();
+    let ctx = Context::new().with_http_send(mock.clone());
+
+    let credential = scoped_provider(AUTH_URL)
         .provide_credential(&ctx)
         .await
         .expect("credential loading must succeed")
         .expect("credential must be present");
 
-    assert!(!cred.token.is_empty(), "token must not be empty");
-    assert!(cred.is_valid(), "credential must be valid");
-    assert!(cred.expires_at.is_some(), "expires_at must be set");
+    assert_eq!(SUBJECT_TOKEN, credential.token);
+    assert!(credential.is_valid(), "credential must be valid");
+    assert!(credential.expires_at.is_some(), "expires_at must be set");
 
-    // Verify service catalog
-    assert!(
-        !cred.service_catalog.is_empty(),
-        "service catalog must not be empty"
+    assert_eq!(
+        Some(SWIFT_PUBLIC_URL),
+        credential.endpoint("object-store", "public")
+    );
+    assert_eq!(
+        Some(SWIFT_INTERNAL_URL),
+        credential.endpoint_in_region("object-store", "internal", "RegionOne")
+    );
+    assert_eq!(
+        None,
+        credential.endpoint_in_region("object-store", "public", "RegionTwo")
     );
 
-    let swift_endpoint = cred.endpoint("object-store", "public");
-    assert!(
-        swift_endpoint.is_some(),
-        "must find object-store public endpoint"
+    let request = mock.last_request();
+    assert_eq!(http::Method::POST, request.method());
+    assert_eq!(format!("{AUTH_URL}/auth/tokens"), request.uri().to_string());
+    assert_eq!(
+        "application/json",
+        request.headers()["content-type"].to_str().unwrap()
     );
-    assert!(
-        swift_endpoint.unwrap().contains("AUTH_test"),
-        "endpoint must contain AUTH_test"
+
+    let body: serde_json::Value =
+        serde_json::from_slice(request.body()).expect("auth request must be JSON");
+    assert_eq!("password", body["auth"]["identity"]["methods"][0]);
+    assert_eq!(
+        "testuser",
+        body["auth"]["identity"]["password"]["user"]["name"]
     );
+    assert_eq!(
+        "Default",
+        body["auth"]["identity"]["password"]["user"]["domain"]["name"]
+    );
+    assert_eq!("testproject", body["auth"]["scope"]["project"]["name"]);
 }
 
-/// Test KeystoneCredentialProvider rejects bad credentials.
 #[tokio::test]
-async fn test_keystone_credential_provider_bad_password() {
-    let _ = env_logger::builder().is_test(true).try_init();
+async fn keystone_provider_rejects_bad_credentials() {
+    let mock = MockKeystone::unauthorized();
+    let ctx = Context::new().with_http_send(mock);
 
-    if env::var("REQSIGN_OPENSTACK_KEYSTONE_TEST_MOCK").unwrap_or_default() != "on" {
-        return;
-    }
-
-    let mock_url = env::var("REQSIGN_OPENSTACK_KEYSTONE_MOCK_URL")
-        .unwrap_or("http://127.0.0.1:5000/v3".into());
-
-    let ctx = default_context();
-
-    let provider = KeystoneCredentialProvider::new(&mock_url)
-        .with_username("testuser")
-        .with_password("wrong-password")
-        .with_user_domain_name("Default");
-
-    let result = provider.provide_credential(&ctx).await;
+    let result = scoped_provider(AUTH_URL).provide_credential(&ctx).await;
     assert!(result.is_err(), "bad password must fail");
 }
 
-/// Test EnvCredentialProvider with mock server.
 #[tokio::test]
-async fn test_env_credential_provider_with_mock() {
-    let _ = env_logger::builder().is_test(true).try_init();
+async fn keystone_provider_requires_subject_token() {
+    let mock = MockKeystone::without_subject_token();
+    let ctx = Context::new().with_http_send(mock);
 
-    if env::var("REQSIGN_OPENSTACK_KEYSTONE_TEST_MOCK").unwrap_or_default() != "on" {
-        return;
-    }
+    let err = scoped_provider(AUTH_URL)
+        .provide_credential(&ctx)
+        .await
+        .expect_err("a token response without X-Subject-Token must fail");
+    assert!(
+        err.to_string().contains("X-Subject-Token"),
+        "error must mention the missing header, got: {err}"
+    );
+}
 
-    let mock_url = env::var("REQSIGN_OPENSTACK_KEYSTONE_MOCK_URL")
-        .unwrap_or("http://127.0.0.1:5000/v3".into());
+#[tokio::test]
+async fn keystone_provider_reports_transport_errors() {
+    let mock = MockKeystone::transport_failure();
+    let ctx = Context::new().with_http_send(mock);
 
-    let envs = HashMap::from([
-        ("OPENSTACK_AUTH_URL".to_string(), mock_url),
-        ("OPENSTACK_USERNAME".to_string(), "testuser".to_string()),
-        ("OPENSTACK_PASSWORD".to_string(), "testpass".to_string()),
-        ("OPENSTACK_DOMAIN_NAME".to_string(), "Default".to_string()),
-        (
-            "OPENSTACK_PROJECT_NAME".to_string(),
-            "testproject".to_string(),
-        ),
-    ]);
+    let result = scoped_provider(AUTH_URL).provide_credential(&ctx).await;
+    assert!(result.is_err(), "transport errors must not be swallowed");
+}
 
-    let ctx = Context::new()
-        .with_file_read(reqsign_file_read_tokio::TokioFileRead)
-        .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default())
-        .with_env(StaticEnv {
-            home_dir: None,
-            envs,
-        });
+#[tokio::test]
+async fn keystone_provider_skips_without_credentials() {
+    let mock = MockKeystone::scoped();
+    let ctx = Context::new().with_http_send(mock.clone());
 
-    let provider = EnvCredentialProvider::new();
-    let cred = provider
+    let credential = KeystoneCredentialProvider::new(AUTH_URL)
+        .provide_credential(&ctx)
+        .await
+        .expect("missing credentials must not error");
+
+    assert!(credential.is_none(), "missing credentials must skip");
+    assert_eq!(0, mock.request_count(), "no request must be sent");
+}
+
+#[tokio::test]
+async fn token_without_expiration_is_usable() {
+    let mock = MockKeystone::without_expiration();
+    let ctx = Context::new().with_http_send(mock);
+
+    let credential = scoped_provider(AUTH_URL)
         .provide_credential(&ctx)
         .await
         .expect("credential loading must succeed")
         .expect("credential must be present");
 
-    assert!(!cred.token.is_empty());
-    assert!(cred.is_valid());
+    assert!(credential.expires_at.is_none());
+    assert!(credential.is_valid(), "a token without expiry stays valid");
 }
 
-/// Test EnvCredentialProvider returns None when vars are missing.
 #[tokio::test]
-async fn test_env_credential_provider_missing_vars() {
-    let _ = env_logger::builder().is_test(true).try_init();
+async fn unscoped_token_has_empty_catalog() {
+    let mock = MockKeystone::unscoped();
+    let ctx = Context::new().with_http_send(mock);
 
-    let envs = HashMap::new();
-    let ctx = Context::new()
-        .with_file_read(reqsign_file_read_tokio::TokioFileRead)
-        .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default())
-        .with_env(StaticEnv {
-            home_dir: None,
-            envs,
-        });
-
-    let provider = EnvCredentialProvider::new();
-    let result = provider
-        .provide_credential(&ctx)
-        .await
-        .expect("should not error");
-
-    assert!(result.is_none(), "must return None when vars are missing");
-}
-
-/// Test DefaultCredentialProvider with mock server.
-#[tokio::test]
-async fn test_default_credential_provider_with_mock() {
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    if env::var("REQSIGN_OPENSTACK_KEYSTONE_TEST_MOCK").unwrap_or_default() != "on" {
-        return;
-    }
-
-    let mock_url = env::var("REQSIGN_OPENSTACK_KEYSTONE_MOCK_URL")
-        .unwrap_or("http://127.0.0.1:5000/v3".into());
-
-    let envs = HashMap::from([
-        ("OPENSTACK_AUTH_URL".to_string(), mock_url),
-        ("OPENSTACK_USERNAME".to_string(), "testuser".to_string()),
-        ("OPENSTACK_PASSWORD".to_string(), "testpass".to_string()),
-        ("OPENSTACK_DOMAIN_NAME".to_string(), "Default".to_string()),
-        (
-            "OPENSTACK_PROJECT_NAME".to_string(),
-            "testproject".to_string(),
-        ),
-    ]);
-
-    let ctx = Context::new()
-        .with_file_read(reqsign_file_read_tokio::TokioFileRead)
-        .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default())
-        .with_env(StaticEnv {
-            home_dir: None,
-            envs,
-        });
-
-    let provider = DefaultCredentialProvider::new();
-    let cred = provider
-        .provide_credential(&ctx)
-        .await
-        .expect("credential loading must succeed")
-        .expect("credential must be present");
-
-    assert!(!cred.token.is_empty());
-    assert!(cred.is_valid());
-}
-
-/// Test unscoped token (no project) — should get token but empty catalog.
-#[tokio::test]
-async fn test_keystone_credential_provider_unscoped() {
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    if env::var("REQSIGN_OPENSTACK_KEYSTONE_TEST_MOCK").unwrap_or_default() != "on" {
-        return;
-    }
-
-    let mock_url = env::var("REQSIGN_OPENSTACK_KEYSTONE_MOCK_URL")
-        .unwrap_or("http://127.0.0.1:5000/v3".into());
-
-    let ctx = default_context();
-
-    // No project_name or project_domain_name — unscoped
-    let provider = KeystoneCredentialProvider::new(&mock_url)
+    let credential = KeystoneCredentialProvider::new(AUTH_URL)
         .with_username("testuser")
         .with_password("testpass")
-        .with_user_domain_name("Default");
-
-    let cred = provider
         .provide_credential(&ctx)
         .await
         .expect("credential loading must succeed")
         .expect("credential must be present");
 
-    assert!(!cred.token.is_empty(), "token must not be empty");
-    assert!(cred.is_valid(), "credential must be valid");
-    assert!(cred.expires_at.is_some(), "expires_at must be set");
-
-    // Unscoped tokens get no catalog
+    assert!(!credential.token.is_empty());
+    assert!(credential.is_valid());
     assert!(
-        cred.service_catalog.is_empty(),
-        "unscoped token must have empty service catalog"
+        credential.service_catalog.is_empty(),
+        "unscoped tokens carry no catalog"
+    );
+    assert_eq!(None, credential.endpoint("object-store", "public"));
+}
+
+#[tokio::test]
+async fn env_provider_reads_standard_openstack_variables() {
+    let mock = MockKeystone::scoped();
+    let ctx = Context::new()
+        .with_http_send(mock.clone())
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: envs([
+                ("OS_AUTH_URL", AUTH_URL),
+                ("OS_USERNAME", "testuser"),
+                ("OS_PASSWORD", "testpass"),
+                ("OS_USER_DOMAIN_NAME", "Example"),
+                ("OS_PROJECT_NAME", "testproject"),
+            ]),
+        });
+
+    let credential = EnvCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await
+        .expect("credential loading must succeed")
+        .expect("credential must be present");
+
+    assert_eq!(SUBJECT_TOKEN, credential.token);
+
+    // Without OS_PROJECT_DOMAIN_NAME the project domain follows the user domain.
+    let body: serde_json::Value =
+        serde_json::from_slice(mock.last_request().body()).expect("auth request must be JSON");
+    assert_eq!(
+        "Example",
+        body["auth"]["identity"]["password"]["user"]["domain"]["name"]
     );
     assert_eq!(
-        cred.endpoint("object-store", "public"),
-        None,
-        "unscoped token must not have endpoints"
+        "Example",
+        body["auth"]["scope"]["project"]["domain"]["name"]
+    );
+    assert_eq!("testproject", body["auth"]["scope"]["project"]["name"]);
+}
+
+#[tokio::test]
+async fn env_provider_defaults_to_the_default_domain() {
+    let mock = MockKeystone::scoped();
+    let ctx = Context::new()
+        .with_http_send(mock.clone())
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: envs([
+                ("OS_AUTH_URL", AUTH_URL),
+                ("OS_USERNAME", "testuser"),
+                ("OS_PASSWORD", "testpass"),
+            ]),
+        });
+
+    let credential = EnvCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await
+        .expect("credential loading must succeed")
+        .expect("credential must be present");
+    assert_eq!(SUBJECT_TOKEN, credential.token);
+
+    let body: serde_json::Value =
+        serde_json::from_slice(mock.last_request().body()).expect("auth request must be JSON");
+    assert_eq!(
+        "Default",
+        body["auth"]["identity"]["password"]["user"]["domain"]["name"]
+    );
+    assert!(
+        body["auth"]["scope"].is_null(),
+        "without OS_PROJECT_NAME the token stays unscoped"
     );
 }
 
-/// Test full Signer round-trip: provider -> cache -> sign request.
 #[tokio::test]
-async fn test_signer_round_trip_with_mock() {
-    let _ = env_logger::builder().is_test(true).try_init();
+async fn env_provider_skips_without_variables() {
+    let mock = MockKeystone::scoped();
+    let ctx = Context::new()
+        .with_http_send(mock.clone())
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::new(),
+        });
 
-    if env::var("REQSIGN_OPENSTACK_KEYSTONE_TEST_MOCK").unwrap_or_default() != "on" {
-        return;
-    }
+    let credential = EnvCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await
+        .expect("missing variables must not error");
 
-    let mock_url = env::var("REQSIGN_OPENSTACK_KEYSTONE_MOCK_URL")
-        .unwrap_or("http://127.0.0.1:5000/v3".into());
+    assert!(credential.is_none());
+    assert_eq!(0, mock.request_count(), "no request must be sent");
+}
 
-    let ctx = default_context();
+#[tokio::test]
+async fn default_provider_uses_the_env_provider() {
+    let mock = MockKeystone::scoped();
+    let ctx = Context::new()
+        .with_http_send(mock.clone())
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: envs([
+                ("OS_AUTH_URL", AUTH_URL),
+                ("OS_USERNAME", "testuser"),
+                ("OS_PASSWORD", "testpass"),
+                ("OS_PROJECT_NAME", "testproject"),
+            ]),
+        });
 
-    let provider = KeystoneCredentialProvider::new(&mock_url)
-        .with_username("testuser")
-        .with_password("testpass")
-        .with_user_domain_name("Default")
-        .with_project_name("testproject")
-        .with_project_domain_name("Default");
+    let credential = DefaultCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await
+        .expect("credential loading must succeed")
+        .expect("credential must be present");
 
-    let signer = Signer::new(ctx, provider, RequestSigner);
+    assert_eq!(SUBJECT_TOKEN, credential.token);
+    assert_eq!(
+        Some(SWIFT_PUBLIC_URL),
+        credential.endpoint("object-store", "public")
+    );
+}
 
-    // Build a request to sign
-    let req = http::Request::builder()
+#[tokio::test]
+async fn signer_signs_with_the_token_and_reuses_it() {
+    let mock = MockKeystone::scoped();
+    let ctx = Context::new().with_http_send(mock.clone());
+
+    let signer = Signer::new(ctx, scoped_provider(AUTH_URL), RequestSigner);
+
+    let mut first = http::Request::builder()
         .method("GET")
-        .uri("http://swift.example.com/v1/AUTH_test/container/object")
+        .uri(format!("{SWIFT_PUBLIC_URL}/container/object"))
         .body(())
-        .unwrap();
-    let (mut parts, _body) = req.into_parts();
-
-    // Sign it
+        .unwrap()
+        .into_parts()
+        .0;
     signer
-        .sign(&mut parts, None)
+        .sign(&mut first, None)
         .await
         .expect("signing must succeed");
 
-    // Verify the X-Auth-Token header was inserted
-    let token = parts
-        .headers
-        .get("x-auth-token")
-        .expect("x-auth-token header must be present");
-    assert!(!token.is_empty(), "x-auth-token header must not be empty");
-
-    // Sign a second request — should reuse cached credential, not re-auth
-    let req2 = http::Request::builder()
+    let mut second = http::Request::builder()
         .method("PUT")
-        .uri("http://swift.example.com/v1/AUTH_test/container/object2")
+        .uri(format!("{SWIFT_PUBLIC_URL}/container/other"))
         .body(())
-        .unwrap();
-    let (mut parts2, _body2) = req2.into_parts();
-
+        .unwrap()
+        .into_parts()
+        .0;
     signer
-        .sign(&mut parts2, None)
+        .sign(&mut second, None)
         .await
-        .expect("second signing must succeed");
+        .expect("signing must succeed");
 
-    let token2 = parts2
-        .headers
-        .get("x-auth-token")
-        .expect("x-auth-token header must be present on second request");
-
-    // Both should have the same token (cached)
-    assert_eq!(
-        token.to_str().unwrap(),
-        token2.to_str().unwrap(),
-        "cached token must be reused"
-    );
-}
-
-/// Test that connection refused / bad auth URL produces a clear error.
-#[tokio::test]
-async fn test_keystone_credential_provider_connection_refused() {
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    let ctx = default_context();
-
-    // Use a port that's (almost certainly) not listening
-    let provider = KeystoneCredentialProvider::new("http://127.0.0.1:19999/v3")
-        .with_username("testuser")
-        .with_password("testpass")
-        .with_user_domain_name("Default");
-
-    let result = provider.provide_credential(&ctx).await;
+    assert_eq!(SUBJECT_TOKEN, first.headers["x-auth-token"]);
+    assert_eq!(SUBJECT_TOKEN, second.headers["x-auth-token"]);
     assert!(
-        result.is_err(),
-        "connection refused must return an error, not silently succeed"
-    );
-}
-
-/// Test that empty username/password returns None (skip).
-#[tokio::test]
-async fn test_keystone_credential_provider_empty_credentials() {
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    let ctx = default_context();
-
-    let provider = KeystoneCredentialProvider::new("http://127.0.0.1:5000/v3");
-    // No username/password set — should return None, not error
-
-    let result = provider
-        .provide_credential(&ctx)
-        .await
-        .expect("empty credentials must not error");
-
-    assert!(result.is_none(), "empty credentials must return None");
-}
-
-/// Test catalog region filtering with mock server.
-#[tokio::test]
-async fn test_keystone_catalog_region_filtering_with_mock() {
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    if env::var("REQSIGN_OPENSTACK_KEYSTONE_TEST_MOCK").unwrap_or_default() != "on" {
-        return;
-    }
-
-    let mock_url = env::var("REQSIGN_OPENSTACK_KEYSTONE_MOCK_URL")
-        .unwrap_or("http://127.0.0.1:5000/v3".into());
-
-    let ctx = default_context();
-
-    let provider = KeystoneCredentialProvider::new(&mock_url)
-        .with_username("testuser")
-        .with_password("testpass")
-        .with_user_domain_name("Default")
-        .with_project_name("testproject")
-        .with_project_domain_name("Default");
-
-    let cred = provider
-        .provide_credential(&ctx)
-        .await
-        .expect("credential loading must succeed")
-        .expect("credential must be present");
-
-    // Mock server returns endpoints in "RegionOne"
-    assert_eq!(
-        cred.endpoint_in_region("object-store", "public", "RegionOne"),
-        Some("http://127.0.0.1:8080/v1/AUTH_test"),
-        "must find object-store public endpoint in RegionOne"
+        first.headers["x-auth-token"].is_sensitive(),
+        "the token header must be marked sensitive"
     );
     assert_eq!(
-        cred.endpoint_in_region("object-store", "internal", "RegionOne"),
-        Some("http://swift-internal:8080/v1/AUTH_test"),
-        "must find object-store internal endpoint in RegionOne"
-    );
-
-    // Non-existent region
-    assert_eq!(
-        cred.endpoint_in_region("object-store", "public", "NonExistent"),
-        None,
-        "must not find endpoint in non-existent region"
+        1,
+        mock.request_count(),
+        "the second sign must reuse the cached token"
     );
 }
 
@@ -418,41 +485,50 @@ async fn test_keystone_catalog_region_filtering_with_mock() {
 ///
 /// Requires:
 /// - REQSIGN_OPENSTACK_KEYSTONE_TEST=on
-/// - OPENSTACK_AUTH_URL
-/// - OPENSTACK_USERNAME
-/// - OPENSTACK_PASSWORD
-/// - OPENSTACK_DOMAIN_NAME (optional, defaults to "Default")
-/// - OPENSTACK_PROJECT_NAME (optional)
+/// - OS_AUTH_URL
+/// - OS_USERNAME
+/// - OS_PASSWORD
+/// - OS_USER_DOMAIN_NAME (optional, defaults to "Default")
+/// - OS_PROJECT_NAME (optional)
 #[tokio::test]
 async fn test_real_keystone_env_credential_provider() {
     let _ = dotenvy::dotenv();
     let _ = env_logger::builder().is_test(true).try_init();
 
-    if env::var("REQSIGN_OPENSTACK_KEYSTONE_TEST").unwrap_or_default() != "on" {
+    if std::env::var("REQSIGN_OPENSTACK_KEYSTONE_TEST").unwrap_or_default() != "on" {
         return;
     }
 
-    let ctx = default_context();
+    let ctx = Context::new()
+        .with_file_read(TokioFileRead)
+        .with_http_send(ReqwestHttpSend::default())
+        .with_env(OsEnv);
 
-    let provider = EnvCredentialProvider::new();
-    let cred: Credential = provider
+    let credential: Credential = EnvCredentialProvider::new()
         .provide_credential(&ctx)
         .await
         .expect("credential loading must succeed")
         .expect("credential must be present");
 
-    assert!(!cred.token.is_empty(), "token must not be empty");
-    assert!(cred.is_valid(), "credential must be valid");
-    assert!(cred.expires_at.is_some(), "expires_at must be set");
+    assert!(!credential.token.is_empty(), "token must not be empty");
+    assert!(credential.is_valid(), "credential must be valid");
 
     println!("Token obtained successfully");
-    println!("Expires at: {:?}", cred.expires_at);
-    println!("Service catalog entries: {}", cred.service_catalog.len());
+    println!("Expires at: {:?}", credential.expires_at);
+    println!(
+        "Service catalog entries: {}",
+        credential.service_catalog.len()
+    );
 
-    for entry in &cred.service_catalog {
+    for entry in &credential.service_catalog {
         println!("  Service: {}", entry.service_type);
-        for ep in &entry.endpoints {
-            println!("    {} ({:?}): {}", ep.interface, ep.region, ep.url);
+        for endpoint in &entry.endpoints {
+            println!(
+                "    {} ({:?}): {}",
+                endpoint.interface,
+                endpoint.region_name(),
+                endpoint.url
+            );
         }
     }
 }
