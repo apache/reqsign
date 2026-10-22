@@ -55,26 +55,27 @@ impl RequestSigner {
         Self {
             service: service.to_string(),
             region_set,
-            percent_encoding_mode: PercentEncodingMode::Single,
+            percent_encoding_mode: PercentEncodingMode::for_service(service),
             time: None,
         }
     }
 
-    /// Set the canonical URI percent-encoding mode for header and query signing.
+    /// Override the canonical URI percent-encoding mode for header and query signing.
     ///
-    /// The default is [`PercentEncodingMode::Single`] for compatibility with S3
-    /// and existing callers. Select [`PercentEncodingMode::Double`] when the
-    /// target service requires another encoding pass over the wire-ready path.
-    /// This does not modify the outgoing URI, normalize paths, or change payload
-    /// hashing. The mode is not inferred from the service name or endpoint.
+    /// The default follows the AWS service rules: `s3` and `s3express` use
+    /// [`PercentEncodingMode::Single`], and every other service uses
+    /// [`PercentEncodingMode::Double`] (the `aws-sigv4` default). Call this to
+    /// override the inferred mode for a custom or self-hosted endpoint. This
+    /// does not modify the outgoing URI, normalize paths, or change payload
+    /// hashing.
     ///
     /// # Example
     ///
     /// ```
     /// use reqsign_aws_v4a::{PercentEncodingMode, RequestSigner, SigningRegionSet};
     ///
-    /// let signer = RequestSigner::new("execute-api", SigningRegionSet::new("*")?)
-    ///     .with_percent_encoding_mode(PercentEncodingMode::Double);
+    /// let signer = RequestSigner::new("my-custom-service", SigningRegionSet::new("*")?)
+    ///     .with_percent_encoding_mode(PercentEncodingMode::Single);
     /// # Ok::<(), reqsign_core::Error>(())
     /// ```
     pub fn with_percent_encoding_mode(mut self, mode: PercentEncodingMode) -> Self {
@@ -343,8 +344,12 @@ mod tests {
     }
 
     fn signer() -> RequestSigner {
+        signer_for("service")
+    }
+
+    fn signer_for(service: &str) -> RequestSigner {
         RequestSigner::new(
-            "service",
+            service,
             SigningRegionSet::new("us-east-1").expect("region set must be valid"),
         )
         .with_time(
@@ -595,14 +600,13 @@ mod tests {
             ("//a/./b/../c/", "//a/./b/../c/"),
         ] {
             for (mode, sdk_mode, canonical_path) in [
-                (None, AwsPercentEncodingMode::Single, path),
                 (
-                    Some(PercentEncodingMode::Single),
+                    PercentEncodingMode::Single,
                     AwsPercentEncodingMode::Single,
                     path,
                 ),
                 (
-                    Some(PercentEncodingMode::Double),
+                    PercentEncodingMode::Double,
                     AwsPercentEncodingMode::Double,
                     double_path,
                 ),
@@ -611,10 +615,7 @@ mod tests {
                     let uri = format!("https://example.amazonaws.com{path}?{ENCODING_QUERY}");
                     let expected = sign_with_aws_sdk(&uri, sdk_mode, expires_in)?;
                     let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
-                    let request_signer = match mode {
-                        Some(mode) => signer().with_percent_encoding_mode(mode),
-                        None => signer(),
-                    };
+                    let request_signer = signer().with_percent_encoding_mode(mode);
                     request_signer
                         .sign_request(&Context::new(), &mut parts, Some(&credential()), expires_in)
                         .await?;
@@ -648,14 +649,13 @@ mod tests {
     #[tokio::test]
     async fn encoding_modes_preserve_their_path_semantics() -> AnyResult<()> {
         for (mode, path, canonical_path) in [
-            (None, "/raw@/a=b/%7E/%2f", "/raw%40/a%3Db/~/%2F"),
             (
-                Some(PercentEncodingMode::Single),
+                PercentEncodingMode::Single,
                 "/raw@/a=b/%7E/%2f",
                 "/raw%40/a%3Db/~/%2F",
             ),
             (
-                Some(PercentEncodingMode::Double),
+                PercentEncodingMode::Double,
                 "/raw@/a=b/%7E/%2f/%FF//a/./b/../",
                 "/raw%40/a%3Db/%257E/%252f/%25FF//a/./b/../",
             ),
@@ -663,10 +663,7 @@ mod tests {
             for expires_in in [None, Some(Duration::from_secs(3600))] {
                 let uri = format!("https://example.amazonaws.com{path}?{ENCODING_QUERY}");
                 let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
-                let request_signer = match mode {
-                    Some(mode) => signer().with_percent_encoding_mode(mode),
-                    None => signer(),
-                };
+                let request_signer = signer().with_percent_encoding_mode(mode);
                 request_signer
                     .sign_request(&Context::new(), &mut parts, Some(&credential()), expires_in)
                     .await?;
@@ -687,6 +684,44 @@ mod tests {
                     &actual,
                     &encoding_string_to_sign(canonical_path, expires_in),
                 )?;
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn default_encoding_mode_follows_aws_service_rules() -> AnyResult<()> {
+        let uri = format!("https://example.amazonaws.com/object%2Fname?{ENCODING_QUERY}");
+        for (service, expected) in [
+            ("s3", PercentEncodingMode::Single),
+            ("s3express", PercentEncodingMode::Single),
+            ("service", PercentEncodingMode::Double),
+            ("execute-api", PercentEncodingMode::Double),
+        ] {
+            for expires_in in [None, Some(Duration::from_secs(3600))] {
+                let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
+                signer_for(service)
+                    .sign_request(&Context::new(), &mut parts, Some(&credential()), expires_in)
+                    .await?;
+                let default = Request::from_parts(parts, body);
+
+                let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
+                signer_for(service)
+                    .with_percent_encoding_mode(expected)
+                    .sign_request(&Context::new(), &mut parts, Some(&credential()), expires_in)
+                    .await?;
+                let explicit = Request::from_parts(parts, body);
+
+                assert_eq!(
+                    comparable_headers(&default),
+                    comparable_headers(&explicit),
+                    "{service} should default to {expected:?}"
+                );
+                assert_eq!(
+                    comparable_query(&default),
+                    comparable_query(&explicit),
+                    "{service} should default to {expected:?}"
+                );
             }
         }
         Ok(())

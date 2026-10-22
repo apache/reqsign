@@ -20,14 +20,17 @@ Credential providers and shared AWS types are re-exported from
 
 ## Canonical URI Encoding
 
-`RequestSigner` defaults to `PercentEncodingMode::Single` for compatibility with
-existing S3 callers. Both header signing and presigning can opt into Double:
+`RequestSigner` follows the AWS service rules by default: `s3` and `s3express`
+use `PercentEncodingMode::Single`, and every other service uses
+`PercentEncodingMode::Double` (the `aws-sigv4` default). Call
+`with_percent_encoding_mode` to override the inferred mode for a custom or
+self-hosted endpoint:
 
 ```rust
 use reqsign_aws_v4a::{PercentEncodingMode, RequestSigner, SigningRegionSet};
 
-let signer = RequestSigner::new("execute-api", SigningRegionSet::new("*")?)
-    .with_percent_encoding_mode(PercentEncodingMode::Double);
+let signer = RequestSigner::new("my-custom-service", SigningRegionSet::new("*")?)
+    .with_percent_encoding_mode(PercentEncodingMode::Single);
 # Ok::<(), reqsign_core::Error>(())
 ```
 
@@ -36,5 +39,4 @@ pass to its original path without decoding it: `/a%20b` becomes `/a%2520b` only 
 the canonical request. The outgoing path is unchanged, literal `/` separators are
 preserved, and path normalization and payload hashing are unaffected. Single
 keeps the existing per-segment decode/re-encode behavior, including escape
-normalization and rejection of percent-encoded invalid UTF-8. Neither the service
-name nor the endpoint automatically selects a mode.
+normalization and rejection of percent-encoded invalid UTF-8.

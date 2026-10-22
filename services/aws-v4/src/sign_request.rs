@@ -50,7 +50,7 @@ impl RequestSigner {
         Self {
             service: service.into(),
             region: region.into(),
-            percent_encoding_mode: PercentEncodingMode::Single,
+            percent_encoding_mode: PercentEncodingMode::for_service(service),
             use_standard_session_token: false,
 
             time: None,
@@ -92,21 +92,22 @@ impl RequestSigner {
         self
     }
 
-    /// Set the canonical URI percent-encoding mode for header and query signing.
+    /// Override the canonical URI percent-encoding mode for header and query signing.
     ///
-    /// The default is [`PercentEncodingMode::Single`] for compatibility with S3
-    /// and existing callers. Select [`PercentEncodingMode::Double`] when the
-    /// target service requires another encoding pass over the wire-ready path.
-    /// This does not modify the outgoing URI, normalize paths, or change payload
-    /// hashing. The mode is not inferred from the service name or endpoint.
+    /// The default follows the AWS service rules: `s3` and `s3express` use
+    /// [`PercentEncodingMode::Single`], and every other service uses
+    /// [`PercentEncodingMode::Double`] (the `aws-sigv4` default). Call this to
+    /// override the inferred mode for a custom or self-hosted endpoint. This
+    /// does not modify the outgoing URI, normalize paths, or change payload
+    /// hashing.
     ///
     /// # Example
     ///
     /// ```
     /// use reqsign_aws_v4::{PercentEncodingMode, RequestSigner};
     ///
-    /// let signer = RequestSigner::new("execute-api", "us-east-1")
-    ///     .with_percent_encoding_mode(PercentEncodingMode::Double);
+    /// let signer = RequestSigner::new("my-custom-service", "us-east-1")
+    ///     .with_percent_encoding_mode(PercentEncodingMode::Single);
     /// ```
     pub fn with_percent_encoding_mode(mut self, mode: PercentEncodingMode) -> Self {
         self.percent_encoding_mode = mode;
@@ -1045,6 +1046,7 @@ mod tests {
     }
 
     async fn reqsign_signed_encoding_request(
+        service: &str,
         uri: &str,
         now: Timestamp,
         mode: Option<PercentEncodingMode>,
@@ -1056,7 +1058,7 @@ mod tests {
             session_token: Some(TEST_SESSION_TOKEN.to_string()),
             expires_in: Some(now + Duration::from_secs(3600)),
         };
-        let mut signer = RequestSigner::new("execute-api", "us-east-1").with_time(now);
+        let mut signer = RequestSigner::new(service, "us-east-1").with_time(now);
         if let Some(mode) = mode {
             signer = signer.with_percent_encoding_mode(mode);
         }
@@ -1104,8 +1106,14 @@ mod tests {
             for path in paths {
                 let uri = format!("https://example.com{path}?{QUERY}");
                 let expected = aws_signed_encoding_request(&uri, now, mode, presigned)?;
-                let actual =
-                    reqsign_signed_encoding_request(&uri, now, Some(mode), presigned).await?;
+                let actual = reqsign_signed_encoding_request(
+                    "execute-api",
+                    &uri,
+                    now,
+                    Some(mode),
+                    presigned,
+                )
+                .await?;
                 let name = format!("{mode:?}, presigned={presigned}, path={path}");
                 compare_request(&name, &expected, &actual);
                 assert_eq!(actual.uri().path(), path, "{name} changed wire path");
@@ -1134,56 +1142,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn canonical_uri_encoding_defaults_to_single_and_preserves_wire_bytes() -> Result<()> {
+    async fn default_encoding_mode_follows_aws_service_rules() -> Result<()> {
         let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
         let path = "/a//b/./c/../user@example.com/%2f/%7E/key=value/%25";
         let uri = format!("https://example.com{path}?{RAW_QUERY}");
 
-        for presigned in [false, true] {
-            let default = reqsign_signed_encoding_request(&uri, now, None, presigned).await?;
-            let single = reqsign_signed_encoding_request(
-                &uri,
-                now,
-                Some(PercentEncodingMode::Single),
-                presigned,
-            )
-            .await?;
-            let double = reqsign_signed_encoding_request(
-                &uri,
-                now,
-                Some(PercentEncodingMode::Double),
-                presigned,
-            )
-            .await?;
-            assert_eq!(default.headers(), single.headers());
-            assert_eq!(default.uri(), single.uri());
-            if presigned {
-                assert_ne!(single.uri(), double.uri());
+        for service in ["s3", "s3express", "execute-api", "sts"] {
+            let expected = if matches!(service, "s3" | "s3express") {
+                PercentEncodingMode::Single
             } else {
-                assert_ne!(
-                    single.headers()[header::AUTHORIZATION],
-                    double.headers()[header::AUTHORIZATION]
+                PercentEncodingMode::Double
+            };
+            for presigned in [false, true] {
+                let default =
+                    reqsign_signed_encoding_request(service, &uri, now, None, presigned).await?;
+                let explicit =
+                    reqsign_signed_encoding_request(service, &uri, now, Some(expected), presigned)
+                        .await?;
+                assert_eq!(
+                    default.headers(),
+                    explicit.headers(),
+                    "{service} should default to {expected:?}"
                 );
-            }
-            for request in [&default, &single, &double] {
-                assert_eq!(request.uri().path(), path);
-                assert_eq!(request.headers()["x-custom"], "encoding-test");
+                assert_eq!(
+                    default.uri(),
+                    explicit.uri(),
+                    "{service} should default to {expected:?}"
+                );
+                assert_eq!(default.uri().path(), path, "{service} changed wire path");
                 if presigned {
-                    // RAW_QUERY ends with '&'; the existing fragment, including
-                    // duplicate keys, literal '+', and empty pairs, stays exact.
-                    assert!(request.uri().to_string().starts_with(&uri));
                     assert!(
-                        request
-                            .uri()
-                            .query()
-                            .unwrap()
-                            .starts_with(&format!("{RAW_QUERY}X-Amz-Algorithm="))
+                        default.uri().to_string().starts_with(&uri),
+                        "{service} changed existing wire query"
                     );
                 } else {
-                    assert_eq!(request.uri().to_string(), uri);
+                    assert_eq!(default.uri().to_string(), uri, "{service} changed wire URI");
                 }
             }
         }
+
+        // S3 and non-S3 defaults must produce distinct signatures on the same
+        // noncanonical path, proving the mode is inferred per service.
+        let s3 = reqsign_signed_encoding_request("s3", &uri, now, None, false).await?;
+        let execute_api =
+            reqsign_signed_encoding_request("execute-api", &uri, now, None, false).await?;
+        assert_ne!(
+            s3.headers()[header::AUTHORIZATION],
+            execute_api.headers()[header::AUTHORIZATION]
+        );
         Ok(())
     }
 
@@ -1203,6 +1209,7 @@ mod tests {
             let legacy_uri = format!("https://example.com{legacy_path}");
             for presigned in [false, true] {
                 let actual = reqsign_signed_encoding_request(
+                    "execute-api",
                     &uri,
                     now,
                     Some(PercentEncodingMode::Single),
@@ -1247,29 +1254,26 @@ mod tests {
     async fn single_encoding_retains_invalid_utf8_rejection() -> Result<()> {
         let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
         let credential = s3_express_credential(now);
-        for mode in [None, Some(PercentEncodingMode::Single)] {
-            for presigned in [false, true] {
-                let mut signer = RequestSigner::new("execute-api", "us-east-1").with_time(now);
-                if let Some(mode) = mode {
-                    signer = signer.with_percent_encoding_mode(mode);
-                }
-                let mut parts = encoding_request("https://example.com/invalid%FF?raw=%2f")?
-                    .into_parts()
-                    .0;
-                let original = parts.clone();
-                let error = signer
-                    .sign_request(
-                        &Context::new(),
-                        &mut parts,
-                        Some(&credential),
-                        presigned.then_some(Duration::from_secs(60)),
-                    )
-                    .await
-                    .expect_err("Single must retain its legacy UTF-8 validation");
-                assert_eq!(error.kind(), ErrorKind::RequestInvalid);
-                assert_eq!(parts.uri, original.uri);
-                assert_eq!(parts.headers, original.headers);
-            }
+        for presigned in [false, true] {
+            let signer = RequestSigner::new("execute-api", "us-east-1")
+                .with_time(now)
+                .with_percent_encoding_mode(PercentEncodingMode::Single);
+            let mut parts = encoding_request("https://example.com/invalid%FF?raw=%2f")?
+                .into_parts()
+                .0;
+            let original = parts.clone();
+            let error = signer
+                .sign_request(
+                    &Context::new(),
+                    &mut parts,
+                    Some(&credential),
+                    presigned.then_some(Duration::from_secs(60)),
+                )
+                .await
+                .expect_err("Single must retain its legacy UTF-8 validation");
+            assert_eq!(error.kind(), ErrorKind::RequestInvalid);
+            assert_eq!(parts.uri, original.uri);
+            assert_eq!(parts.headers, original.headers);
         }
         Ok(())
     }
