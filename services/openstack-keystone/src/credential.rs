@@ -19,15 +19,26 @@ use reqsign_core::{SigningCredential, time::Timestamp, utils::Redact};
 use std::fmt::{self, Debug};
 use std::time::Duration;
 
+/// Refresh the token before it expires so in-flight requests are not rejected
+/// by Keystone while they are still being retried.
+const REFRESH_WINDOW: Duration = Duration::from_secs(120);
+
 /// Credential represents an OpenStack Keystone authentication token
-/// with an optional service catalog for endpoint discovery.
+/// with the service catalog that Keystone returned for it.
+///
+/// Keystone only returns a service catalog for scoped tokens, and the catalog
+/// belongs to the token scope and lifetime. Keeping it on the credential lets
+/// callers resolve the endpoint of a service without a second request, which is
+/// how OpenStack clients such as keystoneauth1 work.
 #[derive(Clone, Default)]
 pub struct Credential {
     /// The X-Auth-Token value.
     pub token: String,
     /// The expiration time of the token.
+    ///
+    /// Keystone reports a null expiration for tokens that never expire.
     pub expires_at: Option<Timestamp>,
-    /// The service catalog returned by Keystone.
+    /// The service catalog returned by Keystone, empty for unscoped tokens.
     pub service_catalog: Vec<CatalogEntry>,
 }
 
@@ -43,18 +54,16 @@ impl Debug for Credential {
 
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
+        self.is_valid_at(Timestamp::now() + REFRESH_WINDOW)
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
         if self.token.is_empty() {
             return false;
         }
 
-        match self.expires_at {
-            Some(expires_at) => {
-                // Consider token invalid if it expires within 2 minutes
-                let buffer = Duration::from_secs(120);
-                Timestamp::now() < expires_at - buffer
-            }
-            None => true,
-        }
+        self.expires_at
+            .is_none_or(|expires_at| expires_at > timestamp)
     }
 }
 
@@ -80,6 +89,9 @@ impl Credential {
     ///
     /// Like [`endpoint()`](Self::endpoint), but only matches endpoints in the
     /// specified region.
+    ///
+    /// Endpoints are matched by [`Endpoint::region_name`], the same region
+    /// resolution that keystoneauth1 applies to a service catalog.
     pub fn endpoint_in_region(
         &self,
         service_type: &str,
@@ -93,7 +105,7 @@ impl Credential {
                 entry
                     .endpoints
                     .iter()
-                    .find(|ep| ep.interface == interface && ep.region.as_deref() == Some(region))
+                    .find(|ep| ep.interface == interface && ep.region_name() == Some(region))
                     .map(|ep| ep.url.as_str())
             })
     }
@@ -116,12 +128,29 @@ pub struct Endpoint {
     pub interface: String,
     /// The endpoint URL.
     pub url: String,
-    /// The region identifier.
-    #[serde(default)]
-    pub region: Option<String>,
-    /// The region ID.
+    /// The region ID reported by Keystone.
+    ///
+    /// Keystone v3.2 introduced `region_id` and deprecated `region`, so
+    /// deployments normally set both fields to the same value and only some
+    /// older ones return `region` alone.
     #[serde(default)]
     pub region_id: Option<String>,
+    /// The region name reported by Keystone.
+    ///
+    /// This field is deprecated since Keystone v3.2. Use
+    /// [`Endpoint::region_name`] to read the region of an endpoint.
+    #[serde(default)]
+    pub region: Option<String>,
+}
+
+impl Endpoint {
+    /// Return the region of this endpoint.
+    ///
+    /// Prefers `region_id`, the field Keystone fills in since v3.2, and falls
+    /// back to the deprecated `region` field.
+    pub fn region_name(&self) -> Option<&str> {
+        self.region_id.as_deref().or(self.region.as_deref())
+    }
 }
 
 /// Keystone v3 authentication request/response types.
@@ -191,7 +220,10 @@ pub(crate) mod keystone_v3 {
     /// The token body containing expiry and catalog.
     #[derive(Deserialize)]
     pub(crate) struct TokenBody {
-        pub(crate) expires_at: String,
+        /// Expiration time reported by Keystone. Keystone sends null for
+        /// tokens that never expire.
+        #[serde(default)]
+        pub(crate) expires_at: Option<String>,
         #[serde(default)]
         pub(crate) catalog: Vec<super::CatalogEntry>,
     }
@@ -245,6 +277,33 @@ mod tests {
             service_catalog: vec![],
         };
         assert!(!cred.is_valid());
+    }
+
+    #[test]
+    fn separates_cache_freshness_from_exact_validity() {
+        let cred = Credential {
+            token: "test-token".to_string(),
+            expires_at: Some(Timestamp::now() + Duration::from_secs(30)),
+            service_catalog: vec![],
+        };
+
+        // The token is refreshed before it expires...
+        assert!(!cred.is_valid());
+        // ...but it is still usable for a request that finishes now.
+        assert!(cred.is_valid_at(Timestamp::now()));
+        assert!(!cred.is_valid_at(Timestamp::now() + Duration::from_secs(31)));
+    }
+
+    #[test]
+    fn token_without_expiration_is_always_valid() {
+        let cred = Credential {
+            token: "test-token".to_string(),
+            expires_at: None,
+            service_catalog: vec![],
+        };
+
+        assert!(cred.is_valid());
+        assert!(cred.is_valid_at(Timestamp::now() + Duration::from_secs(86_400)));
     }
 
     #[test]
@@ -446,6 +505,48 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_prefers_region_id_over_deprecated_region() {
+        let only_region_id = Endpoint {
+            interface: "public".to_string(),
+            url: "https://swift.example.com/v1/AUTH_test".to_string(),
+            region_id: Some("RegionOne".to_string()),
+            region: None,
+        };
+        assert_eq!(only_region_id.region_name(), Some("RegionOne"));
+
+        // Keystone v3.2 deprecated `region`, so keep reading deployments that
+        // only report the old field.
+        let only_region = Endpoint {
+            interface: "public".to_string(),
+            url: "https://swift.example.com/v1/AUTH_test".to_string(),
+            region_id: None,
+            region: Some("RegionOne".to_string()),
+        };
+        assert_eq!(only_region.region_name(), Some("RegionOne"));
+
+        let prefer_region_id = Endpoint {
+            interface: "public".to_string(),
+            url: "https://swift.example.com/v1/AUTH_test".to_string(),
+            region_id: Some("RegionOne".to_string()),
+            region: Some("RegionOneDeprecated".to_string()),
+        };
+        assert_eq!(prefer_region_id.region_name(), Some("RegionOne"));
+
+        let cred = Credential {
+            token: "test-token".to_string(),
+            expires_at: None,
+            service_catalog: vec![CatalogEntry {
+                service_type: "object-store".to_string(),
+                endpoints: vec![only_region_id, only_region, prefer_region_id],
+            }],
+        };
+        assert_eq!(
+            cred.endpoint_in_region("object-store", "public", "RegionOne"),
+            Some("https://swift.example.com/v1/AUTH_test")
+        );
+    }
+
+    #[test]
     fn test_keystone_v3_token_response_deserialize() {
         let json = r#"{
             "token": {
@@ -466,8 +567,24 @@ mod tests {
         }"#;
 
         let resp: keystone_v3::TokenResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.token.expires_at, "2025-01-15T12:00:00.000000Z");
+        assert_eq!(
+            resp.token.expires_at.as_deref(),
+            Some("2025-01-15T12:00:00.000000Z")
+        );
         assert_eq!(resp.token.catalog.len(), 1);
         assert_eq!(resp.token.catalog[0].service_type, "object-store");
+    }
+
+    #[test]
+    fn token_response_without_expiration_deserializes() {
+        let json = r#"{
+            "token": {
+                "expires_at": null,
+                "catalog": []
+            }
+        }"#;
+
+        let resp: keystone_v3::TokenResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.token.expires_at, None);
     }
 }

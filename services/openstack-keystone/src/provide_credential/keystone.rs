@@ -118,7 +118,6 @@ impl KeystoneCredentialProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl ProvideCredential for KeystoneCredentialProvider {
     type Credential = Credential;
 
@@ -178,13 +177,19 @@ impl ProvideCredential for KeystoneCredentialProvider {
                     .with_source(e)
             })?;
 
-        let expires_at: Timestamp = token_response.token.expires_at.parse().map_err(|e| {
-            reqsign_core::Error::unexpected(format!(
-                "failed to parse Keystone token expiry '{}' as timestamp",
-                token_response.token.expires_at
-            ))
-            .with_source(e)
-        })?;
+        let expires_at = token_response
+            .token
+            .expires_at
+            .as_deref()
+            .map(|expires_at| {
+                expires_at.parse::<Timestamp>().map_err(|e| {
+                    reqsign_core::Error::unexpected(format!(
+                        "failed to parse Keystone token expiry '{expires_at}' as timestamp"
+                    ))
+                    .with_source(e)
+                })
+            })
+            .transpose()?;
 
         debug!(
             "Keystone authentication successful, token expires at {expires_at:?}, catalog has {} services",
@@ -193,7 +198,7 @@ impl ProvideCredential for KeystoneCredentialProvider {
 
         Ok(Some(Credential {
             token,
-            expires_at: Some(expires_at),
+            expires_at,
             service_catalog: token_response.token.catalog,
         }))
     }

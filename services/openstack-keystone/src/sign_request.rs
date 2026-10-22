@@ -28,7 +28,6 @@ use crate::credential::Credential;
 #[derive(Debug, Default)]
 pub struct RequestSigner;
 
-#[async_trait::async_trait]
 impl SignRequest for RequestSigner {
     type Credential = Credential;
 
