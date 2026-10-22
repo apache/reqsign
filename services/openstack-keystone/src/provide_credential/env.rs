@@ -24,25 +24,28 @@ use crate::credential::Credential;
 use super::keystone::KeystoneCredentialProvider;
 
 /// Environment variable names for OpenStack credentials.
-const OPENSTACK_AUTH_URL: &str = "OPENSTACK_AUTH_URL";
-const OPENSTACK_USERNAME: &str = "OPENSTACK_USERNAME";
-const OPENSTACK_PASSWORD: &str = "OPENSTACK_PASSWORD";
-const OPENSTACK_DOMAIN_NAME: &str = "OPENSTACK_DOMAIN_NAME";
-const OPENSTACK_PROJECT_NAME: &str = "OPENSTACK_PROJECT_NAME";
-const OPENSTACK_PROJECT_DOMAIN_NAME: &str = "OPENSTACK_PROJECT_DOMAIN_NAME";
+///
+/// Reqsign reads the names the OpenStack command line tools and SDKs use, so an
+/// environment that already authenticates against Keystone works as is.
+pub(crate) const OS_AUTH_URL: &str = "OS_AUTH_URL";
+pub(crate) const OS_USERNAME: &str = "OS_USERNAME";
+pub(crate) const OS_PASSWORD: &str = "OS_PASSWORD";
+pub(crate) const OS_USER_DOMAIN_NAME: &str = "OS_USER_DOMAIN_NAME";
+pub(crate) const OS_PROJECT_NAME: &str = "OS_PROJECT_NAME";
+pub(crate) const OS_PROJECT_DOMAIN_NAME: &str = "OS_PROJECT_DOMAIN_NAME";
 
 /// Credential provider that reads OpenStack credentials from environment variables
 /// and authenticates via Keystone v3.
 ///
 /// Required environment variables:
-/// - `OPENSTACK_AUTH_URL` — Keystone v3 identity URL (e.g. `https://keystone.example.com/v3`)
-/// - `OPENSTACK_USERNAME` — OpenStack username
-/// - `OPENSTACK_PASSWORD` — OpenStack password
+/// - `OS_AUTH_URL` — Keystone v3 identity URL (e.g. `https://keystone.example.com/v3`)
+/// - `OS_USERNAME` — OpenStack username
+/// - `OS_PASSWORD` — OpenStack password
 ///
 /// Optional environment variables:
-/// - `OPENSTACK_DOMAIN_NAME` — User domain name (defaults to "Default")
-/// - `OPENSTACK_PROJECT_NAME` — Project name for scoped tokens
-/// - `OPENSTACK_PROJECT_DOMAIN_NAME` — Project domain name (defaults to user domain)
+/// - `OS_USER_DOMAIN_NAME` — User domain name (defaults to "Default")
+/// - `OS_PROJECT_NAME` — Project name for scoped tokens
+/// - `OS_PROJECT_DOMAIN_NAME` — Project domain name (defaults to user domain)
 #[derive(Debug, Default)]
 pub struct EnvCredentialProvider;
 
@@ -53,41 +56,40 @@ impl EnvCredentialProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl ProvideCredential for EnvCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        let auth_url = match ctx.env_var(OPENSTACK_AUTH_URL) {
+        let auth_url = match ctx.env_var(OS_AUTH_URL) {
             Some(v) if !v.is_empty() => v,
             _ => {
-                debug!("{OPENSTACK_AUTH_URL} not set, skipping env credential provider");
+                debug!("{OS_AUTH_URL} not set, skipping env credential provider");
                 return Ok(None);
             }
         };
 
-        let username = match ctx.env_var(OPENSTACK_USERNAME) {
+        let username = match ctx.env_var(OS_USERNAME) {
             Some(v) if !v.is_empty() => v,
             _ => {
-                debug!("{OPENSTACK_USERNAME} not set, skipping env credential provider");
+                debug!("{OS_USERNAME} not set, skipping env credential provider");
                 return Ok(None);
             }
         };
 
-        let password = match ctx.env_var(OPENSTACK_PASSWORD) {
+        let password = match ctx.env_var(OS_PASSWORD) {
             Some(v) if !v.is_empty() => v,
             _ => {
-                debug!("{OPENSTACK_PASSWORD} not set, skipping env credential provider");
+                debug!("{OS_PASSWORD} not set, skipping env credential provider");
                 return Ok(None);
             }
         };
 
         let domain_name = ctx
-            .env_var(OPENSTACK_DOMAIN_NAME)
+            .env_var(OS_USER_DOMAIN_NAME)
             .unwrap_or_else(|| "Default".to_string());
 
         let project_domain_name = ctx
-            .env_var(OPENSTACK_PROJECT_DOMAIN_NAME)
+            .env_var(OS_PROJECT_DOMAIN_NAME)
             .unwrap_or_else(|| domain_name.clone());
 
         debug!("loaded OpenStack credentials from environment for user: {username}");
@@ -97,7 +99,7 @@ impl ProvideCredential for EnvCredentialProvider {
             .with_password(&password)
             .with_user_domain_name(&domain_name);
 
-        if let Some(project_name) = ctx.env_var(OPENSTACK_PROJECT_NAME) {
+        if let Some(project_name) = ctx.env_var(OS_PROJECT_NAME) {
             if !project_name.is_empty() {
                 provider = provider
                     .with_project_name(&project_name)
