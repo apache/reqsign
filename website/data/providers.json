@@ -822,6 +822,65 @@
         }
       ],
       "credential_provider_crate": "reqsign-volcengine-tos"
+    },
+    {
+      "id": "openstack-keystone",
+      "display_name": "OpenStack Keystone",
+      "family": "OpenStack",
+      "blurb": "Keystone v3 token authentication and X-Auth-Token signing for OpenStack services.",
+      "service_scope": "OpenStack services that authenticate with a Keystone v3 token, such as Swift.",
+      "signing_schemes": [
+        "X-Auth-Token header"
+      ],
+      "crates": [
+        "reqsign-openstack-keystone"
+      ],
+      "facade_features": [
+        {
+          "name": "openstack",
+          "capability": "Enables reqsign-openstack-keystone."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::openstack::default_signer()"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Environment variables",
+          "provider": "EnvCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts the X-Auth-Token header; expires_in is not interpreted."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": false,
+        "verified_by": "Not part of the wasm32 feature set exercised in CI."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Provider behaviour is asserted against an injected mock HttpSend; a live-service test is skipped unless REQSIGN_OPENSTACK_KEYSTONE_TEST=on.",
+        "refs": [
+          "services/openstack-keystone/tests"
+        ]
+      },
+      "source_refs": [
+        "services/openstack-keystone"
+      ],
+      "last_verified": "2026-10-22",
+      "explicit_sources": [
+        {
+          "id": "keystone",
+          "label": "Keystone password credentials",
+          "provider": "KeystoneCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-openstack-keystone"
     }
   ]
 }
