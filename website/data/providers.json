@@ -864,7 +864,7 @@
       },
       "integration_tests": {
         "level": "mock",
-        "notes": "Keystone mock server tests with a gated live-service entry point.",
+        "notes": "Provider behaviour is asserted against an injected mock HttpSend; a live-service test is skipped unless REQSIGN_OPENSTACK_KEYSTONE_TEST=on.",
         "refs": [
           "services/openstack-keystone/tests"
         ]

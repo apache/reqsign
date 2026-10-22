@@ -34,7 +34,8 @@ pub type DefaultSigner = Signer<Credential>;
 ///
 /// This function creates a signer with:
 /// - Default context (with Tokio file reader, reqwest HTTP client, OS environment)
-/// - Default credential provider (reads from `OPENSTACK_*` env vars)
+/// - Default credential provider (reads the standard `OS_AUTH_URL`,
+///   `OS_USERNAME`, and `OS_PASSWORD` environment variables)
 /// - Request signer that inserts `X-Auth-Token` header
 ///
 /// # Example

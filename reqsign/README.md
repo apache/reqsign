@@ -168,6 +168,10 @@ let signer = aliyun::default_signer("mybucket");
 use reqsign::huaweicloud;
 let signer = huaweicloud::default_signer("mybucket");
 
+// OpenStack Keystone
+use reqsign::openstack;
+let signer = openstack::default_signer();
+
 // Tencent COS
 use reqsign::tencent;
 let signer = tencent::default_signer();
@@ -187,6 +191,7 @@ let signer = oracle::default_signer();
 - `google`: Enable Google Cloud support
 - `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
 - `huaweicloud`: Enable Huawei Cloud OBS support
+- `openstack`: Enable OpenStack Keystone support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support
 
