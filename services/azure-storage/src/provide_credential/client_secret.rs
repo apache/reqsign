@@ -16,7 +16,9 @@
 // under the License.
 
 use crate::Credential;
-use async_trait::async_trait;
+use crate::provide_credential::entra::{
+    EntraTokenResponse, parse_token_response, token_request_error,
+};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
 use std::time::Duration;
@@ -32,6 +34,8 @@ use std::time::Duration;
 pub struct ClientSecretCredentialProvider {
     tenant_id: Option<String>,
     client_id: Option<String>,
+    client_secret: Option<String>,
+    authority_host: Option<String>,
 }
 
 impl ClientSecretCredentialProvider {
@@ -51,9 +55,19 @@ impl ClientSecretCredentialProvider {
         self.client_id = Some(client_id.into());
         self
     }
-}
 
-#[async_trait]
+    /// Set the client secret.
+    pub fn with_client_secret(mut self, client_secret: impl Into<String>) -> Self {
+        self.client_secret = Some(client_secret.into());
+        self
+    }
+
+    /// Set the authority host.
+    pub fn with_authority_host(mut self, authority_host: impl Into<String>) -> Self {
+        self.authority_host = Some(authority_host.into());
+        self
+    }
+}
 impl ProvideCredential for ClientSecretCredentialProvider {
     type Credential = Credential;
 
@@ -70,18 +84,28 @@ impl ProvideCredential for ClientSecretCredentialProvider {
             _ => return Ok(None),
         };
 
-        let client_id = match envs.get("AZURE_CLIENT_ID") {
+        let client_id = match self
+            .client_id
+            .as_ref()
+            .or_else(|| envs.get("AZURE_CLIENT_ID"))
+        {
             Some(id) if !id.is_empty() => id,
             _ => return Ok(None),
         };
 
-        let client_secret = match envs.get("AZURE_CLIENT_SECRET") {
+        let client_secret = match self
+            .client_secret
+            .as_ref()
+            .or_else(|| envs.get("AZURE_CLIENT_SECRET"))
+        {
             Some(secret) if !secret.is_empty() => secret,
             _ => return Ok(None),
         };
 
-        let authority_host = envs
-            .get("AZURE_AUTHORITY_HOST")
+        let authority_host = self
+            .authority_host
+            .as_ref()
+            .or_else(|| envs.get("AZURE_AUTHORITY_HOST"))
             .filter(|h| !h.is_empty())
             .map(|s| s.as_str())
             .unwrap_or("https://login.microsoftonline.com");
@@ -103,19 +127,13 @@ impl ProvideCredential for ClientSecretCredentialProvider {
     }
 }
 
-#[derive(serde::Deserialize)]
-struct ClientSecretTokenResponse {
-    access_token: String,
-    expires_in: u64,
-}
-
 async fn get_client_secret_token(
     tenant_id: &str,
     client_id: &str,
     client_secret: &str,
     authority_host: &str,
     ctx: &Context,
-) -> Result<Option<ClientSecretTokenResponse>> {
+) -> Result<Option<EntraTokenResponse>> {
     let url = format!(
         "{}/{}/oauth2/v2.0/token",
         authority_host.trim_end_matches('/'),
@@ -141,15 +159,12 @@ async fn get_client_secret_token(
     let resp = ctx.http_send(req).await?;
 
     if !resp.status().is_success() {
-        let status = resp.status();
-        let body = String::from_utf8_lossy(resp.body());
-        return Err(reqsign_core::Error::unexpected(format!(
-            "Client secret request failed with status {status}: {body}"
-        )));
+        return Err(token_request_error(
+            "Microsoft Entra client secret token request",
+            resp.status(),
+        ));
     }
 
-    let token: ClientSecretTokenResponse = serde_json::from_slice(resp.body()).map_err(|e| {
-        reqsign_core::Error::unexpected("failed to parse client secret response").with_source(e)
-    })?;
+    let token = parse_token_response(resp.body(), "client secret token response")?;
     Ok(Some(token))
 }

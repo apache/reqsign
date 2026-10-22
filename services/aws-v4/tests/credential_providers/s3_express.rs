@@ -17,8 +17,11 @@
 
 use super::create_test_context;
 use log::info;
-use reqsign_aws_v4::{DefaultCredentialProvider, S3ExpressSessionProvider};
-use reqsign_core::ProvideCredential;
+use reqsign_aws_v4::{
+    DefaultCredentialProvider, S3ExpressSessionConfig, S3ExpressSessionGrant,
+    S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionProvider,
+};
+use reqsign_core::{Granter, ProvideCredential};
 use std::env;
 
 #[tokio::test]
@@ -45,6 +48,45 @@ async fn test_s3_express_session_provider() {
         "S3ExpressSessionProvider should return credentials"
     );
     let cred = cred.unwrap();
+    assert!(!cred.access_key_id.is_empty());
+    assert!(!cred.secret_access_key.is_empty());
+    assert!(
+        cred.session_token.is_some(),
+        "S3 Express session should include session token"
+    );
+    assert!(
+        cred.expires_in.is_some(),
+        "S3 Express session should have expiration"
+    );
+}
+
+#[tokio::test]
+async fn test_s3_express_session_granter() {
+    if env::var("REQSIGN_AWS_V4_TEST_S3_EXPRESS").unwrap_or_default() != "on" {
+        info!("REQSIGN_AWS_V4_TEST_S3_EXPRESS not set, skipping");
+        return;
+    }
+
+    let bucket = env::var("REQSIGN_AWS_V4_S3_EXPRESS_BUCKET")
+        .expect("REQSIGN_AWS_V4_S3_EXPRESS_BUCKET must be set for S3 Express test");
+    let region =
+        env::var("AWS_REGION").expect("AWS_REGION must be set for S3 Express granter test");
+    let config = S3ExpressSessionConfig::from_bucket(&bucket, region)
+        .expect("S3 Express configuration must be valid");
+    let operation = S3ExpressSessionGranter::new(
+        config,
+        S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadWrite),
+    );
+    let granter = Granter::new(
+        create_test_context(),
+        DefaultCredentialProvider::new(),
+        operation,
+    );
+
+    let cred = granter
+        .grant(None)
+        .await
+        .expect("S3ExpressSessionGranter should create a session");
     assert!(!cred.access_key_id.is_empty());
     assert!(!cred.secret_access_key.is_empty());
     assert!(

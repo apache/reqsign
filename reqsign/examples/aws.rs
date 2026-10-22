@@ -16,12 +16,11 @@
 // under the License.
 
 use anyhow::Result;
-use reqsign::aws;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
-
+    // ANCHOR: quickstart
+    use reqsign::aws;
     // Create a default signer for S3 in us-east-1
     let signer = aws::default_signer("s3", "us-east-1");
 
@@ -36,6 +35,8 @@ async fn main() -> Result<()> {
 
     // Sign the request
     signer.sign(&mut req, None).await?;
+
+    // ANCHOR_END: quickstart
 
     // Execute the request would require rebuilding with body
     // In real usage, you'd use your HTTP client here

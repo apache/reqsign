@@ -28,11 +28,41 @@
 //! - **Traits**: Abstract interfaces for credential loading (`ProvideCredential`) and request signing (`SignRequest`)
 //! - **Signer**: The main orchestrator that coordinates credential loading and request signing
 //!
+//! ## Request URI contract
+//!
+//! Built-in request signers expect the request URI to be a valid, wire-ready URI
+//! with an authority. Callers must construct the intended path and query structure
+//! and percent-encode data components exactly once before signing. Structural URI
+//! delimiters remain literal, while delimiter bytes that belong to data must already
+//! be encoded, such as `%2F` for a slash inside one path segment.
+//!
+//! Existing path and query representations are authoritative. Canonicalization is a
+//! service-specific, read-only view: header authentication preserves the URI, while
+//! query authentication appends protocol-encoded authentication fields without
+//! decoding, sorting, or rebuilding the existing URI.
+//!
+//! [`Signer::sign`] runs the service signer against a private candidate request head.
+//! On error, the caller's method, URI, version, headers, and extensions remain
+//! unchanged. On success, only the URI and headers are committed; the caller retains
+//! ownership of the method, version, and extensions.
+//!
+//! `expires_in` is a service-specific validity input, not a universal selector between
+//! header and query authentication. The service and credential type determine the
+//! authentication mode.
+//!
+//! [`SigningCredential::is_valid`] controls whether a cached credential can be reused
+//! without refresh. [`SigningCredential::is_valid_at`] checks exact usability at the
+//! timestamp returned by [`SignRequest::required_valid_until`]. A refreshed credential
+//! only needs to satisfy the exact operation requirement. Credential refresh is
+//! serialized per shared cache, so concurrent cold or stale callers reuse a successful
+//! refresh. Refresh failures are not cached, so the next waiting or later caller can
+//! retry. Provider errors are returned without retrying internally or falling back to
+//! the old cached credential.
+//!
 //! ## Example
 //!
 //! ```no_run
 //! use reqsign_core::{Context, OsEnv, ProvideCredential, Result, SignRequest, Signer, SigningCredential};
-//! use async_trait::async_trait;
 //! use http::request::Parts;
 //! use std::time::Duration;
 //!
@@ -53,7 +83,6 @@
 //! #[derive(Debug)]
 //! struct MyLoader;
 //!
-//! #[async_trait]
 //! impl ProvideCredential for MyLoader {
 //!     type Credential = MyCredential;
 //!
@@ -69,7 +98,6 @@
 //! #[derive(Debug)]
 //! struct MyBuilder;
 //!
-//! #[async_trait]
 //! impl SignRequest for MyBuilder {
 //!     type Credential = MyCredential;
 //!
@@ -88,13 +116,11 @@
 //!
 //! # async fn example() -> Result<()> {
 //! # use reqsign_core::{FileRead, HttpSend};
-//! # use async_trait::async_trait;
 //! # use bytes::Bytes;
 //! #
 //! # // Mock implementations for the example
 //! # #[derive(Debug, Clone)]
 //! # struct MockFileRead;
-//! # #[async_trait]
 //! # impl FileRead for MockFileRead {
 //! #     async fn file_read(&self, _path: &str) -> Result<Vec<u8>> {
 //! #         Ok(vec![])
@@ -103,7 +129,6 @@
 //! #
 //! # #[derive(Debug, Clone)]
 //! # struct MockHttpSend;
-//! # #[async_trait]
 //! # impl HttpSend for MockHttpSend {
 //! #     async fn http_send(&self, _req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
 //! #         Ok(http::Response::builder().status(200).body(Bytes::new())?)
@@ -155,31 +180,54 @@
 // Make sure all our public APIs have docs.
 #![warn(missing_docs)]
 
-/// Error types for reqsign operations
-pub mod error;
 pub mod hash;
+#[cfg(all(not(target_arch = "wasm32"), feature = "jwt"))]
+pub mod jwt;
 pub mod time;
 pub mod utils;
 
-pub use error::{Error, ErrorKind, Result};
+mod api;
+pub use self::api::GrantCredential;
+pub use self::api::GrantCredentialDyn;
+pub use self::api::ProvideCredential;
+pub use self::api::ProvideCredentialChain;
+pub use self::api::ProvideCredentialDyn;
+pub use self::api::SignRequest;
+pub use self::api::SignRequestDyn;
+pub use self::api::SigningCredential;
 
 mod context;
-pub use context::CommandExecute;
-pub use context::CommandOutput;
-pub use context::Context;
-pub use context::Env;
-pub use context::FileRead;
-pub use context::HttpSend;
-pub use context::NoopCommandExecute;
-pub use context::NoopEnv;
-pub use context::NoopFileRead;
-pub use context::NoopHttpSend;
-pub use context::OsEnv;
-pub use context::StaticEnv;
+pub use self::context::CommandExecute;
+pub use self::context::CommandExecuteDyn;
+pub use self::context::CommandOutput;
+pub use self::context::Context;
+pub use self::context::Env;
+pub use self::context::FileRead;
+pub use self::context::FileReadDyn;
+pub use self::context::HttpSend;
+pub use self::context::HttpSendDyn;
+pub use self::context::NoopCommandExecute;
+pub use self::context::NoopEnv;
+pub use self::context::NoopFileRead;
+pub use self::context::NoopHttpSend;
+pub use self::context::OsEnv;
+pub use self::context::StaticEnv;
 
-mod api;
-pub use api::{ProvideCredential, ProvideCredentialChain, SignRequest, SigningCredential};
+mod error;
+pub use self::error::Error;
+pub use self::error::ErrorKind;
+pub use self::error::Result;
+
+mod futures_util;
+pub use self::futures_util::BoxedFuture;
+pub use self::futures_util::MaybeSend;
+
+mod granter;
+pub use self::granter::Granter;
+
 mod request;
-pub use request::{SigningMethod, SigningRequest};
+pub use self::request::SigningMethod;
+pub use self::request::SigningRequest;
+
 mod signer;
-pub use signer::Signer;
+pub use self::signer::Signer;

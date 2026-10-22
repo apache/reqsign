@@ -29,13 +29,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   unit_test:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Test
         working-directory: ./services/huaweicloud-obs
         run: cargo test --no-fail-fast

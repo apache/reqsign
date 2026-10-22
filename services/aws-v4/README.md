@@ -1,145 +1,142 @@
 # reqsign-aws-v4
 
-AWS SigV4 signing implementation for reqsign.
-
----
-
-This crate provides AWS Signature Version 4 (SigV4) signing capabilities for authenticating requests to AWS services like S3, DynamoDB, Lambda, and more.
+AWS SigV4 signing implementation for `reqsign`.
 
 ## Quick Start
 
-```rust
-use reqsign_aws_v4::{Builder, Config, DefaultLoader};
-use reqsign_core::{Context, Signer};
+```rust,no_run
+use reqsign_aws_v4::{DefaultCredentialProvider, RequestSigner};
+use reqsign_core::{Context, OsEnv, Signer};
+use reqsign_file_read_tokio::TokioFileRead;
+use reqsign_http_send_reqwest::ReqwestHttpSend;
 
-// Create context and signer
-let ctx = Context::default();
-let config = Config::default().from_env().from_profile();
-let loader = DefaultLoader::new(config);
-let builder = Builder::new("s3", "us-east-1");
-let signer = Signer::new(ctx, loader, builder);
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let ctx = Context::new()
+        .with_file_read(TokioFileRead)
+        .with_http_send(ReqwestHttpSend::default())
+        .with_env(OsEnv);
 
-// Sign requests
-let mut req = http::Request::get("https://s3.amazonaws.com/mybucket/mykey")
-    .body(())
-    .unwrap()
-    .into_parts()
-    .0;
+    let signer = Signer::new(
+        ctx,
+        DefaultCredentialProvider::new(),
+        RequestSigner::new("s3", "us-east-1"),
+    );
 
-signer.sign(&mut req, None).await?;
+    let mut req = http::Request::get("https://s3.amazonaws.com/mybucket/mykey")
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0;
+
+    signer.sign(&mut req, None).await?;
+    Ok(())
+}
 ```
 
-## Features
+## Default Credential Chain
 
-- **Complete SigV4 Implementation**: Full AWS Signature Version 4 support
-- **Multiple Credential Sources**: Environment, files, IAM roles, and more
-- **Service Agnostic**: Works with any AWS service using SigV4
-- **Async Support**: Built for modern async Rust applications
+`DefaultCredentialProvider::new()` builds the documented AWS default chain:
 
-## Credential Sources
+1. `env`
+2. `profile`
+3. `sso`
+4. `web_identity`
+5. `process`
+6. `ecs`
+7. `imds`
 
-This crate supports loading credentials from:
+On `wasm32`, the non-portable `sso` and `process` slots are not available.
 
-1. **Environment Variables**
-   ```bash
-   export AWS_ACCESS_KEY_ID=your_access_key
-   export AWS_SECRET_ACCESS_KEY=your_secret_key
-   export AWS_SESSION_TOKEN=your_session_token  # Optional
-   ```
+## S3 Express Authentication
 
-2. **Credential File** (`~/.aws/credentials`)
-   ```ini
-   [default]
-   aws_access_key_id = your_access_key
-   aws_secret_access_key = your_secret_key
-   
-   [production]
-   aws_access_key_id = prod_access_key
-   aws_secret_access_key = prod_secret_key
-   ```
+`RequestSigner::new("s3express", region)` uses the S3 Express CreateSession
+token representation by default. Use `with_standard_session_token()` for
+operations that require IAM credentials, including `CopyObject`, `HeadBucket`,
+and `UploadPartCopy`. The same selection applies to header and query
+authentication.
 
-3. **IAM Roles** (EC2, ECS, Lambda)
-   - Automatically detected and used when running on AWS infrastructure
+```rust
+use reqsign_aws_v4::RequestSigner;
 
-4. **AssumeRole with STS**
-   ```rust
-   let config = Config::default()
-       .role_arn("arn:aws:iam::123456789012:role/MyRole")
-       .role_session_name("my-session");
-   ```
+let _session_signer = RequestSigner::new("s3express", "us-west-2");
+let _iam_signer = RequestSigner::new("s3express", "us-west-2")
+    .with_standard_session_token();
+```
 
-5. **Web Identity Tokens** (EKS/Kubernetes)
-   - Automatically detected in EKS environments
+## Select a Profile
 
-## Supported Services
+Use `with_profile(...)` to select one profile consistently for the shared
+profile, SSO, and process credential sources. The explicit selection takes
+precedence over `AWS_PROFILE`.
 
-Works with any AWS service using SigV4:
+```rust,no_run
+use reqsign_aws_v4::DefaultCredentialProvider;
 
-- **Storage**: S3, EBS, EFS
-- **Database**: DynamoDB, RDS, DocumentDB
-- **Compute**: EC2, Lambda, ECS
-- **Messaging**: SQS, SNS, EventBridge
-- **Analytics**: Kinesis, Athena, EMR
-- And many more...
+let provider = DefaultCredentialProvider::builder()
+    .with_profile("production")
+    .build();
+```
+
+## Customize Slots
+
+Use `DefaultCredentialProvider::builder()` to replace or remove individual slots.
+Each slot is represented by `Option<T>` internally: `slot(provider)` enables it,
+`no_slot()` removes it, and `build()` only pushes `Some(...)` slots into the
+chain.
+
+```rust,no_run
+use reqsign_aws_v4::{DefaultCredentialProvider, ProfileCredentialProvider};
+
+let provider = DefaultCredentialProvider::builder()
+    .no_env()
+    .profile(ProfileCredentialProvider::new().with_profile("production"))
+    .no_imds()
+    .build();
+```
+
+For advanced composition, use `DefaultCredentialProvider::with_chain(...)` or
+prepend a higher-priority source with `DefaultCredentialProvider::push_front(...)`.
+
+## S3 Access Grants
+
+Use `S3AccessGrantsGranter` to authorize one typed `GetDataAccess` request with
+an existing AWS credential and return the temporary credential issued by S3
+Access Grants. The result can be passed directly to the existing AWS signer.
+
+```rust,no_run
+use std::time::Duration;
+
+use reqsign_aws_v4::{
+    DefaultCredentialProvider, S3AccessGrantsConfig, S3AccessGrantsGrant,
+    S3AccessGrantsGranter, S3AccessGrantsPermission, S3AccessGrantsPrivilege,
+    S3AccessGrantsTarget,
+};
+use reqsign_core::{Context, Granter};
+use reqsign_http_send_reqwest::ReqwestHttpSend;
+
+# async fn example() -> reqsign_core::Result<()> {
+let grant = S3AccessGrantsGrant::new(
+    S3AccessGrantsTarget::for_prefix("example-bucket", "customer-a/"),
+    S3AccessGrantsPermission::Read,
+    S3AccessGrantsPrivilege::Minimal,
+);
+let granter = Granter::new(
+    Context::new().with_http_send(ReqwestHttpSend::default()),
+    DefaultCredentialProvider::new(),
+    S3AccessGrantsGranter::new(
+        S3AccessGrantsConfig::new("111122223333", "us-east-2"),
+        grant,
+    ),
+);
+let credential = granter.grant(Some(Duration::from_secs(900))).await?;
+# let _ = credential;
+# Ok(())
+# }
+```
 
 ## Examples
 
-### S3 Operations
-
-```rust
-// List buckets
-let req = http::Request::get("https://s3.amazonaws.com/")
-    .header("x-amz-content-sha256", EMPTY_STRING_SHA256)
-    .body(())?;
-
-// Get object
-let req = http::Request::get("https://bucket.s3.amazonaws.com/key")
-    .header("x-amz-content-sha256", EMPTY_STRING_SHA256)
-    .body(())?;
-```
-
-### DynamoDB Operations
-
-```rust
-// List tables
-let req = http::Request::post("https://dynamodb.us-east-1.amazonaws.com/")
-    .header("x-amz-target", "DynamoDB_20120810.ListTables")
-    .header("content-type", "application/x-amz-json-1.0")
-    .body(json!({}))?;
-```
-
-Check out more examples:
 - [S3 signing example](examples/s3_sign.rs)
 - [DynamoDB signing example](examples/dynamodb_sign.rs)
-
-## Advanced Configuration
-
-### Custom Profile
-
-```rust
-let config = Config::default()
-    .profile("production")
-    .from_profile();
-```
-
-### Assume Role
-
-```rust
-let config = Config::default()
-    .role_arn("arn:aws:iam::123456789012:role/MyRole")
-    .external_id("unique-external-id")
-    .duration_seconds(3600);
-```
-
-### Direct Credentials
-
-```rust
-let config = Config::default()
-    .access_key_id("AKIAIOSFODNN7EXAMPLE")
-    .secret_access_key("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
-    .session_token("optional-session-token");
-```
-
-## License
-
-Licensed under [Apache License, Version 2.0](./LICENSE).
+- [S3 Express signing example](examples/s3_express_sign.rs)

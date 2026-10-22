@@ -18,8 +18,8 @@
 # All configurations could be found here: https://github.com/apache/infrastructure-asfyaml/
 
 github:
-  description: "Signing HTTP requests without heavy SDKs."
-  homepage: https://docs.rs/reqsign
+  description: "Apache Reqsign: Signing HTTP requests without heavy SDKs."
+  homepage: https://reqsign.apache.org
   labels:
     - rust
     - s3
@@ -34,6 +34,35 @@ github:
     issues: true
     projects: false
     discussions: true
+  environments:
+    release:
+      wait_timer: 0
+      deployment_branch_policy:
+        protected_branches: false
+        policies:
+          - name: "v*.*.*"
+            type: tag
+    rust-bootstrap:
+      required_reviewers:
+        - id: Xuanwo
+          type: User
+        - id: dentiny
+          type: User
+        - id: erickguan
+          type: User
+        - id: tisonkun
+          type: User
+        - id: koushiro
+          type: User
+        - id: PsiACE
+          type: User
+      wait_timer: 0
+      prevent_self_review: true
+      deployment_branch_policy:
+        protected_branches: false
+        policies:
+          - name: main
+            type: branch
   custom_subjects:
     new_discussion: "{title}"
     edit_discussion: "Re: {title}"
@@ -44,8 +73,25 @@ github:
     edit_comment_discussion: "Re: {title}"
     delete_comment_discussion: "Re: {title}"
 
+  rulesets:
+    - name: "Default Branch Protection"
+      type: branch
+      branches:
+        includes:
+          - "~DEFAULT_BRANCH"
+          - "release/*"
+          - "rel/*"
+        excludes: []
+      bypass_teams:
+        - root
+      restrict_deletion: true
+      restrict_force_push: true
 notifications:
-  commits: commits@opendal.apache.org
-  issues: commits@opendal.apache.org
-  pullrequests: commits@opendal.apache.org
-  discussions: dev@opendal.apache.org
+  commits: commits@reqsign.apache.org
+  issues: commits@reqsign.apache.org
+  pullrequests: commits@reqsign.apache.org
+  discussions: dev@reqsign.apache.org
+
+# The generated website branch carries this file to enable ASF publishing.
+publish:
+  whoami: asf-site

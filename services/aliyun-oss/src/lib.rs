@@ -22,14 +22,23 @@
 //!
 //! ## Overview
 //!
-//! Aliyun OSS uses a custom signing algorithm based on HMAC-SHA1. This crate implements
-//! the complete signing process along with credential loading from various sources
-//! including environment variables, configuration files, and STS tokens.
+//! Aliyun OSS supports multiple signature generations. This crate keeps V1 as the
+//! default and also supports V2 and V4 signing for callers that need stronger hashing
+//! or modern region-aware signing.
+//!
+//! `RequestSigner` defaults to V1 signing and supports opting into V2 or V4 signing.
+//! V4 additionally requires a configured region.
 //!
 //! ## Quick Start
 //!
 //! ```no_run
-//! use reqsign_aliyun_oss::{RequestSigner, DefaultCredentialProvider, StaticCredentialProvider};
+//! use reqsign_aliyun_oss::{
+//!     AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
+//!     ConfigFileCredentialProvider, CredentialsFileCredentialProvider,
+//!     CredentialsUriCredentialProvider, DefaultCredentialProvider,
+//!     EcsRamRoleCredentialProvider, EnvCredentialProvider, OssProfileCredentialProvider,
+//!     RequestSigner, SigningVersion, StaticCredentialProvider,
+//! };
 //! use reqsign_core::{Context, Signer, Result};
 //! use reqsign_file_read_tokio::TokioFileRead;
 //! use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -41,8 +50,19 @@
 //!         .with_file_read(TokioFileRead::default())
 //!         .with_http_send(ReqwestHttpSend::default());
 //!
-//!     // Create credential loader - uses environment variables by default
-//!     let loader = DefaultCredentialProvider::new();
+//!     // Create credential loader with the default assume_role -> env ->
+//!     // OSS profile -> shared credentials file -> config file ->
+//!     // credentials URI -> ECS RAM role -> oidc chain.
+//!     let loader = DefaultCredentialProvider::builder()
+//!         .assume_role(AssumeRoleCredentialProvider::new())
+//!         .env(EnvCredentialProvider::new())
+//!         .oss_profile(OssProfileCredentialProvider::new())
+//!         .credentials_file(CredentialsFileCredentialProvider::new())
+//!         .config_file(ConfigFileCredentialProvider::new())
+//!         .credentials_uri(CredentialsUriCredentialProvider::new())
+//!         .ecs_ram_role(EcsRamRoleCredentialProvider::new())
+//!         .oidc(AssumeRoleWithOidcCredentialProvider::new())
+//!         .build();
 //!
 //!     // Or use static credentials
 //!     // let loader = StaticCredentialProvider::new(
@@ -52,6 +72,13 @@
 //!
 //!     // Create request builder
 //!     let builder = RequestSigner::new("bucket");
+//!     // Or opt into V2/V4:
+//!     // let builder = RequestSigner::new("bucket")
+//!     //     .with_signing_version(SigningVersion::V2);
+//!
+//!     // let builder = RequestSigner::new("bucket")
+//!     //     .with_region("cn-beijing")
+//!     //     .with_signing_version(SigningVersion::V4);
 //!
 //!     // Create the signer
 //!     let signer = Signer::new(ctx, loader, builder);
@@ -76,17 +103,30 @@
 //! export ALIBABA_CLOUD_ACCESS_KEY_ID=your-access-key-id
 //! export ALIBABA_CLOUD_ACCESS_KEY_SECRET=your-access-key-secret
 //! export ALIBABA_CLOUD_SECURITY_TOKEN=your-sts-token  # Optional, for STS
+//! export OSS_ACCESS_KEY_ID=your-access-key-id         # Alias
+//! export OSS_ACCESS_KEY_SECRET=your-access-key-secret # Alias
+//! export OSS_SESSION_TOKEN=your-sts-token             # Alias
 //! ```
 //!
-//! ### Configuration File
+//! ### OSS Profile File
 //!
-//! The crate can load credentials from the Aliyun CLI configuration file
-//! (typically `~/.aliyun/config.json`).
+//! The crate can load credentials from the OSS profile file
+//! (typically `~/.oss/credentials`).
+//!
+//! ### Credentials URI
+//!
+//! The crate can load temporary credentials from
+//! `ALIBABA_CLOUD_CREDENTIALS_URI`.
 //!
 //! ### ECS RAM Role
 //!
-//! When running on Alibaba Cloud ECS instances with RAM roles attached,
-//! credentials are automatically obtained from the metadata service.
+//! The crate can load temporary credentials from the ECS metadata service.
+//!
+//! ### Alibaba Shared Credential and Config Files
+//!
+//! The crate can also load static credentials from Alibaba shared SDK files
+//! (`~/.alibabacloud/credentials.ini`, `~/.aliyun/credentials.ini`) and the
+//! Alibaba CLI config file (`~/.aliyun/config.json`).
 //!
 //! ## OSS Operations
 //!
@@ -131,14 +171,59 @@
 //! ### STS AssumeRole
 //!
 //! ```no_run
-//! use reqsign_aliyun_oss::AssumeRoleWithOidcCredentialProvider;
+//! use reqsign_aliyun_oss::{
+//!     AssumeRoleCredentialProvider, DefaultCredentialProvider, StaticCredentialProvider,
+//! };
 //!
-//! // Use environment variables
-//! // Set ALIBABA_CLOUD_ROLE_ARN, ALIBABA_CLOUD_OIDC_PROVIDER_ARN, ALIBABA_CLOUD_OIDC_TOKEN_FILE
-//! // Optionally set ALIBABA_CLOUD_ROLE_SESSION_NAME
-//! let loader = AssumeRoleWithOidcCredentialProvider::new()
-//!     .with_role_session_name("my-session");
+//! // Use an explicit base access key source to call STS AssumeRole.
+//! let loader = DefaultCredentialProvider::builder()
+//!     .no_env()
+//!     .no_oss_profile()
+//!     .no_credentials_uri()
+//!     .no_ecs_ram_role()
+//!     .no_credentials_file()
+//!     .no_config_file()
+//!     .assume_role(
+//!         AssumeRoleCredentialProvider::new()
+//!             .with_base_provider(StaticCredentialProvider::new(
+//!                 "your-access-key-id",
+//!                 "your-access-key-secret",
+//!             ))
+//!             .with_role_arn("acs:ram::123456789012:role/example")
+//!             .with_role_session_name("my-session"),
+//!     )
+//!     .no_oidc()
+//!     .build();
 //! ```
+//!
+//! Or rely on the default static base chain by setting
+//! `ALIBABA_CLOUD_ACCESS_KEY_ID`, `ALIBABA_CLOUD_ACCESS_KEY_SECRET`,
+//! `ALIBABA_CLOUD_ROLE_ARN`, and optionally `ALIBABA_CLOUD_EXTERNAL_ID`.
+//!
+//! ### STS AssumeRole with OIDC
+//!
+//! ```no_run
+//! use reqsign_aliyun_oss::{AssumeRoleWithOidcCredentialProvider, DefaultCredentialProvider};
+//!
+//! let loader = DefaultCredentialProvider::builder()
+//!     .no_env()
+//!     .no_oss_profile()
+//!     .no_credentials_uri()
+//!     .no_ecs_ram_role()
+//!     .no_credentials_file()
+//!     .no_config_file()
+//!     .oidc(
+//!         AssumeRoleWithOidcCredentialProvider::new()
+//!             .with_role_arn("acs:ram::123456789012:role/example")
+//!             .with_oidc_provider_arn("acs:ram::123456789012:oidc-provider/example")
+//!             .with_oidc_token_file("/var/run/secrets/tokens/oidc-token")
+//!             .with_role_session_name("my-session"),
+//!     )
+//!     .build();
+//! ```
+//!
+//! Or rely on environment variables by setting `ALIBABA_CLOUD_ROLE_ARN`,
+//! `ALIBABA_CLOUD_OIDC_PROVIDER_ARN`, and `ALIBABA_CLOUD_OIDC_TOKEN_FILE`.
 //!
 //! ### Custom Endpoints
 //!
@@ -159,15 +244,17 @@
 //!
 //! Check out the examples directory:
 //! - [Basic OSS operations](examples/oss_operations.rs)
-//! - [STS authentication](examples/sts_auth.rs)
 
 mod constants;
 
 mod credential;
 pub use credential::Credential;
 
+mod assume_role;
+pub use assume_role::{AssumeRoleGrant, AssumeRoleGranter};
+
 mod sign_request;
-pub use sign_request::RequestSigner;
+pub use sign_request::{RequestSigner, SigningVersion};
 
 mod provide_credential;
 pub use provide_credential::*;

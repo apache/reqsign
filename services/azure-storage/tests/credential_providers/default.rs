@@ -15,137 +15,74 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use async_trait::async_trait;
-use reqsign_azure_storage::{Credential, DefaultCredentialProvider};
-use reqsign_core::{Context, OsEnv, ProvideCredential, ProvideCredentialChain, Result};
-use reqsign_file_read_tokio::TokioFileRead;
-use reqsign_http_send_reqwest::ReqwestHttpSend;
-use std::sync::Arc;
+use std::collections::HashMap;
+
+use reqsign_azure_storage::{DefaultCredentialProvider, EnvCredentialProvider};
+use reqsign_core::{Context, ProvideCredential, StaticEnv};
+
+use super::{assert_provider_reads_probe, live_context};
 
 fn is_test_enabled() -> bool {
-    std::env::var("REQSIGN_AZURE_STORAGE_TEST").unwrap_or_default() == "on"
-}
-
-/// Mock provider that tracks how many times it was called
-#[derive(Debug)]
-struct CountingProvider {
-    name: String,
-    return_credential: Option<Credential>,
-    call_count: Arc<std::sync::Mutex<usize>>,
-}
-
-#[async_trait]
-impl ProvideCredential for CountingProvider {
-    type Credential = Credential;
-
-    async fn provide_credential(&self, _ctx: &Context) -> Result<Option<Self::Credential>> {
-        let mut count = self.call_count.lock().unwrap();
-        *count += 1;
-        eprintln!("Provider {} called (count: {})", self.name, *count);
-        Ok(self.return_credential.clone())
-    }
+    std::env::var("REQSIGN_AZURE_STORAGE_TEST_DEFAULT").unwrap_or_default() == "on"
 }
 
 #[tokio::test]
-async fn test_default_provider_chain() {
+async fn test_default_provider() -> anyhow::Result<()> {
     if !is_test_enabled() {
-        eprintln!("Skipping test: REQSIGN_AZURE_STORAGE_TEST is not enabled");
-        return;
+        eprintln!("Skipping test: REQSIGN_AZURE_STORAGE_TEST_DEFAULT is not enabled");
+        return Ok(());
     }
 
-    let ctx = Context::new()
-        .with_file_read(TokioFileRead)
-        .with_http_send(ReqwestHttpSend::default())
-        .with_env(OsEnv);
-
-    // Test that DefaultCredentialProvider tries multiple sources
-    let provider = DefaultCredentialProvider::new();
-
-    // This will try environment variables, IMDS, Azure CLI, etc.
-    // The actual result depends on the environment
-    let _ = provider.provide_credential(&ctx).await;
+    assert_provider_reads_probe(DefaultCredentialProvider::new(), live_context()).await
 }
 
 #[tokio::test]
-async fn test_chain_stops_at_first_success() {
-    let ctx = Context::new()
-        .with_file_read(TokioFileRead)
-        .with_http_send(ReqwestHttpSend::default())
-        .with_env(OsEnv);
+async fn builder_can_remove_and_restore_environment_slot() {
+    let ctx = Context::new().with_env(StaticEnv {
+        home_dir: None,
+        envs: HashMap::from([
+            (
+                "AZURE_STORAGE_ACCOUNT_NAME".to_string(),
+                "testaccount".to_string(),
+            ),
+            (
+                "AZURE_STORAGE_ACCOUNT_KEY".to_string(),
+                "dGVzdGtleQ==".to_string(),
+            ),
+        ]),
+    });
 
-    let count1 = Arc::new(std::sync::Mutex::new(0));
-    let count2 = Arc::new(std::sync::Mutex::new(0));
-    let count3 = Arc::new(std::sync::Mutex::new(0));
+    let without_env = DefaultCredentialProvider::builder()
+        .no_env()
+        .no_client_secret()
+        .no_azure_pipelines()
+        .no_workload_identity()
+        .no_imds();
+    #[cfg(not(target_arch = "wasm32"))]
+    let without_env = without_env.no_azure_cli().no_client_certificate();
+    assert!(
+        without_env
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
-    let chain = ProvideCredentialChain::new()
-        .push(CountingProvider {
-            name: "provider1".to_string(),
-            return_credential: None,
-            call_count: count1.clone(),
-        })
-        .push(CountingProvider {
-            name: "provider2".to_string(),
-            return_credential: Some(Credential::SharedKey {
-                account_name: "testaccount".to_string(),
-                account_key: "dGVzdGtleQ==".to_string(),
-            }),
-            call_count: count2.clone(),
-        })
-        .push(CountingProvider {
-            name: "provider3".to_string(),
-            return_credential: Some(Credential::SasToken {
-                token: "sv=2021-01-01&ss=b".to_string(),
-            }),
-            call_count: count3.clone(),
-        });
-
-    let result = chain.provide_credential(&ctx).await.unwrap();
-    assert!(result.is_some());
-
-    let cred = result.unwrap();
-    match cred {
-        Credential::SharedKey {
-            account_name,
-            account_key,
-        } => {
-            assert_eq!(account_name, "testaccount");
-            assert_eq!(account_key, "dGVzdGtleQ==");
-        }
-        _ => panic!("Expected SharedKey credential"),
-    }
-
-    // Verify call counts
-    assert_eq!(*count1.lock().unwrap(), 1);
-    assert_eq!(*count2.lock().unwrap(), 1);
-    assert_eq!(*count3.lock().unwrap(), 0); // Should not be called
-}
-
-#[tokio::test]
-async fn test_chain_returns_none_when_all_fail() {
-    let ctx = Context::new()
-        .with_file_read(TokioFileRead)
-        .with_http_send(ReqwestHttpSend::default())
-        .with_env(OsEnv);
-
-    let count1 = Arc::new(std::sync::Mutex::new(0));
-    let count2 = Arc::new(std::sync::Mutex::new(0));
-
-    let chain = ProvideCredentialChain::new()
-        .push(CountingProvider {
-            name: "provider1".to_string(),
-            return_credential: None,
-            call_count: count1.clone(),
-        })
-        .push(CountingProvider {
-            name: "provider2".to_string(),
-            return_credential: None,
-            call_count: count2.clone(),
-        });
-
-    let result = chain.provide_credential(&ctx).await.unwrap();
-    assert!(result.is_none());
-
-    // Verify all providers were called
-    assert_eq!(*count1.lock().unwrap(), 1);
-    assert_eq!(*count2.lock().unwrap(), 1);
+    let with_env = DefaultCredentialProvider::builder()
+        .no_client_secret()
+        .no_azure_pipelines()
+        .no_workload_identity()
+        .no_imds()
+        .env(EnvCredentialProvider::new());
+    #[cfg(not(target_arch = "wasm32"))]
+    let with_env = with_env.no_azure_cli().no_client_certificate();
+    assert!(
+        with_env
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .is_some()
+    );
 }

@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-http-send-reqwest"
-version = "3.0.0"
+version = "4.0.7"
 
 categories = ["asynchronous"]
 description = "Reqwest-based HTTP client implementation for reqsign."
@@ -30,7 +30,6 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-async-trait = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 http-body-util = { version = "0.1.3" }
@@ -44,7 +43,7 @@ reqwest = { workspace = true, default-features = false, features = [
 wasm-bindgen-test = { version = "0.3" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-futures-channel = { version = "0.3" }
+asyncband = { workspace = true, features = ["oneshot"] }
 wasm-bindgen-futures = { version = "0.4" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

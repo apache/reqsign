@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign"
-version = "0.19.0"
+version = "0.20.7"
 
 categories = ["authentication", "web-programming::http-client"]
 description = "Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services"
@@ -31,6 +31,7 @@ rust-version.workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 # Core functionality (always included)
@@ -39,12 +40,14 @@ reqsign-core = { workspace = true }
 # Service implementations (optional)
 reqsign-aliyun-oss = { workspace = true, optional = true }
 reqsign-aws-v4 = { workspace = true, optional = true }
+reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
 reqsign-openstack-keystone = { workspace = true, optional = true }
 reqsign-oracle = { workspace = true, optional = true }
 reqsign-tencent-cos = { workspace = true, optional = true }
+reqsign-volcengine-tos = { workspace = true, optional = true }
 
 # Context implementations (optional but included by default)
 reqsign-command-execute-tokio = { workspace = true, optional = true }
@@ -61,16 +64,35 @@ default-context = [
 
 # Service features
 aliyun = ["dep:reqsign-aliyun-oss"]
-aws = ["dep:reqsign-aws-v4"]
+aws = ["aws-v4"]
+aws-v4 = ["dep:reqsign-aws-v4"]
+aws-v4a = ["dep:reqsign-aws-v4a"]
 azure = ["dep:reqsign-azure-storage"]
 google = ["dep:reqsign-google"]
+google-credential-access-boundary-client-side = [
+  "google",
+  "reqsign-google/credential-access-boundary-client-side",
+]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
 openstack = ["dep:reqsign-openstack-keystone"]
 oracle = ["dep:reqsign-oracle"]
 tencent = ["dep:reqsign-tencent-cos"]
+volcengine = ["dep:reqsign-volcengine-tos"]
 
 # Full feature set
-full = ["aliyun", "aws", "azure", "google", "huaweicloud", "openstack", "oracle", "tencent"]
+full = [
+  "aliyun",
+  "aws",
+  "aws-v4a",
+  "azure",
+  "google",
+  "google-credential-access-boundary-client-side",
+  "huaweicloud",
+  "openstack",
+  "oracle",
+  "tencent",
+  "volcengine",
+]
 
 [dev-dependencies]
 anyhow = "1"
@@ -90,3 +112,26 @@ required-features = ["azure", "default-context"]
 [[example]]
 name = "google"
 required-features = ["google", "default-context"]
+
+[[example]]
+name = "static_credentials"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "presign"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "custom_context"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "s3_express_grant"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "s3_express_sign"
+required-features = ["aws", "default-context"]
+
+[[example]]
+name = "custom_http"

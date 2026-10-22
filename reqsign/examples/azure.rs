@@ -16,12 +16,11 @@
 // under the License.
 
 use anyhow::Result;
-use reqsign::azure;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
-
+    // ANCHOR: quickstart
+    use reqsign::azure;
     // Create a default signer for Azure Storage
     let signer = azure::default_signer();
 
@@ -36,6 +35,8 @@ async fn main() -> Result<()> {
 
     // Sign the request
     signer.sign(&mut req, None).await?;
+
+    // ANCHOR_END: quickstart
 
     // Execute the request would require rebuilding with body
     // In real usage, you'd use your HTTP client here

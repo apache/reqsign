@@ -16,16 +16,26 @@
 // under the License.
 
 use crate::Credential;
-use crate::provide_credential::{AssumeRoleWithOidcCredentialProvider, EnvCredentialProvider};
-use async_trait::async_trait;
+use crate::provide_credential::{
+    AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
+    ConfigFileCredentialProvider, CredentialsFileCredentialProvider,
+    CredentialsUriCredentialProvider, EcsRamRoleCredentialProvider, EnvCredentialProvider,
+    OssProfileCredentialProvider,
+};
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
 /// DefaultCredentialProvider is a loader that will try to load credential via default chains.
 ///
 /// Resolution order:
 ///
-/// 1. Environment variables
-/// 2. Assume Role with OIDC
+/// 1. AssumeRole via base AK credentials
+/// 2. Environment variables
+/// 3. OSS profile file
+/// 4. Alibaba shared credentials file
+/// 5. Alibaba CLI config file
+/// 6. Credentials URI
+/// 7. ECS RAM role metadata
+/// 8. Assume Role with OIDC
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
@@ -77,12 +87,32 @@ impl DefaultCredentialProvider {
 
 /// Builder for `DefaultCredentialProvider`.
 ///
-/// Use `configure_*` to customize providers and `disable_*(bool)` to control
-/// participation in the chain. Finally call `build()` to create the provider.
-#[derive(Default)]
+/// Use `slot(provider)` to override a default provider or `no_slot()` to
+/// remove it from the chain before calling `build()`.
 pub struct DefaultCredentialProviderBuilder {
+    assume_role: Option<AssumeRoleCredentialProvider>,
     env: Option<EnvCredentialProvider>,
-    assume_role: Option<AssumeRoleWithOidcCredentialProvider>,
+    oss_profile: Option<OssProfileCredentialProvider>,
+    credentials_uri: Option<CredentialsUriCredentialProvider>,
+    ecs_ram_role: Option<EcsRamRoleCredentialProvider>,
+    credentials_file: Option<CredentialsFileCredentialProvider>,
+    config_file: Option<ConfigFileCredentialProvider>,
+    oidc: Option<AssumeRoleWithOidcCredentialProvider>,
+}
+
+impl Default for DefaultCredentialProviderBuilder {
+    fn default() -> Self {
+        Self {
+            assume_role: Some(AssumeRoleCredentialProvider::new()),
+            env: Some(EnvCredentialProvider::new()),
+            oss_profile: Some(OssProfileCredentialProvider::new()),
+            credentials_uri: Some(CredentialsUriCredentialProvider::new()),
+            ecs_ram_role: Some(EcsRamRoleCredentialProvider::new()),
+            credentials_file: Some(CredentialsFileCredentialProvider::new()),
+            config_file: Some(ConfigFileCredentialProvider::new()),
+            oidc: Some(AssumeRoleWithOidcCredentialProvider::new()),
+        }
+    }
 }
 
 impl DefaultCredentialProviderBuilder {
@@ -91,64 +121,155 @@ impl DefaultCredentialProviderBuilder {
         Self::default()
     }
 
-    /// Configure the environment credential provider.
-    pub fn configure_env<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(EnvCredentialProvider) -> EnvCredentialProvider,
-    {
-        let p = self.env.take().unwrap_or_default();
-        self.env = Some(f(p));
+    /// Set the AssumeRole credential provider slot.
+    pub fn assume_role(mut self, provider: AssumeRoleCredentialProvider) -> Self {
+        self.assume_role = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the environment provider.
-    pub fn disable_env(mut self, disable: bool) -> Self {
-        if disable {
-            self.env = None;
-        } else if self.env.is_none() {
-            self.env = Some(EnvCredentialProvider::new());
-        }
+    /// Remove the AssumeRole credential provider slot.
+    pub fn no_assume_role(mut self) -> Self {
+        self.assume_role = None;
         self
     }
 
-    /// Configure the OIDC assume-role credential provider.
-    pub fn configure_assume_role<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(AssumeRoleWithOidcCredentialProvider) -> AssumeRoleWithOidcCredentialProvider,
-    {
-        let p = self.assume_role.take().unwrap_or_default();
-        self.assume_role = Some(f(p));
+    /// Set the environment credential provider slot.
+    pub fn env(mut self, provider: EnvCredentialProvider) -> Self {
+        self.env = Some(provider);
         self
     }
 
-    /// Disable (true) or ensure enabled (false) the assume-role provider.
-    pub fn disable_assume_role(mut self, disable: bool) -> Self {
-        if disable {
-            self.assume_role = None;
-        } else if self.assume_role.is_none() {
-            self.assume_role = Some(AssumeRoleWithOidcCredentialProvider::new());
-        }
+    /// Remove the environment credential provider slot.
+    pub fn no_env(mut self) -> Self {
+        self.env = None;
+        self
+    }
+
+    /// Set the OSS profile credential provider slot.
+    pub fn oss_profile(mut self, provider: OssProfileCredentialProvider) -> Self {
+        self.oss_profile = Some(provider);
+        self
+    }
+
+    /// Remove the OSS profile credential provider slot.
+    pub fn no_oss_profile(mut self) -> Self {
+        self.oss_profile = None;
+        self
+    }
+
+    /// Set the Alibaba shared credentials file provider slot.
+    pub fn credentials_file(mut self, provider: CredentialsFileCredentialProvider) -> Self {
+        self.credentials_file = Some(provider);
+        self
+    }
+
+    /// Remove the Alibaba shared credentials file provider slot.
+    pub fn no_credentials_file(mut self) -> Self {
+        self.credentials_file = None;
+        self
+    }
+
+    /// Set the Alibaba config file provider slot.
+    pub fn config_file(mut self, provider: ConfigFileCredentialProvider) -> Self {
+        self.config_file = Some(provider);
+        self
+    }
+
+    /// Remove the Alibaba config file provider slot.
+    pub fn no_config_file(mut self) -> Self {
+        self.config_file = None;
+        self
+    }
+
+    /// Set the credentials URI credential provider slot.
+    pub fn credentials_uri(mut self, provider: CredentialsUriCredentialProvider) -> Self {
+        self.credentials_uri = Some(provider);
+        self
+    }
+
+    /// Remove the credentials URI credential provider slot.
+    pub fn no_credentials_uri(mut self) -> Self {
+        self.credentials_uri = None;
+        self
+    }
+
+    /// Set the ECS RAM role credential provider slot.
+    pub fn ecs_ram_role(mut self, provider: EcsRamRoleCredentialProvider) -> Self {
+        self.ecs_ram_role = Some(provider);
+        self
+    }
+
+    /// Remove the ECS RAM role credential provider slot.
+    pub fn no_ecs_ram_role(mut self) -> Self {
+        self.ecs_ram_role = None;
+        self
+    }
+    /// Set the OIDC credential provider slot.
+    pub fn oidc(mut self, provider: AssumeRoleWithOidcCredentialProvider) -> Self {
+        self.oidc = Some(provider);
+        self
+    }
+
+    /// Remove the OIDC credential provider slot.
+    pub fn no_oidc(mut self) -> Self {
+        self.oidc = None;
         self
     }
 
     /// Build the `DefaultCredentialProvider` with the configured options.
     pub fn build(self) -> DefaultCredentialProvider {
+        let assume_role_base_chain = ProvideCredentialChain::new()
+            .push_opt(self.env.clone())
+            .push_opt(self.oss_profile.clone())
+            .push_opt(self.credentials_file.clone())
+            .push_opt(self.config_file.clone());
         let mut chain = ProvideCredentialChain::new();
+        if let Some(p) = self.assume_role {
+            chain = chain.push(p.with_default_base_provider(assume_role_base_chain));
+        }
         if let Some(p) = self.env {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(EnvCredentialProvider::new());
         }
-        if let Some(p) = self.assume_role {
+        if let Some(p) = self.oss_profile {
             chain = chain.push(p);
-        } else {
-            chain = chain.push(AssumeRoleWithOidcCredentialProvider::new());
+        }
+        if let Some(p) = self.credentials_file {
+            chain = chain.push(p);
+        }
+        if let Some(p) = self.config_file {
+            chain = chain.push(p);
+        }
+        if let Some(p) = self.credentials_uri {
+            chain = chain.push(p);
+        }
+        if let Some(p) = self.ecs_ram_role {
+            chain = chain.push(p);
+        }
+        if let Some(p) = self.oidc {
+            chain = chain.push(p);
         }
         DefaultCredentialProvider::with_chain(chain)
     }
 }
 
-#[async_trait]
+trait PushOptionalProvider {
+    fn push_opt<P>(self, provider: Option<P>) -> Self
+    where
+        P: ProvideCredential<Credential = Credential> + 'static;
+}
+
+impl PushOptionalProvider for ProvideCredentialChain<Credential> {
+    fn push_opt<P>(self, provider: Option<P>) -> Self
+    where
+        P: ProvideCredential<Credential = Credential> + 'static,
+    {
+        match provider {
+            Some(provider) => self.push(provider),
+            None => self,
+        }
+    }
+}
+
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
@@ -161,10 +282,91 @@ impl ProvideCredential for DefaultCredentialProvider {
 mod tests {
     use super::*;
     use crate::constants::*;
-    use reqsign_core::{OsEnv, StaticEnv};
+    use bytes::Bytes;
+    use reqsign_core::{FileRead, HttpSend, OsEnv, StaticEnv};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[derive(Clone, Debug)]
+    struct CountingFileRead {
+        calls: Arc<AtomicUsize>,
+        paths: Arc<HashMap<String, Vec<u8>>>,
+    }
+
+    impl CountingFileRead {
+        fn new(paths: HashMap<String, Vec<u8>>) -> Self {
+            Self {
+                calls: Arc::new(AtomicUsize::new(0)),
+                paths: Arc::new(paths),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    impl FileRead for CountingFileRead {
+        async fn file_read(&self, path: &str) -> reqsign_core::Result<Vec<u8>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.paths.get(path).cloned().ok_or_else(|| {
+                reqsign_core::Error::unexpected(format!("unexpected file path: {path}"))
+            })
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct CountingHttpSend {
+        calls: Arc<AtomicUsize>,
+        requests: Arc<Mutex<Vec<String>>>,
+        responses: Arc<Mutex<VecDeque<Vec<u8>>>>,
+    }
+
+    impl CountingHttpSend {
+        fn new(responses: impl IntoIterator<Item = Vec<u8>>) -> Self {
+            Self {
+                calls: Arc::new(AtomicUsize::new(0)),
+                requests: Arc::new(Mutex::new(Vec::new())),
+                responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+
+        fn requests(&self) -> Vec<String> {
+            self.requests.lock().expect("lock poisoned").clone()
+        }
+    }
+
+    impl HttpSend for CountingHttpSend {
+        async fn http_send(
+            &self,
+            req: http::Request<Bytes>,
+        ) -> reqsign_core::Result<http::Response<Bytes>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.requests
+                .lock()
+                .expect("lock poisoned")
+                .push(req.uri().to_string());
+            let body = self
+                .responses
+                .lock()
+                .expect("lock poisoned")
+                .pop_front()
+                .unwrap_or_default();
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(Bytes::from(body))
+                .expect("response must build"))
+        }
+    }
 
     #[tokio::test]
     async fn test_default_loader_without_env() {
@@ -176,7 +378,10 @@ mod tests {
             .with_env(OsEnv);
         let ctx = ctx.with_env(StaticEnv {
             home_dir: None,
-            envs: HashMap::new(),
+            envs: HashMap::from([(
+                ALIBABA_CLOUD_ECS_METADATA_DISABLED.to_string(),
+                "true".to_string(),
+            )]),
         });
 
         let loader = DefaultCredentialProvider::new();
@@ -246,5 +451,769 @@ mod tests {
         assert_eq!("access_key_id", credential.access_key_id);
         assert_eq!("secret_access_key", credential.access_key_secret);
         assert_eq!("security_token", credential.security_token.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_env_removes_env_provider() {
+        let file_read = CountingFileRead::new(HashMap::from([(
+            "/mock/credentials".to_string(),
+            br#"[default]
+access_key_id = profile_access_key
+access_key_secret = profile_secret_key
+"#
+            .to_vec(),
+        )]));
+        let http_send = CountingHttpSend::new([]);
+        let ctx = Context::new()
+            .with_file_read(file_read.clone())
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_ID.to_string(),
+                        "env_access_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_SECRET.to_string(),
+                        "env_secret_key".to_string(),
+                    ),
+                    (
+                        OSS_CREDENTIAL_PROFILES_FILE.to_string(),
+                        "/mock/credentials".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ECS_METADATA_DISABLED.to_string(),
+                        "true".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!("env_access_key", credential.access_key_id);
+        assert_eq!(0, file_read.calls());
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_env()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!("profile_access_key", credential.access_key_id);
+        assert_eq!("profile_secret_key", credential.access_key_secret);
+        assert_eq!(1, file_read.calls());
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_env()
+            .no_oss_profile()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+        assert!(credential.is_none());
+        assert_eq!(0, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_prefers_profile_over_oidc() {
+        let file_read = CountingFileRead::new(HashMap::from([
+            (
+                "/mock/credentials".to_string(),
+                br#"[default]
+access_key_id = profile_access_key
+access_key_secret = profile_secret_key
+"#
+                .to_vec(),
+            ),
+            ("/mock/token".to_string(), b"token".to_vec()),
+        ]));
+        let http_send = CountingHttpSend::new(
+            [br#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"oidc_secret_key","AccessKeyId":"oidc_access_key"}}"#
+                .to_vec()],
+        );
+        let ctx = Context::new()
+            .with_file_read(file_read.clone())
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        OSS_CREDENTIAL_PROFILES_FILE.to_string(),
+                        "/mock/credentials".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_TOKEN_FILE.to_string(),
+                        "/mock/token".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_PROVIDER_ARN.to_string(),
+                        "acs:ram::123456789012:oidc-provider/test-provider".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!("profile_access_key", credential.access_key_id);
+        assert_eq!("profile_secret_key", credential.access_key_secret);
+        assert_eq!(1, file_read.calls());
+        assert_eq!(0, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_prefers_credentials_file_over_config_file() {
+        let file_read = CountingFileRead::new(HashMap::from([
+            (
+                "/mock/credentials.ini".to_string(),
+                br#"[default]
+enable=true
+type=access_key
+access_key_id=shared_access_key
+access_key_secret=shared_secret_key
+"#
+                .to_vec(),
+            ),
+            (
+                "/mock/config.json".to_string(),
+                br#"{
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "config_access_key",
+      "access_key_secret": "config_secret_key"
+    }
+  ]
+}"#
+                .to_vec(),
+            ),
+        ]));
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_CREDENTIALS_FILE.to_string(),
+                        "/mock/credentials.ini".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_CONFIG_FILE.to_string(),
+                        "/mock/config.json".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_uri()
+            .no_ecs_ram_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("shared_access_key", credential.access_key_id);
+        assert_eq!("shared_secret_key", credential.access_key_secret);
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_credentials_file_removes_credentials_file_provider() {
+        let file_read = CountingFileRead::new(HashMap::from([(
+            "/mock/config.json".to_string(),
+            br#"{
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "config_access_key",
+      "access_key_secret": "config_secret_key"
+    }
+  ]
+}"#
+            .to_vec(),
+        )]));
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([(
+                    ALIBABA_CLOUD_CONFIG_FILE.to_string(),
+                    "/mock/config.json".to_string(),
+                )]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_credentials_uri()
+            .no_ecs_ram_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("config_access_key", credential.access_key_id);
+        assert_eq!("config_secret_key", credential.access_key_secret);
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_config_file_removes_config_file_provider() {
+        let file_read = CountingFileRead::new(HashMap::from([(
+            "/mock/config.json".to_string(),
+            br#"{
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "config_access_key",
+      "access_key_secret": "config_secret_key"
+    }
+  ]
+}"#
+            .to_vec(),
+        )]));
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(ReqwestHttpSend::default())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([(
+                    ALIBABA_CLOUD_CONFIG_FILE.to_string(),
+                    "/mock/config.json".to_string(),
+                )]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_credentials_uri()
+            .no_ecs_ram_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!("config_access_key", credential.access_key_id);
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .no_credentials_uri()
+            .no_ecs_ram_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+        assert!(credential.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_prefers_config_file_over_oidc() {
+        let file_read = CountingFileRead::new(HashMap::from([
+            (
+                "/mock/config.json".to_string(),
+                br#"{
+  "profiles": [
+    {
+      "name": "default",
+      "mode": "AK",
+      "access_key_id": "config_access_key",
+      "access_key_secret": "config_secret_key"
+    }
+  ]
+}"#
+                .to_vec(),
+            ),
+            ("/mock/token".to_string(), b"token".to_vec()),
+        ]));
+        let http_send = CountingHttpSend::new([br#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"oidc_secret_key","AccessKeyId":"oidc_access_key"}}"#.to_vec()]);
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_CONFIG_FILE.to_string(),
+                        "/mock/config.json".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_TOKEN_FILE.to_string(),
+                        "/mock/token".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_PROVIDER_ARN.to_string(),
+                        "acs:ram::123456789012:oidc-provider/test-provider".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("config_access_key", credential.access_key_id);
+        assert_eq!("config_secret_key", credential.access_key_secret);
+        assert_eq!(0, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_prefers_credentials_uri_over_ecs_and_oidc() {
+        let file_read = CountingFileRead::new(HashMap::from([(
+            "/mock/token".to_string(),
+            b"token".to_vec(),
+        )]));
+        let http_send = CountingHttpSend::new([br#"{"Code":"Success","AccessKeyId":"uri_access_key","AccessKeySecret":"uri_secret_key","SecurityToken":"uri_token","Expiration":"2124-05-25T11:45:17Z"}"#.to_vec()]);
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_CREDENTIALS_URI.to_string(),
+                        "http://127.0.0.1/credentials".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ECS_METADATA.to_string(),
+                        "ecs-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ECS_METADATA_SERVICE_ENDPOINT.to_string(),
+                        "http://127.0.0.1".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_TOKEN_FILE.to_string(),
+                        "/mock/token".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_PROVIDER_ARN.to_string(),
+                        "acs:ram::123456789012:oidc-provider/test-provider".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!("uri_access_key", credential.access_key_id);
+        assert_eq!("uri_secret_key", credential.access_key_secret);
+        assert_eq!(1, http_send.calls());
+        assert_eq!(
+            vec!["http://127.0.0.1/credentials".to_string()],
+            http_send.requests()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_prefers_ecs_over_oidc() {
+        let file_read = CountingFileRead::new(HashMap::from([(
+            "/mock/token".to_string(),
+            b"token".to_vec(),
+        )]));
+        let http_send = CountingHttpSend::new([
+            b"metadata-token".to_vec(),
+            br#"{"Code":"Success","AccessKeyId":"ecs_access_key","AccessKeySecret":"ecs_secret_key","SecurityToken":"ecs_token","Expiration":"2124-05-25T11:45:17Z"}"#.to_vec(),
+        ]);
+        let ctx = Context::new()
+            .with_file_read(file_read)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_ECS_METADATA.to_string(),
+                        "ecs-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ECS_METADATA_SERVICE_ENDPOINT.to_string(),
+                        "http://127.0.0.1".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_TOKEN_FILE.to_string(),
+                        "/mock/token".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_PROVIDER_ARN.to_string(),
+                        "acs:ram::123456789012:oidc-provider/test-provider".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!("ecs_access_key", credential.access_key_id);
+        assert_eq!("ecs_secret_key", credential.access_key_secret);
+        assert_eq!(2, http_send.calls());
+        assert_eq!(
+            vec![
+                "http://127.0.0.1/latest/api/token".to_string(),
+                "http://127.0.0.1/latest/meta-data/ram/security-credentials/ecs-role".to_string(),
+            ],
+            http_send.requests()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_credentials_uri_removes_credentials_uri_provider() {
+        let http_send = CountingHttpSend::new([br#"{"Code":"Success","AccessKeyId":"uri_access_key","AccessKeySecret":"uri_secret_key","SecurityToken":"uri_token","Expiration":"2124-05-25T11:45:17Z"}"#.to_vec()]);
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([
+                    (
+                        ALIBABA_CLOUD_CREDENTIALS_URI.to_string(),
+                        "http://127.0.0.1/credentials".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ECS_METADATA_DISABLED.to_string(),
+                        "true".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .no_ecs_ram_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!("uri_access_key", credential.access_key_id);
+        assert_eq!(1, http_send.calls());
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .no_credentials_uri()
+            .no_ecs_ram_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+        assert!(credential.is_none());
+        assert_eq!(1, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_ecs_ram_role_removes_ecs_provider() {
+        let http_send = CountingHttpSend::new([
+            b"metadata-token".to_vec(),
+            br#"{"Code":"Success","AccessKeyId":"ecs_access_key","AccessKeySecret":"ecs_secret_key","SecurityToken":"ecs_token","Expiration":"2124-05-25T11:45:17Z"}"#.to_vec(),
+        ]);
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([
+                    (
+                        ALIBABA_CLOUD_ECS_METADATA.to_string(),
+                        "ecs-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ECS_METADATA_SERVICE_ENDPOINT.to_string(),
+                        "http://127.0.0.1".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .no_credentials_uri()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!("ecs_access_key", credential.access_key_id);
+        assert_eq!(2, http_send.calls());
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .no_credentials_uri()
+            .no_ecs_ram_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+        assert!(credential.is_none());
+        assert_eq!(2, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_oidc_removes_oidc_provider() {
+        let file_read = CountingFileRead::new(HashMap::from([(
+            "/mock/token".to_string(),
+            b"token".to_vec(),
+        )]));
+        let http_send = CountingHttpSend::new(
+            [br#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#
+                .to_vec()],
+        );
+        let ctx = Context::new()
+            .with_file_read(file_read.clone())
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_OIDC_TOKEN_FILE.to_string(),
+                        "/mock/token".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_OIDC_PROVIDER_ARN.to_string(),
+                        "acs:ram::123456789012:oidc-provider/test-provider".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_uri()
+            .no_ecs_ram_role()
+            .oidc(AssumeRoleWithOidcCredentialProvider::new())
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+        assert!(credential.is_some());
+        assert_eq!(1, file_read.calls());
+        assert_eq!(1, http_send.calls());
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_uri()
+            .no_ecs_ram_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+        assert!(credential.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_prefers_assume_role_over_raw_env_credentials() {
+        let http_send = CountingHttpSend::new([
+            br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
+                .to_vec(),
+        ]);
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_ID.to_string(),
+                        "base_access_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_SECRET.to_string(),
+                        "base_secret_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("assumed_access_key", credential.access_key_id);
+        assert_eq!("assumed_secret_key", credential.access_key_secret);
+        assert_eq!(Some("sts_token".to_string()), credential.security_token);
+        assert_eq!(1, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_env_removes_env_from_assume_role_base_chain() {
+        let http_send = CountingHttpSend::new([
+            br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
+                .to_vec(),
+        ]);
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_ID.to_string(),
+                        "base_access_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_SECRET.to_string(),
+                        "base_secret_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_env()
+            .no_oss_profile()
+            .no_credentials_file()
+            .no_config_file()
+            .no_ecs_ram_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+
+        assert!(credential.is_none());
+        assert_eq!(0, http_send.calls());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_assume_role_removes_assume_role_provider() {
+        let http_send = CountingHttpSend::new([
+            br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
+                .to_vec(),
+        ]);
+        let ctx = Context::new()
+            .with_file_read(TokioFileRead)
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from_iter([
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_ID.to_string(),
+                        "base_access_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ACCESS_KEY_SECRET.to_string(),
+                        "base_secret_key".to_string(),
+                    ),
+                    (
+                        ALIBABA_CLOUD_ROLE_ARN.to_string(),
+                        "acs:ram::123456789012:role/test-role".to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = DefaultCredentialProvider::builder()
+            .no_assume_role()
+            .no_oidc()
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!("base_access_key", credential.access_key_id);
+        assert_eq!("base_secret_key", credential.access_key_secret);
+        assert_eq!(0, http_send.calls());
     }
 }

@@ -19,6 +19,8 @@ use reqsign_core::{Result, SigningCredential as KeyTrait, time::Timestamp, utils
 use std::fmt::{self, Debug};
 use std::time::Duration;
 
+const TOKEN_REFRESH_BUFFER: Duration = Duration::from_secs(120);
+
 /// ServiceAccount holds the client email and private key for service account authentication.
 #[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -35,6 +37,12 @@ impl Debug for ServiceAccount {
             .field("client_email", &self.client_email)
             .field("private_key", &Redact::from(&self.private_key))
             .finish()
+    }
+}
+
+impl ServiceAccount {
+    pub(crate) fn is_valid(&self) -> bool {
+        !self.private_key.is_empty() && !self.client_email.is_empty()
     }
 }
 
@@ -100,12 +108,18 @@ pub mod external_account {
     #[derive(Clone, Deserialize, Debug)]
     #[serde(untagged)]
     pub enum Source {
+        /// AWS provider-specific credential source.
+        #[serde(rename_all = "snake_case")]
+        Aws(AwsSource),
         /// URL-based credential source.
         #[serde(rename_all = "snake_case")]
         Url(UrlSource),
         /// File-based credential source.
         #[serde(rename_all = "snake_case")]
         File(FileSource),
+        /// Executable-based credential source.
+        #[serde(rename_all = "snake_case")]
+        Executable(ExecutableSource),
     }
 
     /// Configuration for fetching credentials from a URL.
@@ -114,7 +128,8 @@ pub mod external_account {
     pub struct UrlSource {
         /// The URL to fetch credentials from.
         pub url: String,
-        /// The format of the response.
+        /// The format of the response. Defaults to plain text when omitted.
+        #[serde(default)]
         pub format: Format,
         /// Optional headers to include in the request.
         pub headers: Option<std::collections::HashMap<String, String>>,
@@ -126,12 +141,49 @@ pub mod external_account {
     pub struct FileSource {
         /// The file path to read credentials from.
         pub file: String,
-        /// The format of the file.
+        /// The format of the file. Defaults to plain text when omitted.
+        #[serde(default)]
         pub format: Format,
     }
 
-    /// Format for parsing credentials.
+    /// Configuration for AWS provider-specific workload identity federation.
     #[derive(Clone, Deserialize, Debug)]
+    #[serde(rename_all = "snake_case")]
+    pub struct AwsSource {
+        /// The environment identifier, currently `aws1`.
+        pub environment_id: String,
+        /// Metadata URL used to derive the region when env vars are absent.
+        pub region_url: Option<String>,
+        /// Metadata URL used to retrieve the role name and credentials.
+        pub url: Option<String>,
+        /// Regional GetCallerIdentity verification URL template.
+        pub regional_cred_verification_url: String,
+        /// Optional IMDSv2 token URL.
+        pub imdsv2_session_token_url: Option<String>,
+    }
+
+    /// Configuration for executing a command to load credentials.
+    #[derive(Clone, Deserialize, Debug)]
+    #[serde(rename_all = "snake_case")]
+    pub struct ExecutableSource {
+        /// The executable configuration.
+        pub executable: ExecutableConfig,
+    }
+
+    /// Executable-based credential configuration.
+    #[derive(Clone, Deserialize, Debug)]
+    #[serde(rename_all = "snake_case")]
+    pub struct ExecutableConfig {
+        /// The full command to run.
+        pub command: String,
+        /// Optional timeout in milliseconds.
+        pub timeout_millis: Option<u64>,
+        /// Optional output file used to cache the executable response.
+        pub output_file: Option<String>,
+    }
+
+    /// Format for parsing credentials.
+    #[derive(Clone, Default, Deserialize, Debug)]
     #[serde(tag = "type", rename_all = "snake_case")]
     pub enum Format {
         /// JSON format.
@@ -140,6 +192,7 @@ pub mod external_account {
             subject_token_field_name: String,
         },
         /// Plain text format.
+        #[default]
         Text,
     }
 
@@ -196,40 +249,45 @@ impl Debug for Token {
 
 impl KeyTrait for Token {
     fn is_valid(&self) -> bool {
+        self.is_valid_at(Timestamp::now() + TOKEN_REFRESH_BUFFER)
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
         if self.access_token.is_empty() {
             return false;
         }
 
-        match self.expires_at {
-            Some(expires_at) => {
-                // Consider token invalid if it expires within 2 minutes
-                let buffer = Duration::from_secs(120);
-                Timestamp::now() < expires_at - buffer
-            }
-            None => true, // No expiration means always valid
-        }
+        self.expires_at
+            .is_none_or(|expires_at| expires_at > timestamp)
     }
 }
 
-/// Credential represents Google credentials that may contain both service account and token.
+/// Credential represents Google credentials that may contain a service account, token, and
+/// provider-discovered signer identity.
 ///
 /// **IMPORTANT**: This is a specially designed structure that can hold both ServiceAccount
 /// and Token simultaneously. This design is intentional and critical for Google's authentication:
 ///
 /// - Service account only: Used for signed URL generation and JWT-based authentication
-/// - Token only: Used for Bearer authentication (e.g., from metadata server, OAuth2)  
+/// - Token only: Used for Bearer authentication (e.g., from metadata server, OAuth2)
+/// - Token with signer email: Also supports query signing through IAMCredentials `signBlob`
 /// - Both: The RequestSigner is responsible for exchanging service account for tokens when needed,
 ///   and can use cached tokens when available to avoid unnecessary exchanges
 ///
 /// The RequestSigner implementation handles the logic of when to use which credential type
-/// and when to perform token exchanges. Providers should return credentials as they receive them
-/// without trying to perform exchanges themselves.
+/// and when to perform token exchanges. Discovery providers should return credentials as they
+/// receive them without trying to perform exchanges themselves. Explicit conversion providers may
+/// return a new variant, such as a token-only credential produced from a service account.
 #[derive(Clone, Debug, Default)]
 pub struct Credential {
     /// Service account information, if available.
     pub service_account: Option<ServiceAccount>,
     /// OAuth2 access token, if available.
     pub token: Option<Token>,
+    /// Service account email authorized to sign with the token, if known by the provider.
+    ///
+    /// This identity is used only for query signing and does not affect Bearer authentication.
+    pub signer_email: Option<String>,
 }
 
 impl Credential {
@@ -238,15 +296,25 @@ impl Credential {
         Self {
             service_account: Some(service_account),
             token: None,
+            signer_email: None,
         }
     }
 
-    /// Create a credential with only a token.
+    /// Create a credential with a token.
     pub fn with_token(token: Token) -> Self {
         Self {
             service_account: None,
             token: Some(token),
+            signer_email: None,
         }
+    }
+
+    /// Set the service account email authorized to sign with this credential's token.
+    ///
+    /// This identity is used only for query signing and does not affect Bearer authentication.
+    pub fn with_signer_email(mut self, signer_email: impl Into<String>) -> Self {
+        self.signer_email = Some(signer_email.into());
+        self
     }
 
     /// Check if the credential has a service account.
@@ -265,10 +333,53 @@ impl Credential {
     }
 }
 
+pub(crate) fn parse_service_account_impersonation_url(url: &str) -> Result<String> {
+    let marker = "/serviceAccounts/";
+    let start = url.find(marker).ok_or_else(|| {
+        reqsign_core::Error::config_invalid(format!(
+            "service_account_impersonation_url missing {marker}: {url}"
+        ))
+    })?;
+    let rest = &url[start + marker.len()..];
+    let end = rest.find(':').ok_or_else(|| {
+        reqsign_core::Error::config_invalid(format!(
+            "service_account_impersonation_url missing action separator: {url}"
+        ))
+    })?;
+
+    let email = percent_encoding::percent_decode_str(&rest[..end])
+        .decode_utf8()
+        .map_err(|e| {
+            reqsign_core::Error::config_invalid(
+                "service_account_impersonation_url contains invalid UTF-8 email",
+            )
+            .with_source(e)
+        })?;
+    if email.is_empty() {
+        return Err(reqsign_core::Error::config_invalid(
+            "service_account_impersonation_url resolved empty service account email",
+        ));
+    }
+
+    Ok(email.into_owned())
+}
+
 impl KeyTrait for Credential {
     fn is_valid(&self) -> bool {
-        // A credential is valid if it has a service account or a valid token
-        self.service_account.is_some() || self.has_valid_token()
+        self.service_account
+            .as_ref()
+            .is_some_and(ServiceAccount::is_valid)
+            || self.has_valid_token()
+    }
+
+    fn is_valid_at(&self, timestamp: Timestamp) -> bool {
+        self.service_account
+            .as_ref()
+            .is_some_and(ServiceAccount::is_valid)
+            || self
+                .token
+                .as_ref()
+                .is_some_and(|token| token.is_valid_at(timestamp))
     }
 }
 
@@ -328,6 +439,51 @@ mod tests {
     }
 
     #[test]
+    fn test_external_account_source_explicit_format() {
+        for source in [
+            serde_json::json!({"file": "/path/to/token"}),
+            serde_json::json!({"url": "http://localhost/token"}),
+        ] {
+            for (format, data) in [
+                (serde_json::json!({"type": "text"}), "test-token"),
+                (
+                    serde_json::json!({"type": "json", "subject_token_field_name": "id_token"}),
+                    r#"{"id_token":"test-token"}"#,
+                ),
+            ] {
+                let mut source = source.clone();
+                source["format"] = format;
+                let source: external_account::Source = serde_json::from_value(source).unwrap();
+                let format = match source {
+                    external_account::Source::File(source) => source.format,
+                    external_account::Source::Url(source) => source.format,
+                    _ => panic!("expected file or URL source"),
+                };
+                assert_eq!(format.parse(data.as_bytes()).unwrap(), "test-token");
+            }
+
+            for invalid_format in [
+                serde_json::Value::Null,
+                serde_json::json!({"type": "unsupported"}),
+                serde_json::json!({"type": "json"}),
+            ] {
+                let mut source = source.clone();
+                source["format"] = invalid_format;
+                assert!(serde_json::from_value::<external_account::Source>(source).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_service_account_impersonation_url() {
+        let url = "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/signer%40example.com:generateAccessToken";
+        assert_eq!(
+            parse_service_account_impersonation_url(url).unwrap(),
+            "signer@example.com"
+        );
+    }
+
+    #[test]
     fn test_token_is_valid() {
         let mut token = Token {
             access_token: "test".to_string(),
@@ -342,10 +498,12 @@ mod tests {
         // Token that expires within 2 minutes
         token.expires_at = Some(Timestamp::now() + Duration::from_secs(30));
         assert!(!token.is_valid());
+        assert!(token.is_valid_at(Timestamp::now() + Duration::from_secs(10)));
 
         // Expired token
         token.expires_at = Some(Timestamp::now() - Duration::from_secs(3600));
         assert!(!token.is_valid());
+        assert!(!token.is_valid_at(Timestamp::now()));
 
         // Empty access token
         token.access_token = String::new();
@@ -384,6 +542,79 @@ mod tests {
         let cred = CredentialFile::from_slice(ea_json.as_bytes()).unwrap();
         assert!(matches!(cred, CredentialFile::ExternalAccount(_)));
 
+        let aws_ea_json = r#"{
+            "type": "external_account",
+            "audience": "test_audience",
+            "subject_token_type": "urn:ietf:params:aws:token-type:aws4_request",
+            "token_url": "https://example.com/token",
+            "credential_source": {
+                "environment_id": "aws1",
+                "region_url": "http://169.254.169.254/latest/meta-data/placement/availability-zone",
+                "url": "http://169.254.169.254/latest/meta-data/iam/security-credentials",
+                "regional_cred_verification_url": "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15",
+                "imdsv2_session_token_url": "http://169.254.169.254/latest/api/token"
+            }
+        }"#;
+        let cred = CredentialFile::from_slice(aws_ea_json.as_bytes()).unwrap();
+        match cred {
+            CredentialFile::ExternalAccount(external_account) => match external_account
+                .credential_source
+            {
+                external_account::Source::Aws(source) => {
+                    assert_eq!(source.environment_id, "aws1");
+                    assert_eq!(
+                        source.region_url.as_deref(),
+                        Some("http://169.254.169.254/latest/meta-data/placement/availability-zone")
+                    );
+                    assert_eq!(
+                        source.url.as_deref(),
+                        Some("http://169.254.169.254/latest/meta-data/iam/security-credentials")
+                    );
+                    assert_eq!(
+                        source.regional_cred_verification_url,
+                        "https://sts.{region}.amazonaws.com?Action=GetCallerIdentity&Version=2011-06-15"
+                    );
+                    assert_eq!(
+                        source.imdsv2_session_token_url.as_deref(),
+                        Some("http://169.254.169.254/latest/api/token")
+                    );
+                }
+                _ => panic!("Expected Aws source"),
+            },
+            _ => panic!("Expected ExternalAccount"),
+        }
+
+        let exec_ea_json = r#"{
+            "type": "external_account",
+            "audience": "test_audience",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "token_url": "https://example.com/token",
+            "credential_source": {
+                "executable": {
+                    "command": "/usr/bin/fetch-token --flag",
+                    "timeout_millis": 5000,
+                    "output_file": "/tmp/token-cache.json"
+                }
+            }
+        }"#;
+        let cred = CredentialFile::from_slice(exec_ea_json.as_bytes()).unwrap();
+        match cred {
+            CredentialFile::ExternalAccount(external_account) => {
+                match external_account.credential_source {
+                    external_account::Source::Executable(source) => {
+                        assert_eq!(source.executable.command, "/usr/bin/fetch-token --flag");
+                        assert_eq!(source.executable.timeout_millis, Some(5000));
+                        assert_eq!(
+                            source.executable.output_file.as_deref(),
+                            Some("/tmp/token-cache.json")
+                        );
+                    }
+                    _ => panic!("Expected Executable source"),
+                }
+            }
+            _ => panic!("Expected ExternalAccount"),
+        }
+
         // Test authorized user
         let au_json = r#"{
             "type": "authorized_user",
@@ -413,6 +644,14 @@ mod tests {
         assert!(cred.has_service_account());
         assert!(!cred.has_token());
 
+        // Incomplete service account
+        let cred = Credential::with_service_account(ServiceAccount {
+            client_email: String::new(),
+            private_key: "key".to_string(),
+        });
+        assert!(!cred.is_valid());
+        assert!(!cred.is_valid_at(Timestamp::now()));
+
         // Valid token only
         let cred = Credential::with_token(Token {
             access_token: "test".to_string(),
@@ -422,6 +661,10 @@ mod tests {
         assert!(!cred.has_service_account());
         assert!(cred.has_token());
         assert!(cred.has_valid_token());
+        assert!(cred.signer_email.is_none());
+
+        let cred = cred.with_signer_email("signer@example.com");
+        assert_eq!(cred.signer_email.as_deref(), Some("signer@example.com"));
 
         // Invalid token only
         let cred = Credential::with_token(Token {

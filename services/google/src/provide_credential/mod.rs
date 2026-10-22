@@ -17,7 +17,15 @@
 
 mod default;
 #[allow(unused_imports)]
-pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
+pub use default::{
+    DefaultCredentialProvider, DefaultCredentialProviderBuilder, EnvCredentialProvider,
+    WellKnownCredentialProvider,
+};
+
+mod file;
+pub use file::FileCredentialProvider;
+
+mod parse;
 
 mod vm_metadata;
 pub use vm_metadata::VmMetadataCredentialProvider;
@@ -25,7 +33,18 @@ pub use vm_metadata::VmMetadataCredentialProvider;
 mod static_provider;
 pub use static_provider::StaticCredentialProvider;
 
-// Internal providers - not exported
+mod token;
+pub use token::TokenCredentialProvider;
+
+mod service_account_token;
+pub use service_account_token::ServiceAccountTokenCredentialProvider;
+
+mod oauth;
+
 mod authorized_user;
+pub use authorized_user::AuthorizedUserCredentialProvider;
 mod external_account;
+pub use external_account::{ExternalAccountConfig, ExternalAccountCredentialProvider};
+
+// Internal providers - not exported
 mod impersonated_service_account;

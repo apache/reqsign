@@ -1,4 +1,4 @@
-# reqsign
+# Apache Reqsign
 
 Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services.
 
@@ -14,13 +14,32 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Tencent Cloud**: Cloud Object Storage (COS)
 - **Oracle**: Oracle Cloud services
 
+## Request URI Contract
+
+Requests passed to the built-in signers must already contain a valid, wire-ready URI
+with an authority. Construct the intended path and query structure before signing and
+percent-encode data components exactly once. Structural delimiters such as path `/`
+and query `&` remain literal; delimiter bytes that belong to data must be encoded, such
+as `%2F` for a slash inside one path segment.
+
+Reqsign does not perform general-purpose URI encoding for callers. Existing percent
+escapes, query order, duplicate keys, empty values, and literal `+` characters are part
+of the caller-owned wire representation. Header authentication preserves that URI.
+Query authentication preserves it as a prefix and appends only protocol-encoded
+authentication fields.
+
+`Signer::sign` is atomic with respect to the caller's request head. On error, the
+method, URI, version, headers, and extensions remain unchanged. On success, only the
+URI and headers may change. The `expires_in` argument is a service-specific validity
+input, not a universal switch between header and query authentication.
+
 ## Quick Start
 
 Add `reqsign` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-reqsign = "0.19"
+reqsign = "0.20"
 ```
 
 By default, this includes the `default-context` feature which provides a ready-to-use context implementation using `reqwest` and `tokio`.
@@ -29,7 +48,7 @@ To use specific services only:
 
 ```toml
 [dependencies]
-reqsign = { version = "0.19", default-features = false, features = ["aws", "default-context"] }
+reqsign = { version = "0.20", default-features = false, features = ["aws", "default-context"] }
 ```
 
 ## Examples
@@ -127,6 +146,9 @@ let signer = aws::default_signer("s3", "us-east-1")
     .with_context(my_custom_context);
 ```
 
+For server applications that already hold an OIDC assertion, see
+[Caller-provided subject tokens](../docs/caller-provided-subject-tokens.md).
+
 ### Examples for Other Services
 
 ```rust,ignore
@@ -163,6 +185,7 @@ let signer = oracle::default_signer();
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
 - `google`: Enable Google Cloud support
+- `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
 - `huaweicloud`: Enable Huawei Cloud OBS support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support
@@ -178,6 +201,6 @@ This crate supports WebAssembly (WASM) targets. However, the `default-context` f
 Example for WASM:
 ```toml
 [dependencies]
-reqsign = { version = "0.19", default-features = false, features = ["aws"] }
-reqsign-http-send-reqwest = "3"
+reqsign = { version = "0.20", default-features = false, features = ["aws"] }
+reqsign-http-send-reqwest = "4"
 ```

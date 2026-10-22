@@ -15,14 +15,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{Context, Result};
+use crate::time::Timestamp;
+use crate::{BoxedFuture, Context, MaybeSend, Result};
 use std::fmt::Debug;
+use std::future::Future;
+use std::ops::Deref;
 use std::time::Duration;
 
-/// SigningCredential is the trait used by signer as the signing credential.
+/// A credential that can distinguish cache freshness from exact usability.
+///
+/// Both checks must reject credentials that lack fields required for authentication.
 pub trait SigningCredential: Clone + Debug + Send + Sync + Unpin + 'static {
-    /// Check if the signing credential is valid.
+    /// Return whether a cached credential can be reused without refreshing it.
+    ///
+    /// Implementations may include a proactive refresh window in this check.
     fn is_valid(&self) -> bool;
+
+    /// Return whether the credential is usable at this exact timestamp.
+    ///
+    /// Implementations with an expiration time should not add a refresh or
+    /// operation-specific buffer here. The default preserves the behavior of
+    /// implementations that only provide [`SigningCredential::is_valid`].
+    fn is_valid_at(&self, _ts: Timestamp) -> bool {
+        self.is_valid()
+    }
 }
 
 impl<T: SigningCredential> SigningCredential for Option<T> {
@@ -33,13 +49,20 @@ impl<T: SigningCredential> SigningCredential for Option<T> {
 
         ctx.is_valid()
     }
+
+    fn is_valid_at(&self, ts: Timestamp) -> bool {
+        let Some(ctx) = self else {
+            return false;
+        };
+
+        ctx.is_valid_at(ts)
+    }
 }
 
 /// ProvideCredential is the trait used by signer to load the credential from the environment.
 ///`
 /// Service may require different credential to sign the request, for example, AWS require
 /// access key and secret key, while Google Cloud Storage require token.
-#[async_trait::async_trait]
 pub trait ProvideCredential: Debug + Send + Sync + Unpin + 'static {
     /// Credential returned by this loader.
     ///
@@ -47,37 +70,303 @@ pub trait ProvideCredential: Debug + Send + Sync + Unpin + 'static {
     type Credential: Send + Sync + Unpin + 'static;
 
     /// Load signing credential from current env.
-    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>>;
+    fn provide_credential(
+        &self,
+        ctx: &Context,
+    ) -> impl Future<Output = Result<Option<Self::Credential>>> + MaybeSend;
 }
 
-/// SignRequest is the trait used by signer to build the signing request.
-#[async_trait::async_trait]
+/// ProvideCredentialDyn is the dyn version of [`ProvideCredential`].
+pub trait ProvideCredentialDyn: Debug + Send + Sync + Unpin + 'static {
+    /// Credential returned by this loader.
+    type Credential: Send + Sync + Unpin + 'static;
+
+    /// Dyn version of [`ProvideCredential::provide_credential`].
+    fn provide_credential_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+    ) -> BoxedFuture<'a, Result<Option<Self::Credential>>>;
+}
+
+impl<T> ProvideCredentialDyn for T
+where
+    T: ProvideCredential + ?Sized,
+{
+    type Credential = T::Credential;
+
+    fn provide_credential_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+    ) -> BoxedFuture<'a, Result<Option<Self::Credential>>> {
+        Box::pin(self.provide_credential(ctx))
+    }
+}
+
+impl<T> ProvideCredential for std::sync::Arc<T>
+where
+    T: ProvideCredentialDyn + ?Sized,
+{
+    type Credential = T::Credential;
+
+    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+        self.deref().provide_credential_dyn(ctx).await
+    }
+}
+
+/// Service-specific credential granting.
+///
+/// A granter uses an existing service credential to authorize one bounded,
+/// expiring credential transition. The source and result remain in the same
+/// service credential family, while the concrete implementation owns the
+/// service-specific resource, permission, policy, and identity semantics.
+///
+/// This trait standardizes orchestration and lifecycle, not a cross-service
+/// scope model, and does not promise that every service can express strict
+/// monotonic downscoping. Implementations must validate the concrete source
+/// credential variant before performing I/O. Returned credentials must own
+/// credential material that is independent from the source credential and
+/// must not retain or share its secret buffers. Implementations must also keep
+/// secrets out of [`Debug`] output and returned errors.
+pub trait GrantCredential: Debug + Send + Sync + Unpin + 'static {
+    /// Credential used as the source and returned as the granted result.
+    type Credential: SigningCredential;
+
+    /// Return the timestamp through which the source credential must remain usable.
+    ///
+    /// This method must not perform I/O or mutate state. It must conservatively
+    /// include any service I/O headroom unless current service-specific cache
+    /// state proves that the operation can complete without that I/O.
+    fn required_valid_until(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp;
+
+    /// Grant a bounded, expiring credential from an existing service credential.
+    ///
+    /// `expires_in` is a service-specific requested lifetime. `None` does not
+    /// mean that the returned credential may be non-expiring. After all I/O,
+    /// the implementation must ensure that the returned credential remains
+    /// exactly usable at the actual completion time and carries or reliably
+    /// derives its absolute expiration.
+    fn grant_credential<'a>(
+        &'a self,
+        ctx: &'a Context,
+        credential: &'a Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> impl Future<Output = Result<Self::Credential>> + MaybeSend + 'a;
+}
+
+/// Dyn version of [`GrantCredential`].
+pub trait GrantCredentialDyn: Debug + Send + Sync + Unpin + 'static {
+    /// Credential used as the source and returned as the granted result.
+    type Credential: SigningCredential;
+
+    /// Dyn version of [`GrantCredential::required_valid_until`].
+    fn required_valid_until_dyn(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp;
+
+    /// Dyn version of [`GrantCredential::grant_credential`].
+    fn grant_credential_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+        credential: &'a Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> BoxedFuture<'a, Result<Self::Credential>>;
+}
+
+impl<T> GrantCredentialDyn for T
+where
+    T: GrantCredential + ?Sized,
+{
+    type Credential = T::Credential;
+
+    fn required_valid_until_dyn(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.required_valid_until(credential, expires_in)
+    }
+
+    fn grant_credential_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+        credential: &'a Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> BoxedFuture<'a, Result<Self::Credential>> {
+        Box::pin(self.grant_credential(ctx, credential, expires_in))
+    }
+}
+
+impl<T> GrantCredential for std::sync::Arc<T>
+where
+    T: GrantCredentialDyn + ?Sized,
+{
+    type Credential = T::Credential;
+
+    fn required_valid_until(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.deref()
+            .required_valid_until_dyn(credential, expires_in)
+    }
+
+    async fn grant_credential(
+        &self,
+        ctx: &Context,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Result<Self::Credential> {
+        self.deref()
+            .grant_credential_dyn(ctx, credential, expires_in)
+            .await
+    }
+}
+
+/// Service-specific request signing.
+///
+/// Implementations receive a request URI that is already percent-encoded and ready
+/// for transport. They must derive canonical paths, queries, and headers as local
+/// views without normalizing or rebuilding the existing wire URI.
+///
+/// Header authentication must preserve the URI. Query authentication must preserve
+/// the existing URI representation and append only protocol-encoded authentication
+/// fields. In particular, existing percent escapes, parameter order, duplicate keys,
+/// empty values, and literal `+` characters are caller-owned wire data.
 pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
     /// Credential used by this builder.
     ///
     /// Typically, it will be a credential.
     type Credential: Send + Sync + Unpin + 'static;
 
-    /// Construct the signing request.
+    /// Return the timestamp through which the credential must remain usable
+    /// for the requested signing operation.
+    ///
+    /// Implementations own the signing clock, the service-specific meaning of
+    /// `expires_in`, and any transport, RPC, or artifact-lifetime headroom. This
+    /// method must not perform I/O or mutate state. When a deadline depends on an
+    /// artifact's signing time, [`SignRequest::sign_request`] must derive both the
+    /// deadline check and the artifact from the same captured timestamp.
+    fn required_valid_until(
+        &self,
+        _credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        Timestamp::now() + expires_in.unwrap_or_default()
+    }
+
+    /// Sign a request head.
+    ///
+    /// On `Err`, an implementation must leave the entire request head unchanged. On
+    /// `Ok`, it may change only `req.uri` and `req.headers`; the method, version, and
+    /// extensions remain caller-owned. [`crate::Signer`] enforces this commit boundary
+    /// when it invokes the implementation, but implementations must also uphold it for
+    /// callers that invoke this method directly.
     ///
     /// ## Credential
     ///
     /// The `credential` parameter is the credential required by the signer to sign the request.
+    /// Implementations with expiring credentials must validate it against
+    /// [`SignRequest::required_valid_until`] before mutating the request or performing
+    /// external signing calls. [`crate::Signer`] performs the same validation before
+    /// invoking this method, while direct callers rely on the implementation.
     ///
     /// ## Expires In
     ///
-    /// The `expires_in` parameter specifies the expiration time for the result.
-    /// If the signer does not support expiration, it should return an error.
-    ///
-    /// Implementation details determine how to handle the expiration logic. For instance,
-    /// AWS uses a query string that includes an `Expires` parameter.
+    /// The `expires_in` parameter requests a validity duration when the service supports
+    /// one. It is not a universal header-versus-query mode selector. Each service and
+    /// credential type defines whether the value selects presigning, configures an
+    /// expiration, is ignored, or is rejected.
+    fn sign_request<'a>(
+        &'a self,
+        ctx: &'a Context,
+        req: &'a mut http::request::Parts,
+        credential: Option<&'a Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> impl Future<Output = Result<()>> + MaybeSend + 'a;
+}
+
+/// SignRequestDyn is the dyn version of [`SignRequest`].
+pub trait SignRequestDyn: Debug + Send + Sync + Unpin + 'static {
+    /// Credential used by this builder.
+    type Credential: Send + Sync + Unpin + 'static;
+
+    /// Dyn version of [`SignRequest::required_valid_until`].
+    fn required_valid_until_dyn(
+        &self,
+        _credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        Timestamp::now() + expires_in.unwrap_or_default()
+    }
+
+    /// Dyn version of [`SignRequest::sign_request`].
+    fn sign_request_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+        req: &'a mut http::request::Parts,
+        credential: Option<&'a Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> BoxedFuture<'a, Result<()>>;
+}
+
+impl<T> SignRequestDyn for T
+where
+    T: SignRequest + ?Sized,
+{
+    type Credential = T::Credential;
+
+    fn required_valid_until_dyn(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.required_valid_until(credential, expires_in)
+    }
+
+    fn sign_request_dyn<'a>(
+        &'a self,
+        ctx: &'a Context,
+        req: &'a mut http::request::Parts,
+        credential: Option<&'a Self::Credential>,
+        expires_in: Option<Duration>,
+    ) -> BoxedFuture<'a, Result<()>> {
+        Box::pin(self.sign_request(ctx, req, credential, expires_in))
+    }
+}
+
+impl<T> SignRequest for std::sync::Arc<T>
+where
+    T: SignRequestDyn + ?Sized,
+{
+    type Credential = T::Credential;
+
+    fn required_valid_until(
+        &self,
+        credential: &Self::Credential,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        self.deref()
+            .required_valid_until_dyn(credential, expires_in)
+    }
+
     async fn sign_request(
         &self,
         ctx: &Context,
         req: &mut http::request::Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        self.deref()
+            .sign_request_dyn(ctx, req, credential, expires_in)
+            .await
+    }
 }
 
 /// A chain of credential providers that will be tried in order.
@@ -90,7 +379,6 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
 ///
 /// ```no_run
 /// use reqsign_core::{ProvideCredentialChain, Context, ProvideCredential, Result};
-/// use async_trait::async_trait;
 ///
 /// #[derive(Debug)]
 /// struct MyCredential {
@@ -100,7 +388,6 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
 /// #[derive(Debug)]
 /// struct EnvironmentProvider;
 ///
-/// #[async_trait]
 /// impl ProvideCredential for EnvironmentProvider {
 ///     type Credential = MyCredential;
 ///
@@ -118,7 +405,7 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
 /// # }
 /// ```
 pub struct ProvideCredentialChain<C> {
-    providers: Vec<Box<dyn ProvideCredential<Credential = C>>>,
+    providers: Vec<Box<dyn ProvideCredentialDyn<Credential = C>>>,
 }
 
 impl<C> ProvideCredentialChain<C>
@@ -150,7 +437,7 @@ where
     }
 
     /// Create a credential provider chain from a vector of providers.
-    pub fn from_vec(providers: Vec<Box<dyn ProvideCredential<Credential = C>>>) -> Self {
+    pub fn from_vec(providers: Vec<Box<dyn ProvideCredentialDyn<Credential = C>>>) -> Self {
         Self { providers }
     }
 
@@ -185,7 +472,6 @@ where
     }
 }
 
-#[async_trait::async_trait]
 impl<C> ProvideCredential for ProvideCredentialChain<C>
 where
     C: Send + Sync + Unpin + 'static,
@@ -196,7 +482,7 @@ where
         for provider in &self.providers {
             log::debug!("Trying credential provider: {provider:?}");
 
-            match provider.provide_credential(ctx).await {
+            match provider.provide_credential_dyn(ctx).await {
                 Ok(Some(cred)) => {
                     log::debug!("Successfully loaded credential from provider: {provider:?}");
                     return Ok(Some(cred));
@@ -214,5 +500,37 @@ where
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Debug)]
+    struct ExactCredential {
+        valid_at: Timestamp,
+    }
+
+    impl SigningCredential for ExactCredential {
+        fn is_valid(&self) -> bool {
+            false
+        }
+
+        fn is_valid_at(&self, timestamp: Timestamp) -> bool {
+            self.valid_at == timestamp
+        }
+    }
+
+    #[test]
+    fn option_forwards_exact_validity_check() {
+        let timestamp = Timestamp::from_second(42).expect("timestamp must be valid");
+        let credential = Some(ExactCredential {
+            valid_at: timestamp,
+        });
+
+        assert!(credential.is_valid_at(timestamp));
+        assert!(!credential.is_valid_at(timestamp + Duration::from_secs(1)));
+        assert!(!None::<ExactCredential>.is_valid_at(timestamp));
     }
 }

@@ -97,6 +97,20 @@
 //! let loader = DefaultCredentialProvider::new();
 //! ```
 //!
+//! Customize the default chain with slot-based builder APIs:
+//!
+//! ```no_run
+//! use reqsign_azure_storage::{
+//!     ClientSecretCredentialProvider, DefaultCredentialProvider,
+//! };
+//!
+//! let loader = DefaultCredentialProvider::builder()
+//!     .no_env()
+//!     .client_secret(ClientSecretCredentialProvider::new().with_tenant_id("tenant-id"))
+//!     .no_imds()
+//!     .build();
+//! ```
+//!
 //! ## Storage Services
 //!
 //! ### Blob Storage
@@ -159,11 +173,19 @@
 mod constants;
 mod service_sas;
 mod user_delegation;
+mod user_delegation_sas;
 
 mod credential;
 pub use credential::Credential;
 
-pub use service_sas::{ServiceSasResource, ServiceSharedAccessSignature};
+pub use service_sas::{
+    SasIpRange, ServiceSasBlobPermissions, ServiceSasConfig, ServiceSasContainerPermissions,
+    ServiceSasGrant, ServiceSasGranter, ServiceSasResource, ServiceSasVersion,
+    ServiceSharedAccessSignature,
+};
+pub use user_delegation_sas::{
+    SasProtocol, UserDelegationSasGrant, UserDelegationSasGranter, UserDelegationSasPermissions,
+};
 
 mod sign_request;
 pub use sign_request::RequestSigner;

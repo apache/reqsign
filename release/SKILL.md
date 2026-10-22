@@ -1,0 +1,332 @@
+---
+name: reqsign-release
+description: Release Apache Reqsign through the Apache RC, vote, dist, tag, crates.io, and announcement flow.
+---
+
+# Apache Reqsign Release Skill
+
+Use this skill when preparing or executing an Apache Reqsign release.
+
+## Hard Rules
+
+- Do not push the formal `vX.Y.Z` tag before the Apache vote passes.
+- The voted release candidate tag is `vX.Y.Z-rc.N`; it must be a signed tag.
+- The formal `vX.Y.Z` tag must point to the exact same commit as the voted RC tag, even if `main` has advanced after the vote started.
+- Every crate in the current publish plan must exist with the exact `apache/reqsign`, `release.yml`, `release` Trusted Publisher and `trustpub_only` enabled before creating the RC tag.
+- The repo release workflow publishes only formal `vX.Y.Z` tags. It uses short-lived GitHub OIDC credentials and never a long-lived crates.io token.
+- Source release artifacts live under Apache dist:
+  - RC: `https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/`
+  - Final: `https://dist.apache.org/repos/dist/release/reqsign/reqsign-X.Y.Z/`
+- If a wrong formal tag is pushed early, immediately cancel the Release workflow, delete the remote tag, and verify crates.io did not publish anything.
+
+## Release Preparation
+
+1. Sync live state.
+
+   ```bash
+   git fetch origin main --tags
+   git status --short --branch
+   git tag --list 'vX.Y.Z*' --sort=version:refname
+   git ls-remote --tags origin 'refs/tags/vX.Y.Z*'
+   svn ls https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/ || true
+   svn ls https://dist.apache.org/repos/dist/release/reqsign/reqsign-X.Y.Z/ || true
+   ```
+
+2. Prepare version bump on a PR.
+
+   Typical version policy:
+
+   - `reqsign`: patch bump, for example `0.20.0 -> 0.20.1`.
+   - Crate with new public capability: minor bump, for example `reqsign-aliyun-oss 3.0.0 -> 3.1.0`.
+   - Other workspace crates published in the same workspace release: patch bump.
+   - Keep root `[workspace.dependencies]` version requirements aligned with each crate manifest.
+
+3. Validate the publish plan and packages.
+
+   ```bash
+   python3 -m unittest discover \
+     -s .github/scripts/release_rust \
+     -p "test_*.py"
+   python3 .github/scripts/release_rust/plan.py
+   cargo publish --workspace --dry-run --allow-dirty
+   ```
+
+4. Merge the version bump PR into `main`.
+
+   Do not create the RC tag from an unmerged side branch unless the release manager explicitly accepts that the voted commit will not be on `main`.
+
+## Bootstrap Rust Crates
+
+Wait until the intended crate-name set is present on the
+`apache/reqsign` `main` branch. The release manager chooses the exact
+reservation time, normally about three days before the planned release. At that
+time, check out the current `main` commit and run:
+
+```bash
+release/scripts/bootstrap-rust-crates.sh
+```
+
+This command performs the transition to a bootstrapped publish plan. Run it
+without asking for a second confirmation after a PMC release manager explicitly
+chooses the reservation time. Do not run it for release status checks or dry-run
+planning. Publishing a `0.0.0` package is externally visible and irreversible,
+but it is a namespace reservation rather than an ASF software release.
+
+The helper:
+
+- Requires a clean checkout at the current `apache/reqsign` `main`.
+- Verifies that the `rust-bootstrap` environment has required reviewers.
+- Dispatches the input-free `bootstrap_rust_crates.yml` workflow.
+- Resolves the exact run, verifies its `headSha`, and waits for completion.
+- Blocks while the protected environment awaits PMC approval.
+- Verifies publicly that every crate in the checked publish plan exists and has
+  `trustpub_only` enabled.
+
+The protected job authenticates ownership and audits the complete publish plan
+before any write. Established crates must already have exactly one Trusted
+Publisher with:
+
+- Repository owner: `apache`
+- Repository name: `reqsign`
+- Workflow filename: `release.yml`
+- Environment: `release`
+
+The job never changes an established crate. Migrate those crates through
+crates.io before using the bootstrap workflow and enable `trustpub_only` on
+each. For a missing name, the workflow publishes a dependency-free `0.0.0`
+placeholder, creates the expected Trusted Publisher, enables `trustpub_only`,
+and reconciles partial placeholders on rerun.
+
+ASF Infrastructure provisions the `release` and `rust-bootstrap` environments
+from `.asf.yaml`. A PMC release manager must add
+`CARGO_REGISTRY_BOOTSTRAP_TOKEN` to the `rust-bootstrap` environment. The token
+must have only the `publish-new` and `trusted-publishing` endpoint scopes, with
+crate scopes restricted to reqsign package names. Never expose it to the normal
+release workflow.
+
+Run the helper again if the publish plan gains another crate after a successful
+bootstrap.
+
+## Create RC Tag
+
+Create the RC tag from the merged version-bump commit on `main`.
+
+Before tagging, confirm that the bootstrap workflow succeeded for the current
+publish plan and that no later commit added another crate.
+
+```bash
+git fetch origin main --tags
+git switch --detach origin/main
+git tag -s vX.Y.Z-rc.N -m "vX.Y.Z-rc.N"
+git tag -v vX.Y.Z-rc.N
+git push origin vX.Y.Z-rc.N
+```
+
+The RC tag should not trigger the formal publish workflow.
+
+## Build Source Artifact
+
+Create the Apache source artifact from the RC tag.
+
+```bash
+rm -rf /tmp/reqsign-release-X.Y.Z
+mkdir -p /tmp/reqsign-release-X.Y.Z/dist
+
+git archive \
+  --format=tar.gz \
+  --prefix=apache-reqsign-X.Y.Z/ \
+  -o /tmp/reqsign-release-X.Y.Z/dist/apache-reqsign-X.Y.Z.tar.gz \
+  vX.Y.Z-rc.N
+
+cd /tmp/reqsign-release-X.Y.Z/dist
+gpg --armor --detach-sign apache-reqsign-X.Y.Z.tar.gz
+shasum -a 512 apache-reqsign-X.Y.Z.tar.gz > apache-reqsign-X.Y.Z.tar.gz.sha512
+
+gpg --verify apache-reqsign-X.Y.Z.tar.gz.asc apache-reqsign-X.Y.Z.tar.gz
+shasum -a 512 -c apache-reqsign-X.Y.Z.tar.gz.sha512
+tar -tzf apache-reqsign-X.Y.Z.tar.gz | rg '(^|/)LICENSE$|(^|/)NOTICE$|(^|/)Cargo.toml$'
+```
+
+Confirm the signing key is present in Apache Reqsign KEYS:
+
+```bash
+svn cat https://dist.apache.org/repos/dist/release/reqsign/KEYS | rg 'xuanwo@apache.org|Xuanwo|KEY_FINGERPRINT'
+```
+
+## Upload RC Artifacts
+
+Upload to Apache dev dist.
+
+```bash
+rm -rf /tmp/reqsign-dist-dev-X.Y.Z
+svn co --depth=empty https://dist.apache.org/repos/dist/dev/reqsign /tmp/reqsign-dist-dev-X.Y.Z
+
+cd /tmp/reqsign-dist-dev-X.Y.Z
+mkdir reqsign-X.Y.Z
+cp /tmp/reqsign-release-X.Y.Z/dist/* reqsign-X.Y.Z/
+svn add reqsign-X.Y.Z
+svn status
+svn commit --force-interactive -m "Prepare reqsign X.Y.Z release candidate"
+```
+
+Verify the remote copy:
+
+```bash
+svn ls https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/
+rm -rf /tmp/reqsign-verify-X.Y.Z
+svn co https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z /tmp/reqsign-verify-X.Y.Z
+cd /tmp/reqsign-verify-X.Y.Z
+shasum -a 512 -c apache-reqsign-X.Y.Z.tar.gz.sha512
+gpg --verify apache-reqsign-X.Y.Z.tar.gz.asc apache-reqsign-X.Y.Z.tar.gz
+```
+
+## Start Vote
+
+Create a GitHub Discussion in `apache/reqsign` General. Confirm that the vote is
+forwarded to `dev@reqsign.apache.org` and that the mailing-list thread is linked
+from the Discussion before counting the voting period.
+
+Title:
+
+```text
+[VOTE] Release Apache Reqsign X.Y.Z - Vote Round 1
+```
+
+Body:
+
+```text
+Hello, Apache Reqsign Community,
+
+This is a call for a vote to release Apache Reqsign version X.Y.Z.
+
+The release candidate:
+
+https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/
+
+Keys to verify the release candidate:
+
+https://downloads.apache.org/reqsign/KEYS
+
+Git tag for the release candidate:
+
+https://github.com/apache/reqsign/releases/tag/vX.Y.Z-rc.N
+
+The tag points to commit:
+
+COMMIT_SHA
+
+Please download, verify, and test.
+
+The VOTE will be open for at least 72 hours and until the necessary number of votes are reached.
+
+- [ ] +1 approve
+- [ ] +0 no opinion
+- [ ] -1 disapprove with the reason
+
+Checklist for reference:
+
+- [ ] Download links are valid.
+- [ ] Checksums and signatures are valid.
+- [ ] LICENSE/NOTICE files exist.
+- [ ] No unexpected binary files.
+- [ ] All source files have ASF headers.
+- [ ] Can compile from source.
+
+Thanks,
+NAME
+```
+
+## After Vote Passes
+
+1. Verify vote state.
+
+   Confirm at least three binding `+1` votes from Reqsign PMC members and no blocking `-1` votes.
+
+2. Publish vote result.
+
+   Create a GitHub Discussion in General.
+
+   Title:
+
+   ```text
+   [RESULT][VOTE] Release Apache Reqsign X.Y.Z - Vote Round 1
+   ```
+
+   Body:
+
+   ```text
+   Hello, Apache Reqsign Community,
+
+   The vote to release Apache Reqsign X.Y.Z has passed.
+
+   The vote PASSED with N +1 binding votes, no +0 or -1 votes.
+
+   Binding votes:
+
+   - VOTER_1
+   - VOTER_2
+   - VOTER_3
+
+   Vote thread: VOTE_THREAD_URL
+
+   Thanks,
+   NAME
+   ```
+
+3. Push the formal signed tag.
+
+   Use the exact voted RC commit.
+
+   ```bash
+   git checkout vX.Y.Z-rc.N
+   test "$(git rev-parse vX.Y.Z-rc.N^{})" = "COMMIT_SHA"
+   git tag -s vX.Y.Z -m "vX.Y.Z"
+   git tag -v vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+4. Move ASF artifacts from dev to release.
+
+   ```bash
+   svn mv --force-interactive \
+     https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z \
+     https://dist.apache.org/repos/dist/release/reqsign/reqsign-X.Y.Z \
+     -m "Release reqsign X.Y.Z"
+   ```
+
+5. Monitor the GitHub Release workflow.
+
+   ```bash
+   gh run list --repo apache/reqsign --workflow Release --limit 5
+   gh run view RUN_ID --repo apache/reqsign --json status,conclusion,url,jobs
+   ```
+
+   The workflow validates the complete workspace package set, then publishes
+   crates in dependency order. Every package attempt receives a new
+   OIDC-derived crates.io token that is revoked immediately afterward. Reruns
+   skip versions already published by an earlier partial run.
+
+6. Verify crates.io versions.
+
+   ```bash
+   for c in \
+     reqsign reqsign-core reqsign-aliyun-oss reqsign-aws-core reqsign-aws-v4 \
+     reqsign-aws-v4a reqsign-azure-storage \
+     reqsign-command-execute-tokio reqsign-file-read-tokio reqsign-google \
+     reqsign-http-send-reqwest reqsign-huaweicloud-obs reqsign-oracle \
+     reqsign-tencent-cos reqsign-volcengine-tos
+   do
+     cargo info "$c" --registry crates-io | sed -n '1,4p'
+   done
+   ```
+
+7. Create a GitHub Release.
+
+   Use the formal tag and include source artifact links, notable changes, and crate versions.
+
+## Recovery Notes
+
+- If `main` advances after the vote starts, formal `vX.Y.Z` still points to the RC commit, not latest `origin/main`.
+- If SVN authentication fails, retry with `--force-interactive`; run `svn cleanup` if a killed commit leaves the working copy locked.
+- If crates.io publishing fails after some packages succeed, rerun the exact formal-tag workflow. Do not create another tag or use a long-lived token; the publisher resumes after matching already-published versions.
+- If the bootstrap workflow fails, inspect the authenticated preflight first. It deliberately refuses to modify established crates or continue with unexpected repository or Trusted Publisher metadata.

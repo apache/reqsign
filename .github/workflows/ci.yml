@@ -29,11 +29,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Format
         run: cargo fmt --all -- --check
 
@@ -46,9 +50,15 @@ jobs:
     env:
       FORCE_COLOR: 1
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Hawkeye
+        uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: hawkeye@7.0.0
       - name: Check license headers
-        uses: korandoru/hawkeye@v6
+        run: hawkeye check
 
   build:
     runs-on: ${{ matrix.os }}
@@ -59,42 +69,67 @@ jobs:
           - macos-latest
           - windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build
         run: cargo build --workspace
 
-  # gcs has jsonwebtoken which doesn't support wasm
+  # Keep the facade wasm build focused on services with supported wasm signing paths.
   build_under_wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,azure,aliyun,tencent
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent
+
+  # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
+  wasm_compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check -p reqsign-core --target wasm32-unknown-unknown
+          cargo check -p reqsign-aws-core --target wasm32-unknown-unknown
+          cargo check -p reqsign-aws-v4a --target wasm32-unknown-unknown
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,aws,aws-v4a,azure,aliyun,tencent
 
   unit:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Test
         run: cargo test --no-fail-fast
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
       - name: Doc Test
-        run: cargo test --doc --all-features --workspace
+        run: cargo +nightly test --doc --all-features --workspace
         env:
+          RUSTDOCFLAGS: --cfg docsrs
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
 
   wasm_tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install wasm-bindgen-cli
         run: |
           WASM_BINDGEN_VERSION=$(

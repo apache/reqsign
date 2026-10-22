@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-google"
-version = "2.0.2"
+version = "3.2.0"
 
 description = "Google Cloud Platform signing implementation for reqsign."
 
@@ -26,26 +26,45 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+credential-access-boundary-client-side = [
+  "dep:aes-gcm",
+  "dep:asyncband",
+  "dep:base64",
+  "dep:prost",
+  "dep:zeroize",
+]
+default = []
+
 [dependencies]
-async-trait = { workspace = true }
+aes-gcm = { workspace = true, features = ["zeroize"], optional = true }
+asyncband = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
+bytes = { workspace = true }
 form_urlencoded = { workspace = true }
 http = { workspace = true }
-jsonwebtoken = "9.2"
 log = { workspace = true }
 percent-encoding = { workspace = true }
-rand = { workspace = true }
+prost = { workspace = true, optional = true }
+reqsign-aws-v4 = { workspace = true }
 reqsign-core = { workspace = true }
 rsa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+zeroize = { workspace = true, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqsign-core = { workspace = true, features = ["jwt"] }
 
 [dev-dependencies]
-bytes = { workspace = true }
+asyncband = { workspace = true, features = ["semaphore"] }
 dotenvy = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 reqwest = { workspace = true, features = ["default-tls"] }
-sha2 = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

@@ -1,9 +1,9 @@
-# Apache OpenDAL Reqsign
+# Apache Reqsign
 
 [![Build Status]][actions] [![Latest Version]][crates.io] [![Crate Downloads]][crates.io]
 
-[Build Status]: https://img.shields.io/github/actions/workflow/status/apache/opendal-reqsign/ci.yml?branch=main
-[actions]: https://github.com/apache/opendal-reqsign/actions?query=branch%3Amain
+[Build Status]: https://img.shields.io/github/actions/workflow/status/apache/reqsign/ci.yml?branch=main
+[actions]: https://github.com/apache/reqsign/actions?query=branch%3Amain
 [Latest Version]: https://img.shields.io/crates/v/reqsign.svg
 [crates.io]: https://crates.io/crates/reqsign
 [Crate Downloads]: https://img.shields.io/crates/d/reqsign.svg
@@ -112,7 +112,20 @@ let signer = aws::default_signer("s3", "us-east-1")
     ));
 ```
 
+For server applications that already hold an OIDC assertion, see
+[Caller-provided subject tokens](docs/caller-provided-subject-tokens.md).
+
 ### More Services Examples
+
+#### AWS SigV4a
+
+```rust
+use reqsign::aws::v4a::{SigningRegionSet, default_signer};
+
+let region_set = SigningRegionSet::new("us-east-1,us-west-2")?;
+let signer = default_signer("s3", region_set);
+# Ok::<(), reqsign_core::Error>(())
+```
 
 #### Azure Storage
 
@@ -155,7 +168,9 @@ let signer = aliyun::default_signer();
 - Test again official SDK and services.
 - Supported services
   - Aliyun OSS: `reqsign-aliyun-oss`
+  - AWS shared credentials and canonicalization: `reqsign-aws-core`
   - AWS services (SigV4): `reqsign-aws-v4`
+  - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
@@ -168,7 +183,9 @@ Check out the [CONTRIBUTING.md](CONTRIBUTING.md) guide for more details on getti
 
 ## Getting help
 
-Submit [issues](https://github.com/apache/opendal-reqsign/issues/new/choose) for bug report or asking questions in [discussion](https://github.com/apache/opendal-reqsign/discussions/new?category=q-a).
+Submit [issues](https://github.com/apache/reqsign/issues/new/choose) for bug report or asking questions in [discussion](https://github.com/apache/reqsign/discussions/new?category=q-a).
+
+Join the [development mailing list](mailto:dev@reqsign.apache.org) for project discussions and release votes. [Subscribe](mailto:dev-subscribe@reqsign.apache.org) before posting, or browse the [archives](https://lists.apache.org/list.html?dev@reqsign.apache.org).
 
 ## Acknowledge
 

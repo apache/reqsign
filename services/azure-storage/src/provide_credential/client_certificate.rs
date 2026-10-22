@@ -19,15 +19,16 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::credential::Credential;
-use async_trait::async_trait;
+use crate::provide_credential::entra::{
+    EntraTokenResponse, parse_token_response, token_request_error,
+};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use rsa::RsaPrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha1::{Digest, Sha1};
 
 /// Generate a unique JWT ID using timestamp and a pseudo-random component
@@ -180,20 +181,13 @@ impl ClientCertificateCredentialProvider {
             sub: client_id.to_string(),
         };
 
-        let mut header = Header::new(Algorithm::RS256);
-        header.x5t = Some(self.calculate_thumbprint(cert_der));
+        let header = ClientAssertionHeader {
+            alg: "RS256",
+            typ: "JWT",
+            x5t: self.calculate_thumbprint(cert_der),
+        };
 
-        let pem_private_key =
-            rsa::pkcs8::EncodePrivateKey::to_pkcs8_pem(private_key, Default::default()).map_err(
-                |e| reqsign_core::Error::unexpected(format!("Failed to encode private key: {e}")),
-            )?;
-
-        let encoding_key = EncodingKey::from_rsa_pem(pem_private_key.as_bytes()).map_err(|e| {
-            reqsign_core::Error::unexpected(format!("Failed to create encoding key: {e}"))
-        })?;
-
-        jsonwebtoken::encode(&header, &claims, &encoding_key)
-            .map_err(|e| reqsign_core::Error::unexpected(format!("Failed to create JWT: {e}")))
+        reqsign_core::jwt::encode_rs256(&header, &claims, private_key)
     }
 
     /// Exchange client assertion for access token
@@ -203,7 +197,7 @@ impl ClientCertificateCredentialProvider {
         tenant_id: &str,
         client_id: &str,
         client_assertion: &str,
-    ) -> Result<TokenResponse, reqsign_core::Error> {
+    ) -> Result<EntraTokenResponse, reqsign_core::Error> {
         let url = format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token");
 
         let mut params = HashMap::new();
@@ -232,19 +226,13 @@ impl ClientCertificateCredentialProvider {
         let resp = ctx.http_send(req).await?;
 
         if resp.status() != http::StatusCode::OK {
-            let body = resp.into_body();
-            return Err(reqsign_core::Error::credential_invalid(format!(
-                "Failed to get token: {}",
-                String::from_utf8_lossy(&body)
-            )));
+            return Err(token_request_error(
+                "Microsoft Entra client certificate token request",
+                resp.status(),
+            ));
         }
 
-        let body = resp.into_body();
-        let token_response: TokenResponse = serde_json::from_slice(&body).map_err(|e| {
-            reqsign_core::Error::unexpected(format!("Failed to parse token response: {e}"))
-        })?;
-
-        Ok(token_response)
+        parse_token_response(resp.body(), "client certificate token response")
     }
 }
 
@@ -258,15 +246,13 @@ struct ClientAssertionClaims {
     sub: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
-    access_token: String,
-    expires_in: u64,
-    #[allow(dead_code)]
-    token_type: String,
+#[derive(Debug, Serialize)]
+struct ClientAssertionHeader {
+    alg: &'static str,
+    typ: &'static str,
+    x5t: String,
 }
 
-#[async_trait]
 impl ProvideCredential for ClientCertificateCredentialProvider {
     type Credential = Credential;
 

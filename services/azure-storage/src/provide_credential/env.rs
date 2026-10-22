@@ -15,7 +15,6 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use async_trait::async_trait;
 use reqsign_core::{Context, ProvideCredential};
 
 use crate::credential::Credential;
@@ -28,8 +27,6 @@ impl EnvCredentialProvider {
         Self {}
     }
 }
-
-#[async_trait]
 impl ProvideCredential for EnvCredentialProvider {
     type Credential = Credential;
 
@@ -129,7 +126,7 @@ mod tests {
         let cred = provider.provide_credential(&ctx).await.unwrap();
 
         match cred {
-            Some(Credential::SasToken { token }) => {
+            Some(Credential::SasToken { token, .. }) => {
                 assert_eq!(token, "mysastoken");
             }
             _ => panic!("Expected SasToken credential"),

@@ -16,7 +16,7 @@
 // under the License.
 
 #![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 // Re-export core types
 pub use reqsign_core::*;
@@ -31,7 +31,7 @@ pub use context::default_context;
 #[cfg(feature = "aliyun")]
 pub mod aliyun;
 
-#[cfg(feature = "aws")]
+#[cfg(any(feature = "aws-v4", feature = "aws-v4a"))]
 pub mod aws;
 
 #[cfg(feature = "azure")]
@@ -51,3 +51,6 @@ pub mod oracle;
 
 #[cfg(feature = "tencent")]
 pub mod tencent;
+
+#[cfg(feature = "volcengine")]
+pub mod volcengine;
