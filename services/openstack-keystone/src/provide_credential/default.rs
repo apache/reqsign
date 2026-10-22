@@ -24,7 +24,7 @@ use super::env::EnvCredentialProvider;
 /// Default credential provider for OpenStack Keystone.
 ///
 /// Tries credential sources in order:
-/// 1. Environment variables (`OPENSTACK_AUTH_URL`, `OPENSTACK_USERNAME`, etc.)
+/// 1. Environment variables (`OS_AUTH_URL`, `OS_USERNAME`, etc.)
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
@@ -37,10 +37,14 @@ impl Default for DefaultCredentialProvider {
 }
 
 impl DefaultCredentialProvider {
-    /// Create a new DefaultCredentialProvider with the default chain.
+    /// Create a builder to configure the default credential chain.
+    pub fn builder() -> DefaultCredentialProviderBuilder {
+        DefaultCredentialProviderBuilder::default()
+    }
+
+    /// Create a new `DefaultCredentialProvider` instance using the default chain.
     pub fn new() -> Self {
-        let chain = ProvideCredentialChain::new().push(EnvCredentialProvider::new());
-        Self { chain }
+        Self::builder().build()
     }
 
     /// Create with a custom credential chain.
@@ -48,7 +52,19 @@ impl DefaultCredentialProvider {
         Self { chain }
     }
 
-    /// Add a credential provider to the front of the chain.
+    /// Add a credential provider to the front of the default chain.
+    ///
+    /// This allows adding a high-priority credential source that will be tried
+    /// before all other providers in the default chain.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use reqsign_openstack_keystone::{DefaultCredentialProvider, EnvCredentialProvider};
+    ///
+    /// let provider = DefaultCredentialProvider::new()
+    ///     .push_front(EnvCredentialProvider::new());
+    /// ```
     pub fn push_front(
         mut self,
         provider: impl ProvideCredential<Credential = Credential> + 'static,
@@ -58,11 +74,100 @@ impl DefaultCredentialProvider {
     }
 }
 
-#[async_trait::async_trait]
+/// Builder for `DefaultCredentialProvider`.
+///
+/// Use `env(provider)` to set the environment provider slot or `no_env()` to
+/// remove it from the chain.
+pub struct DefaultCredentialProviderBuilder {
+    env: Option<EnvCredentialProvider>,
+}
+
+impl Default for DefaultCredentialProviderBuilder {
+    fn default() -> Self {
+        Self {
+            env: Some(EnvCredentialProvider::new()),
+        }
+    }
+}
+
+impl DefaultCredentialProviderBuilder {
+    /// Create a new builder with default state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the environment credential provider slot.
+    pub fn env(mut self, provider: EnvCredentialProvider) -> Self {
+        self.env = Some(provider);
+        self
+    }
+
+    /// Remove the environment credential provider slot.
+    pub fn no_env(mut self) -> Self {
+        self.env = None;
+        self
+    }
+
+    /// Build the `DefaultCredentialProvider` with the configured options.
+    pub fn build(self) -> DefaultCredentialProvider {
+        let mut chain = ProvideCredentialChain::new();
+        if let Some(p) = self.env {
+            chain = chain.push(p);
+        }
+        DefaultCredentialProvider::with_chain(chain)
+    }
+}
+
 impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
         self.chain.provide_credential(ctx).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provide_credential::env::*;
+    use reqsign_core::StaticEnv;
+    use std::collections::HashMap;
+
+    fn ctx_with_envs(envs: HashMap<String, String>) -> Context {
+        Context::new().with_env(StaticEnv {
+            home_dir: None,
+            envs,
+        })
+    }
+
+    #[tokio::test]
+    async fn test_default_loader_without_env() {
+        let ctx = ctx_with_envs(HashMap::new());
+
+        // Without a mock server the env provider must bail out before doing I/O.
+        let credential = DefaultCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await
+            .unwrap();
+
+        assert!(credential.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_builder_no_env_removes_env_provider() {
+        let ctx = ctx_with_envs(HashMap::from([
+            (
+                OS_AUTH_URL.to_string(),
+                "http://127.0.0.1:5000/v3".to_string(),
+            ),
+            (OS_USERNAME.to_string(), "testuser".to_string()),
+            (OS_PASSWORD.to_string(), "testpass".to_string()),
+        ]));
+
+        let provider = DefaultCredentialProvider::builder().no_env().build();
+        assert!(provider.chain.is_empty());
+
+        let credential = provider.provide_credential(&ctx).await.unwrap();
+        assert!(credential.is_none());
     }
 }

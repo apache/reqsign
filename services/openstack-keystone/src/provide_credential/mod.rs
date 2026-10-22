@@ -16,7 +16,7 @@
 // under the License.
 
 mod default;
-pub use default::DefaultCredentialProvider;
+pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
 
 mod env;
 pub use env::EnvCredentialProvider;
