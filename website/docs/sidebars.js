@@ -45,6 +45,7 @@ module.exports = {
         "providers/oracle",
         "providers/tencent-cos",
         "providers/volcengine-tos",
+        "providers/openstack-keystone",
       ],
     },
     {
