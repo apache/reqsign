@@ -27,6 +27,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 - [Azure Storage | Apache Reqsign™](https://reqsign.apache.org/docs/providers/azure-storage/): Shared Key, SAS, and Microsoft Entra ID auth for Azure Storage.
 - [Google Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/google/): OAuth 2.0 tokens and V4 signed URLs for Google Cloud services.
 - [Huawei Cloud OBS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/huaweicloud-obs/): OBS signature signing for Huawei Cloud Object Storage.
+- [OpenStack Keystone | Apache Reqsign™](https://reqsign.apache.org/docs/providers/openstack-keystone/): Keystone v3 token authentication and X-Auth-Token signing for OpenStack services.
 - [Oracle Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/oracle/): OCI HTTP request signatures from API keys and config files.
 - [Tencent COS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/tencent-cos/): COS signatures with OIDC federation for Tencent Cloud Object Storage.
 - [Volcengine TOS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/volcengine-tos/): TOS signatures and presigned URLs for Volcengine object storage.

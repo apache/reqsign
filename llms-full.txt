@@ -35,7 +35,7 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-9signing providers
+10signing providers
 
 5granting operations
 
@@ -161,11 +161,11 @@ let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
 
 Providers
 
-## 9 providers. Explicit schemes.
+## 10 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -761,6 +761,7 @@ cargo add http anyhow
 | google-credential-access-boundary-client-side | Client-side CAB downscoping (implies google) |
 | aliyun                                        | Aliyun OSS                                   |
 | huaweicloud                                   | Huawei Cloud OBS                             |
+| openstack                                     | OpenStack Keystone                           |
 | oracle                                        | Oracle Cloud                                 |
 | tencent                                       | Tencent COS                                  |
 | volcengine                                    | Volcengine TOS                               |
@@ -849,17 +850,18 @@ The example signs the request and prints a confirmation; sending it is your HTTP
 
 Swap the entry point and the rest of the code stays the same. Each entry composes that provider's own credential chain — the[provider pages](/docs/providers/) document exactly which sources:
 
-| Provider                                             | Entry                                           |
-| ---------------------------------------------------- | ----------------------------------------------- |
-| [AWS SigV4](/docs/providers/aws-sigv4/)              | aws::default\_signer(service, region)           |
-| [AWS SigV4a](/docs/providers/aws-sigv4a/)            | aws::v4a::default\_signer(service, region\_set) |
-| [Azure Storage](/docs/providers/azure-storage/)      | azure::default\_signer()                        |
-| [Google Cloud](/docs/providers/google/)              | google::default\_signer(service)                |
-| [Aliyun OSS](/docs/providers/aliyun-oss/)            | aliyun::default\_signer(bucket)                 |
-| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | huaweicloud::default\_signer(bucket)            |
-| [Oracle Cloud](/docs/providers/oracle/)              | oracle::default\_signer()                       |
-| [Tencent COS](/docs/providers/tencent-cos/)          | tencent::default\_signer()                      |
-| [Volcengine TOS](/docs/providers/volcengine-tos/)    | volcengine::default\_signer(region)             |
+| Provider                                                  | Entry                                           |
+| --------------------------------------------------------- | ----------------------------------------------- |
+| [AWS SigV4](/docs/providers/aws-sigv4/)                   | aws::default\_signer(service, region)           |
+| [AWS SigV4a](/docs/providers/aws-sigv4a/)                 | aws::v4a::default\_signer(service, region\_set) |
+| [Azure Storage](/docs/providers/azure-storage/)           | azure::default\_signer()                        |
+| [Google Cloud](/docs/providers/google/)                   | google::default\_signer(service)                |
+| [Aliyun OSS](/docs/providers/aliyun-oss/)                 | aliyun::default\_signer(bucket)                 |
+| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)      | huaweicloud::default\_signer(bucket)            |
+| [OpenStack Keystone](/docs/providers/openstack-keystone/) | openstack::default\_signer()                    |
+| [Oracle Cloud](/docs/providers/oracle/)                   | oracle::default\_signer()                       |
+| [Tencent COS](/docs/providers/tencent-cos/)               | tencent::default\_signer()                      |
+| [Volcengine TOS](/docs/providers/volcengine-tos/)         | volcengine::default\_signer(region)             |
 
 A default signer is an ordinary `Signer`: replace any component and keep the rest —
 
@@ -924,17 +926,18 @@ url: https://reqsign.apache.org/docs/providers/
 
 Reqsign keeps each provider's signing protocol and credential semantics explicit instead of hiding them behind one abstraction. This matrix and every detail page are rendered from the[provider catalog](https://github.com/apache/reqsign/blob/main/website/data/providers.json). CI checks crate, feature, page, and source-path consistency. Maintainers review signing capabilities and credential-chain semantics against the referenced source; those behavioral claims are not inferred by the validator.
 
-| Provider                                             | Signing schemes                                      | Header | Query / presign | Granting | WASM |
-| ---------------------------------------------------- | ---------------------------------------------------- | ------ | --------------- | -------- | ---- |
-| [AWS SigV4](/docs/providers/aws-sigv4/)              | AWS Signature Version 4                              | ✓      | ✓               | ✓ 2      | ✓    |
-| [AWS SigV4a](/docs/providers/aws-sigv4a/)            | AWS Signature Version 4A                             | ✓      | ✓               | —        | ✓    |
-| [Azure Storage](/docs/providers/azure-storage/)      | Shared Key, SAS token, Entra ID bearer token         | ✓      | ✓               | ✓ 1      | ✓    |
-| [Google Cloud](/docs/providers/google/)              | OAuth 2.0 bearer token, V4 signed URLs               | ✓      | ✓               | ✓ 2      | —    |
-| [Aliyun OSS](/docs/providers/aliyun-oss/)            | OSS signature V1, OSS signature V2, OSS signature V4 | ✓      | ✓               | —        | ✓    |
-| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | OBS signature                                        | ✓      | ✓               | —        | —    |
-| [Oracle Cloud](/docs/providers/oracle/)              | OCI request signature                                | ✓      | —               | —        | —    |
-| [Tencent COS](/docs/providers/tencent-cos/)          | COS signature                                        | ✓      | ✓               | —        | ✓    |
-| [Volcengine TOS](/docs/providers/volcengine-tos/)    | TOS signature                                        | ✓      | ✓               | —        | —    |
+| Provider                                                  | Signing schemes                                      | Header | Query / presign | Granting | WASM |
+| --------------------------------------------------------- | ---------------------------------------------------- | ------ | --------------- | -------- | ---- |
+| [AWS SigV4](/docs/providers/aws-sigv4/)                   | AWS Signature Version 4                              | ✓      | ✓               | ✓ 2      | ✓    |
+| [AWS SigV4a](/docs/providers/aws-sigv4a/)                 | AWS Signature Version 4A                             | ✓      | ✓               | —        | ✓    |
+| [Azure Storage](/docs/providers/azure-storage/)           | Shared Key, SAS token, Entra ID bearer token         | ✓      | ✓               | ✓ 1      | ✓    |
+| [Google Cloud](/docs/providers/google/)                   | OAuth 2.0 bearer token, V4 signed URLs               | ✓      | ✓               | ✓ 2      | —    |
+| [Aliyun OSS](/docs/providers/aliyun-oss/)                 | OSS signature V1, OSS signature V2, OSS signature V4 | ✓      | ✓               | —        | ✓    |
+| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)      | OBS signature                                        | ✓      | ✓               | —        | —    |
+| [Oracle Cloud](/docs/providers/oracle/)                   | OCI request signature                                | ✓      | —               | —        | —    |
+| [Tencent COS](/docs/providers/tencent-cos/)               | COS signature                                        | ✓      | ✓               | —        | ✓    |
+| [Volcengine TOS](/docs/providers/volcengine-tos/)         | TOS signature                                        | ✓      | ✓               | —        | —    |
+| [OpenStack Keystone](/docs/providers/openstack-keystone/) | X-Auth-Token header                                  | ✓      | —               | —        | —    |
 
 CI checks crate, feature, page, and source-path consistency; capability semantics are reviewed by maintainers. Found a mismatch? [Open an issue.](https://github.com/apache/reqsign/issues)
 
@@ -2213,6 +2216,77 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 ---
 
 ---
+url: https://reqsign.apache.org/docs/providers/openstack-keystone/
+---
+# OpenStack Keystone | Apache Reqsign™
+
+# OpenStack Keystone
+
+OpenStack services that authenticate with a Keystone v3 token, such as Swift.
+
+X-Auth-Token header✓ header signing— query / presign— WASM[docs.rs/reqsign-openstack-keystone ↗](https://docs.rs/reqsign-openstack-keystone)
+
+Inserts the X-Auth-Token header; expires\_in is not interpreted.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features openstack
+
+
+```
+
+```
+
+use reqsign::openstack;
+
+
+// Environment variables — resolved by the default chain.
+
+let signer = openstack::default_signer();
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://swift.example.com/v1/AUTH_test/container/object")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+The default chain authenticates against the Keystone v3 identity API with`OS_AUTH_URL`, `OS_USERNAME`, and `OS_PASSWORD`. A scoped token also carries the service catalog Keystone returned for it, so `Credential::endpoint_in_region`resolves the endpoint of a service such as Swift without another request.
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Environment variables
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-openstack-keystone/latest/reqsign%5Fopenstack%5Fkeystone/struct.EnvCredentialProvider.html) — Environment variables
+* [KeystoneCredentialProvider](https://docs.rs/reqsign-openstack-keystone/latest/reqsign%5Fopenstack%5Fkeystone/struct.KeystoneCredentialProvider.html) — Keystone password credentials
+
+---
+
+---
 url: https://reqsign.apache.org/docs/providers/oracle/
 ---
 # Oracle Cloud | Apache Reqsign™
@@ -2451,6 +2525,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-google](https://docs.rs/reqsign-google)
 * [reqsign-aliyun-oss](https://docs.rs/reqsign-aliyun-oss)
 * [reqsign-huaweicloud-obs](https://docs.rs/reqsign-huaweicloud-obs)
+* [reqsign-openstack-keystone](https://docs.rs/reqsign-openstack-keystone)
 * [reqsign-oracle](https://docs.rs/reqsign-oracle)
 * [reqsign-tencent-cos](https://docs.rs/reqsign-tencent-cos)
 * [reqsign-volcengine-tos](https://docs.rs/reqsign-volcengine-tos)
