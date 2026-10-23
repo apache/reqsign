@@ -21,6 +21,7 @@ mod region_set;
 mod sign_request;
 
 pub use region_set::SigningRegionSet;
+pub use reqsign_aws_core::PercentEncodingMode;
 pub use reqsign_aws_core::constants;
 pub use reqsign_aws_core::{
     AssumeRoleCredentialProvider, AssumeRoleWithWebIdentityCredentialProvider,
