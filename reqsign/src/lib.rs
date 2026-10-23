@@ -43,6 +43,9 @@ pub mod google;
 #[cfg(feature = "huaweicloud")]
 pub mod huaweicloud;
 
+#[cfg(feature = "openstack")]
+pub mod openstack;
+
 #[cfg(feature = "oracle")]
 pub mod oracle;
 

@@ -38,6 +38,7 @@ reqsign-file-read-tokio = { version = "3.0.7", path = "context/file-read-tokio" 
 reqsign-google = { version = "3.2.0", path = "services/google" }
 reqsign-http-send-reqwest = { version = "4.0.7", path = "context/http-send-reqwest" }
 reqsign-huaweicloud-obs = { version = "3.0.7", path = "services/huaweicloud-obs" }
+reqsign-openstack-keystone = { version = "3.0.0", path = "services/openstack-keystone" }
 reqsign-oracle = { version = "3.0.7", path = "services/oracle" }
 reqsign-tencent-cos = { version = "3.0.7", path = "services/tencent-cos" }
 reqsign-volcengine-tos = { version = "3.1.3", path = "services/volcengine-tos" }

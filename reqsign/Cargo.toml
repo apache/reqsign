@@ -44,6 +44,7 @@ reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
+reqsign-openstack-keystone = { workspace = true, optional = true }
 reqsign-oracle = { workspace = true, optional = true }
 reqsign-tencent-cos = { workspace = true, optional = true }
 reqsign-volcengine-tos = { workspace = true, optional = true }
@@ -73,6 +74,7 @@ google-credential-access-boundary-client-side = [
   "reqsign-google/credential-access-boundary-client-side",
 ]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
+openstack = ["dep:reqsign-openstack-keystone"]
 oracle = ["dep:reqsign-oracle"]
 tencent = ["dep:reqsign-tencent-cos"]
 volcengine = ["dep:reqsign-volcengine-tos"]
@@ -86,6 +88,7 @@ full = [
   "google",
   "google-credential-access-boundary-client-side",
   "huaweicloud",
+  "openstack",
   "oracle",
   "tencent",
   "volcengine",

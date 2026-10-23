@@ -46,6 +46,7 @@ cargo add http anyhow
 | `google-credential-access-boundary-client-side` | Client-side CAB downscoping (implies `google`) |
 | `aliyun` | Aliyun OSS |
 | `huaweicloud` | Huawei Cloud OBS |
+| `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
 | `tencent` | Tencent COS |
 | `volcengine` | Volcengine TOS |
@@ -102,6 +103,7 @@ composes that provider's own credential chain — the
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(service)` |
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(bucket)` |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | `huaweicloud::default_signer(bucket)` |
+| [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer()` |
 | [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer()` |
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer()` |
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(region)` |
