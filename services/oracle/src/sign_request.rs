@@ -26,11 +26,13 @@ use reqsign_core::{Context, SignRequest, SigningCredential, SigningRequest};
 use rsa::pkcs1v15::SigningKey;
 use rsa::sha2::Sha256;
 use rsa::signature::{SignatureEncoding, Signer};
-use rsa::{RsaPrivateKey, pkcs8::DecodePrivateKey};
+use rsa::{RsaPrivateKey, pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey};
 use std::fmt::Write;
 use std::time::Duration;
 
 /// RequestSigner that implements Oracle Cloud Infrastructure API signing.
+///
+/// API private key files may contain unencrypted PKCS#1 or PKCS#8 PEM keys.
 ///
 /// - [Oracle Cloud Infrastructure API Signing](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/signingrequests.htm)
 #[derive(Debug)]
@@ -92,9 +94,12 @@ impl SignRequest for RequestSigner {
 
         // Read private key from file
         let private_key_content = ctx.file_read_as_string(&cred.key_file).await?;
-        let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_content).map_err(|e| {
-            reqsign_core::Error::credential_invalid(format!("Failed to read private key: {e}"))
-        })?;
+        // Older OpenSSL versions produce PKCS#1 PEM keys with `openssl genrsa`.
+        let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_content)
+            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&private_key_content))
+            .map_err(|e| {
+                reqsign_core::Error::credential_invalid(format!("Failed to read private key: {e}"))
+            })?;
 
         // Sign the string
         let signing_key = SigningKey::<Sha256>::new(private_key);
