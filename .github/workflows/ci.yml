@@ -114,6 +114,8 @@ jobs:
           persist-credentials: false
       - name: Test
         run: cargo test --no-fail-fast
+      - name: Test with the boring backend
+        run: cargo test --no-fail-fast -p reqsign-core -p reqsign-aws-v4 --features reqsign-core/boring
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full

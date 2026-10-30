@@ -29,6 +29,7 @@ rust-version.workspace = true
 
 [features]
 default = []
+boring = ["dep:boring"]
 jwt = ["dep:rsa", "dep:serde", "dep:serde_json"]
 
 [dependencies]
@@ -46,6 +47,7 @@ sha1 = { workspace = true }
 sha2 = { workspace = true }
 
 # Optional dependencies
+boring = { workspace = true, optional = true }
 rsa = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }

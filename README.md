@@ -165,6 +165,7 @@ let signer = aliyun::default_signer("mybucket");
 ## Features
 
 - Pure Rust with minimal dependencies.
+- Optional `boring` feature (on `reqsign` or `reqsign-core`) that computes the SHA and HMAC behind signing with BoringSSL instead of RustCrypto.
 - Tested against official SDKs and services.
 - Supported services
   - Aliyun OSS: `reqsign-aliyun-oss`
