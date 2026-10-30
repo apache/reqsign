@@ -62,6 +62,9 @@ default-context = [
   "dep:reqsign-http-send-reqwest",
 ]
 
+# Use BoringSSL for the SHA and HMAC in reqsign-core.
+boring = ["reqsign-core/boring"]
+
 # Service features
 aliyun = ["dep:reqsign-aliyun-oss"]
 aws = ["aws-v4"]
