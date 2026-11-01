@@ -375,6 +375,10 @@ where
 /// credential providers together. The chain will try each provider in order until one
 /// returns credentials or all providers have been exhausted.
 ///
+/// A provider error does not stop the chain. If no provider returns credentials and
+/// at least one provider failed with a retryable error, the first such error is
+/// returned so that the caller can retry it. Otherwise the chain returns `Ok(None)`.
+///
 /// # Example
 ///
 /// ```no_run
@@ -479,6 +483,8 @@ where
     type Credential = C;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+        let mut retryable_error = None;
+
         for provider in &self.providers {
             log::debug!("Trying credential provider: {provider:?}");
 
@@ -493,19 +499,26 @@ where
                 }
                 Err(e) => {
                     log::warn!("Error loading credential from provider {provider:?}: {e:?}");
+                    if e.is_retryable() && retryable_error.is_none() {
+                        retryable_error = Some(e);
+                    }
                     // Continue to next provider on error
                     continue;
                 }
             }
         }
 
-        Ok(None)
+        match retryable_error {
+            Some(err) => Err(err),
+            None => Ok(None),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     #[derive(Clone, Debug)]
     struct ExactCredential {
@@ -532,5 +545,57 @@ mod tests {
         assert!(credential.is_valid_at(timestamp));
         assert!(!credential.is_valid_at(timestamp + Duration::from_secs(1)));
         assert!(!None::<ExactCredential>.is_valid_at(timestamp));
+    }
+
+    #[derive(Debug)]
+    struct FixedProvider(fn() -> Result<Option<&'static str>>);
+
+    impl ProvideCredential for FixedProvider {
+        type Credential = &'static str;
+
+        async fn provide_credential(&self, _ctx: &Context) -> Result<Option<Self::Credential>> {
+            (self.0)()
+        }
+    }
+
+    fn chain_result(chain: ProvideCredentialChain<&'static str>) -> Result<Option<&'static str>> {
+        futures::executor::block_on(chain.provide_credential(&Context::new()))
+    }
+
+    #[test]
+    fn chain_returns_later_credential_after_retryable_error() {
+        let chain = ProvideCredentialChain::new()
+            .push(FixedProvider(|| {
+                Err(Error::unexpected("transient").set_retryable(true))
+            }))
+            .push(FixedProvider(|| Ok(Some("credential"))));
+
+        assert_eq!(chain_result(chain).unwrap(), Some("credential"));
+    }
+
+    #[test]
+    fn chain_returns_first_retryable_error_when_no_credential_found() {
+        let chain = ProvideCredentialChain::new()
+            .push(FixedProvider(|| Err(Error::config_invalid("persistent"))))
+            .push(FixedProvider(|| {
+                Err(Error::unexpected("first transient").set_retryable(true))
+            }))
+            .push(FixedProvider(|| Ok(None)))
+            .push(FixedProvider(|| {
+                Err(Error::unexpected("second transient").set_retryable(true))
+            }));
+
+        let err = chain_result(chain).expect_err("retryable error must be returned");
+        assert_eq!(err.to_string(), "first transient");
+        assert!(err.is_retryable());
+    }
+
+    #[test]
+    fn chain_skips_persistent_errors_when_no_credential_found() {
+        let chain = ProvideCredentialChain::new()
+            .push(FixedProvider(|| Err(Error::config_invalid("persistent"))))
+            .push(FixedProvider(|| Ok(None)));
+
+        assert_eq!(chain_result(chain).unwrap(), None);
     }
 }
