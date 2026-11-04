@@ -30,6 +30,14 @@ use std::time::Duration;
 /// The config file path and profile name can be overridden using environment variables:
 /// - `OCI_CONFIG_FILE`: Override the config file path
 /// - `OCI_PROFILE`: Override the profile name (default is "DEFAULT")
+///
+/// An existing named profile inherits missing credential fields from `[DEFAULT]`.
+/// Explicit values, including empty strings, take precedence over defaults. A missing
+/// profile is not replaced by `[DEFAULT]`, and other named profiles are never consulted.
+/// Values are literal: backslashes and quotes in key paths are not INI escapes.
+/// Home expansion is applied to the resolved `key_file` value after inheritance.
+///
+/// See [OCI profiles and inheritance](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/sdkconfig.htm).
 #[derive(Debug, Default, Clone)]
 pub struct ConfigFileCredentialProvider {}
 
@@ -71,8 +79,16 @@ impl ProvideCredential for ConfigFileCredentialProvider {
             .map(|s| s.as_str())
             .unwrap_or(ORACLE_DEFAULT_PROFILE);
 
-        // Parse INI content
-        let ini = ini::Ini::read_from(&mut content.as_bytes()).map_err(|e| {
+        // OCI paths are literal, including Windows backslashes and embedded quotes.
+        let ini = ini::Ini::load_from_str_opt(
+            &content,
+            ini::ParseOption {
+                enabled_escape: false,
+                enabled_quote: false,
+                ..Default::default()
+            },
+        )
+        .map_err(|e| {
             reqsign_core::Error::config_invalid(format!("Failed to parse config file: {e}"))
         })?;
         let section = match ini.section(Some(profile)) {
@@ -83,12 +99,18 @@ impl ProvideCredential for ConfigFileCredentialProvider {
             }
         };
 
-        // Extract values
+        // Only absent fields inherit; a missing selected profile must not load defaults.
+        let defaults = ini.section(Some(ORACLE_DEFAULT_PROFILE));
+        let value = |key: &str| {
+            section
+                .get(key)
+                .or_else(|| defaults.and_then(|defaults| defaults.get(key)))
+        };
         match (
-            section.get("tenancy"),
-            section.get("user"),
-            section.get("key_file"),
-            section.get("fingerprint"),
+            value("tenancy"),
+            value("user"),
+            value("key_file"),
+            value("fingerprint"),
         ) {
             (Some(tenancy), Some(user), Some(key_file), Some(fingerprint)) => {
                 debug!("loading credential from config file");
