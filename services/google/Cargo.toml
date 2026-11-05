@@ -32,7 +32,6 @@ all-features = true
 [features]
 credential-access-boundary-client-side = [
   "dep:aes-gcm",
-  "dep:asyncband",
   "dep:base64",
   "dep:prost",
   "dep:zeroize",
@@ -41,7 +40,7 @@ default = []
 
 [dependencies]
 aes-gcm = { workspace = true, features = ["zeroize"], optional = true }
-asyncband = { workspace = true, optional = true }
+asyncband = { workspace = true }
 base64 = { workspace = true, optional = true }
 bytes = { workspace = true }
 form_urlencoded = { workspace = true }
