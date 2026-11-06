@@ -39,7 +39,7 @@ pub use token::TokenCredentialProvider;
 mod service_account_token;
 pub use service_account_token::ServiceAccountTokenCredentialProvider;
 
-mod oauth;
+pub(crate) mod oauth;
 
 mod authorized_user;
 pub use authorized_user::AuthorizedUserCredentialProvider;
