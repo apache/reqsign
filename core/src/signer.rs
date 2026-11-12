@@ -180,7 +180,7 @@ impl<K: SigningCredential> Signer<K> {
 mod tests {
     use super::*;
     use crate::time::Timestamp;
-    use crate::{ErrorKind, ProvideCredential, SignRequest};
+    use crate::{ErrorKind, ProvideCredential, ProvideCredentialChain, SignRequest};
     use asyncband::oneshot;
     use futures::future::{join_all, pending};
     use futures::poll;
@@ -1028,6 +1028,60 @@ mod tests {
             parts.headers.get("x-credential-generation"),
             Some(&HeaderValue::from_static("2"))
         );
+    }
+
+    #[test]
+    fn chained_retryable_provider_error_reaches_caller() {
+        let base = Timestamp::from_second(3_500).expect("timestamp must be valid");
+        let refreshed = ExpiringCredential {
+            generation: 2,
+            fresh: true,
+            expires_at: base + Duration::from_secs(30),
+            required_until: base + Duration::from_secs(10),
+        };
+        let (provider, calls) = SequenceProvider::new([
+            Err(Error::unexpected("injected transient failure").set_retryable(true)),
+            Ok(Some(refreshed)),
+        ]);
+        let signer = Signer::new(
+            Context::new(),
+            ProvideCredentialChain::new().push(provider),
+            OperationSigner,
+        );
+
+        let mut parts = request_parts();
+        let err = futures::executor::block_on(signer.sign(&mut parts, None))
+            .expect_err("retryable provider error must be returned");
+        assert_eq!(err.kind(), ErrorKind::Unexpected);
+        assert_eq!(err.to_string(), "injected transient failure");
+        assert!(err.is_retryable());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        futures::executor::block_on(signer.sign(&mut parts, None))
+            .expect("caller retry must load the credential");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            parts.headers.get("x-credential-generation"),
+            Some(&HeaderValue::from_static("2"))
+        );
+    }
+
+    #[test]
+    fn chained_persistent_provider_error_stays_persistent() {
+        let (provider, calls) =
+            SequenceProvider::new([Err(Error::unexpected("injected persistent failure"))]);
+        let signer = Signer::new(
+            Context::new(),
+            ProvideCredentialChain::new().push(provider),
+            OperationSigner,
+        );
+
+        let mut parts = request_parts();
+        let err = futures::executor::block_on(signer.sign(&mut parts, None))
+            .expect_err("missing credential must be returned");
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert!(!err.is_retryable());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
