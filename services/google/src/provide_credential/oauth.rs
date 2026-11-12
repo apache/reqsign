@@ -65,7 +65,7 @@ pub(super) fn checked_expiration(started_at: Timestamp, expires_in: Duration) ->
         .map_err(|_| Error::unexpected("OAuth token expiration is invalid"))
 }
 
-pub(super) fn oauth_error(status: http::StatusCode, body: &[u8]) -> Error {
+pub(crate) fn oauth_error(status: http::StatusCode, body: &[u8]) -> Error {
     let error_code = serde_json::from_slice::<OAuthErrorResponse>(body)
         .ok()
         .and_then(|response| response.error);
