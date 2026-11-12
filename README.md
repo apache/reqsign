@@ -165,6 +165,7 @@ let signer = aliyun::default_signer();
 ## Features
 
 - Pure rust with minimal dependencies.
+- Optional `boring` feature (on `reqsign` or `reqsign-core`) that computes the SHA and HMAC behind signing with BoringSSL instead of RustCrypto.
 - Test again official SDK and services.
 - Supported services
   - Aliyun OSS: `reqsign-aliyun-oss`
