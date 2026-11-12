@@ -166,6 +166,7 @@ pub use provide_credential::{
     S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionPartition,
     S3ExpressSessionProvider,
 };
+pub use reqsign_aws_core::PercentEncodingMode;
 pub use reqsign_aws_core::constants;
 pub use reqsign_aws_core::{
     AssumeRoleCredentialProvider, AssumeRoleGrant, AssumeRoleWithWebIdentityCredentialProvider,
