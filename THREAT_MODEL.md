@@ -208,6 +208,17 @@ Sharing a `Signer`, provider, or `Context` across tenants, threads, async tasks,
 or processes is a caller decision. It is in scope only if Reqsign violates its
 own documented isolation or cache behavior.
 
+AWS named SSO sessions retain refreshed access tokens and rotated refresh
+material in memory. A provider and its clones share this state and serialize
+refreshes for the same session; independently constructed providers do not
+coordinate refreshes. Session state is keyed by the cache path, configuration
+path, session name, start URL, and region. The AWS CLI cache is read through
+`Context` and is never written. When the in-memory token expires, a newer disk
+token may replace it. Recreating the provider discards its in-memory state;
+after a process restart, the disk registration and refresh token must still be
+usable. Legacy inline SSO configurations do not refresh, and Reqsign never
+starts interactive login.
+
 ### 4.3 Credential redaction and observability
 
 Reqsign must avoid exposing credentials through `Debug` output, error chains,
@@ -262,6 +273,18 @@ Examples:
   documented API.
 - A metadata or token provider must send requests only to the endpoint implied
   by the provider contract or explicit caller configuration.
+
+The AWS default credential provider propagates SSO errors before trying later
+process, web-identity, ECS, or IMDS providers. An SSO failure must not silently
+select a different identity. This policy belongs to the AWS default provider;
+caller-constructed `ProvideCredentialChain` values retain their own error
+policy. Disabling the SSO slot prevents it from participating.
+
+AWS shared configuration and region discovery are separate from credential
+acquisition. Loading `SharedConfig` does not execute credential processes or
+contact the network. IMDSv2 region fallback requires explicit opt-in and applies
+a deadline to the complete metadata-token and region exchange. Exposed endpoint
+settings remain the caller's responsibility to interpret.
 
 If a trusted caller configures a malicious file path, command, environment
 implementation, metadata endpoint, HTTP client, or custom provider, using that
