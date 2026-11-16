@@ -17,11 +17,15 @@
 
 FROM docker.io/library/rust:1.88-bookworm AS builder
 
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends jq && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
 COPY . .
-RUN cargo test -p reqsign-aws-v4 --test main --release --no-run && \
-    test_binary="$(find target/release/deps -maxdepth 1 -type f -perm -111 -name 'main-*' | head -n 1)" && \
-    test -n "${test_binary}" && \
+RUN cargo test -p reqsign-aws-v4 --test main --release --no-run --message-format=json > /tmp/cargo-messages.json && \
+    test_binary="$(jq --raw-output 'select(.reason == "compiler-artifact" and .profile.test == true and .target.name == "main") | .executable // empty' /tmp/cargo-messages.json)" && \
+    test -x "${test_binary}" && \
     cp "${test_binary}" /tmp/reqsign-aws-live-test
 
 FROM docker.io/library/debian:bookworm-slim
