@@ -57,7 +57,7 @@ futures = "0.3"
 hex = "0.4"
 hmac = "0.13"
 http = "1"
-jiff = "0.2"
+jiff = "1.0"
 log = "0.4"
 p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 pem = "4.0"

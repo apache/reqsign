@@ -107,8 +107,13 @@ impl Timestamp {
     }
 
     /// Convert to `SystemTime`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the timestamp is outside the range supported by `SystemTime`
+    /// on the current platform.
     pub fn as_system_time(self) -> SystemTime {
-        SystemTime::from(self.0)
+        SystemTime::try_from(self.0).expect("timestamp is out of range for SystemTime")
     }
 
     /// Creates a new instant in time from the number of milliseconds elapsed
