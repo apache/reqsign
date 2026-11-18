@@ -18,7 +18,6 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use bytes::Bytes;
-use getrandom::SysRng;
 use http::{Request, Response, StatusCode};
 use reqsign_core::hash::base64_decode;
 use reqsign_core::{Context, Error, ErrorKind, Granter, HttpSend, ProvideCredential, Result};
@@ -28,8 +27,9 @@ use reqsign_google::{
     ServerSideCredentialAccessBoundaryGranter, ServiceAccount,
     ServiceAccountTokenCredentialProvider, StaticCredentialProvider,
 };
-use rsa::PrivateKey;
+use rsa::RsaPrivateKey;
 use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+use rsa::rand_core::OsRng;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -65,7 +65,7 @@ fn service_account() -> ServiceAccount {
     ServiceAccount {
         private_key: KEY
             .get_or_init(|| {
-                PrivateKey::new(&mut SysRng, 1024)
+                RsaPrivateKey::new(&mut OsRng, 1024)
                     .unwrap()
                     .to_pkcs8_pem(LineEnding::LF)
                     .unwrap()

@@ -19,9 +19,12 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use rsa::PrivateKey;
+use rsa::RsaPrivateKey;
+use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::DecodePrivateKey;
+use rsa::rand_core::OsRng;
 use rsa::sha2::Sha256;
+use rsa::signature::{RandomizedSigner, SignatureEncoding};
 use serde::Serialize;
 
 use crate::{Error, Result};
@@ -30,7 +33,7 @@ use crate::{Error, Result};
 ///
 /// RS256 is RSA PKCS#1 v1.5 with SHA-256. The caller owns the JWT header and
 /// claims shape so service-specific fields such as `x5t` stay service-local.
-pub fn encode_rs256<H, C>(header: &H, claims: &C, private_key: &PrivateKey) -> Result<String>
+pub fn encode_rs256<H, C>(header: &H, claims: &C, private_key: &RsaPrivateKey) -> Result<String>
 where
     H: Serialize,
     C: Serialize,
@@ -39,10 +42,10 @@ where
     let encoded_claims = encode_json(claims)?;
     let signing_input = format!("{encoded_header}.{encoded_claims}");
 
-    let signature = private_key
-        .pkcs1v15_sign::<Sha256>(signing_input.as_bytes())
-        .map_err(|e| Error::unexpected("failed to sign JWT").with_source(e))?;
-    let encoded_signature = URL_SAFE_NO_PAD.encode(signature);
+    let mut rng = OsRng;
+    let signing_key = SigningKey::<Sha256>::new(private_key.clone());
+    let signature = signing_key.sign_with_rng(&mut rng, signing_input.as_bytes());
+    let encoded_signature = URL_SAFE_NO_PAD.encode(signature.to_bytes());
 
     Ok(format!("{signing_input}.{encoded_signature}"))
 }
@@ -56,7 +59,7 @@ where
     let private_key_pem = std::str::from_utf8(private_key_pem).map_err(|e| {
         Error::credential_invalid("RSA private key PEM is not valid UTF-8").with_source(e)
     })?;
-    let private_key = PrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
+    let private_key = RsaPrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
         Error::credential_invalid("failed to parse PKCS#8 RSA private key PEM").with_source(e)
     })?;
 
@@ -76,8 +79,8 @@ where
 mod tests {
     use super::*;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use getrandom::SysRng;
     use rsa::pkcs1v15::{Signature, VerifyingKey};
+    use rsa::rand_core::OsRng;
     use rsa::signature::Verifier;
     use serde_json::json;
 
@@ -98,7 +101,8 @@ mod tests {
 
     #[test]
     fn encode_rs256_keeps_jws_shape_and_verifiable_signature() -> Result<()> {
-        let private_key = PrivateKey::new(&mut SysRng, 2048)
+        let mut rng = OsRng;
+        let private_key = RsaPrivateKey::new(&mut rng, 2048)
             .map_err(|e| Error::unexpected("failed to generate test RSA key").with_source(e))?;
 
         let jwt = encode_rs256(

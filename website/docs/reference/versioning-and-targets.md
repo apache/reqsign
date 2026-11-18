@@ -58,7 +58,9 @@ majors are published with each
 
 ## Targets
 
-**Rust version.** The workspace requires Rust 1.87.0 or later. CI tracks stable. Raising the minimum supported Rust version is a user-visible change.
+**Rust version.** The workspace declares `rust-version = "1.86.0"` — the
+minimum supported Rust. CI tracks stable; MSRV bumps are treated as
+observable changes, not patch-level noise.
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI
 exercises Linux, macOS, and Windows. The default context components (Tokio
