@@ -159,7 +159,7 @@ let signer = google::default_signer("storage.googleapis.com");
 use reqsign::aliyun;
 
 // Default signer for Aliyun OSS
-let signer = aliyun::default_signer();
+let signer = aliyun::default_signer("mybucket");
 ```
 
 ## Features
@@ -177,6 +177,7 @@ let signer = aliyun::default_signer();
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
   - Tencent COS: `reqsign-tencent-cos`
+  - Volcengine TOS: `reqsign-volcengine-tos`
 
 ## Contributing
 
