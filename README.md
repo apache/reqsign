@@ -16,7 +16,7 @@ Most object storage signature API is simple. But they could be complicated with 
 
 ## Quick Start
 
-### Option 1: Use Default Signer (Recommend)
+### Option 1: Use Default Signer (Recommended)
 
 The simplest way to use `reqsign` is with default signers provided by each service:
 
