@@ -12,13 +12,13 @@ Signing API requests without effort.
 
 ---
 
-Most object storage signature API is simple. But they could be complicated with various of SDKs and setup environment. `reqsign` bring simple API back: build, sign, send.
+Most APIs are simple, but they can become complicated when hidden behind complex abstractions. `reqsign` brings the simple API back: build, sign, send.
 
 ## Quick Start
 
 ### Option 1: Use Default Signer (Recommended)
 
-The simplest way to use `reqsign` is with default signers provided by each service:
+The simplest way to use `reqsign` is with the default signers provided by each service:
 
 ```rust
 use anyhow::Result;
@@ -164,8 +164,8 @@ let signer = aliyun::default_signer();
 
 ## Features
 
-- Pure rust with minimal dependencies.
-- Test against official SDKs and services.
+- Pure Rust with minimal dependencies.
+- Tested against official SDKs and services.
 - Supported services
   - Aliyun OSS: `reqsign-aliyun-oss`
   - AWS shared credentials and canonicalization: `reqsign-aws-core`
@@ -188,7 +188,7 @@ Submit [issues](https://github.com/apache/reqsign/issues/new/choose) for bug rep
 
 Join the [development mailing list](mailto:dev@reqsign.apache.org) for project discussions and release votes. [Subscribe](mailto:dev-subscribe@reqsign.apache.org) before posting, or browse the [archives](https://lists.apache.org/list.html?dev@reqsign.apache.org).
 
-## Acknowledge
+## Acknowledgments
 
 Inspired by:
 
@@ -197,4 +197,4 @@ Inspired by:
 
 ## License
 
-[Apache License, Version 2.0](LICENSE).
+Licensed under [Apache License, Version 2.0](LICENSE).
