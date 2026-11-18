@@ -340,12 +340,12 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use bytes::Bytes;
+    use getrandom::SysRng;
     use http::{HeaderMap, Method};
     use reqsign_core::hash::base64_decode;
     use reqsign_core::{ErrorKind, FileRead, Granter, HttpSend, StaticEnv, time::Timestamp};
-    use rsa::RsaPrivateKey;
+    use rsa::PrivateKey;
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-    use rsa::rand_core::OsRng;
     use serde_json::Value;
 
     use crate::{
@@ -436,7 +436,7 @@ mod tests {
     }
 
     fn service_account() -> ServiceAccount {
-        let key = RsaPrivateKey::new(&mut OsRng, 1024).expect("test RSA key must generate");
+        let key = PrivateKey::new(&mut SysRng, 1024).expect("test RSA key must generate");
         let private_key = key
             .to_pkcs8_pem(LineEnding::LF)
             .expect("test RSA key must encode")
@@ -494,7 +494,7 @@ mod tests {
 
     fn decode_jwt_json(segment: &str) -> Value {
         let mut standard = segment.replace('-', "+").replace('_', "/");
-        while standard.len() % 4 != 0 {
+        while !standard.len().is_multiple_of(4) {
             standard.push('=');
         }
         serde_json::from_slice(&base64_decode(&standard).expect("JWT segment must decode"))

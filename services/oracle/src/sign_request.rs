@@ -23,10 +23,8 @@ use log::debug;
 use reqsign_core::Result;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, SignRequest, SigningCredential, SigningRequest};
-use rsa::pkcs1v15::SigningKey;
 use rsa::sha2::Sha256;
-use rsa::signature::{SignatureEncoding, Signer};
-use rsa::{RsaPrivateKey, pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey};
+use rsa::{PrivateKey, pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey};
 use std::fmt::Write;
 use std::time::Duration;
 
@@ -95,18 +93,17 @@ impl SignRequest for RequestSigner {
         // Read private key from file
         let private_key_content = ctx.file_read_as_string(&cred.key_file).await?;
         // Older OpenSSL versions produce PKCS#1 PEM keys with `openssl genrsa`.
-        let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_content)
-            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&private_key_content))
+        let private_key = PrivateKey::from_pkcs8_pem(&private_key_content)
+            .or_else(|_| PrivateKey::from_pkcs1_pem(&private_key_content))
             .map_err(|e| {
                 reqsign_core::Error::credential_invalid(format!("Failed to read private key: {e}"))
             })?;
 
         // Sign the string
-        let signing_key = SigningKey::<Sha256>::new(private_key);
-        let signature = signing_key
-            .try_sign(string_to_sign.as_bytes())
+        let signature = private_key
+            .pkcs1v15_sign::<Sha256>(string_to_sign.as_bytes())
             .map_err(|e| reqsign_core::Error::unexpected(format!("Failed to sign: {e}")))?;
-        let encoded_signature = general_purpose::STANDARD.encode(signature.to_bytes());
+        let encoded_signature = general_purpose::STANDARD.encode(signature);
 
         // Set headers
         signing_req
@@ -153,9 +150,9 @@ fn build_string_to_sign(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use getrandom::SysRng;
     use reqsign_core::FileRead;
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-    use rsa::rand_core::OsRng;
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -193,7 +190,7 @@ mod tests {
             string_to_sign.contains(&format!("(request-target): get /object%2Fname?{RAW_QUERY}"))
         );
 
-        let private_key = RsaPrivateKey::new(&mut OsRng, 1024).expect("key generation must work");
+        let private_key = PrivateKey::new(&mut SysRng, 1024).expect("key generation must work");
         let private_key = private_key
             .to_pkcs8_pem(LineEnding::LF)
             .expect("private key must encode")

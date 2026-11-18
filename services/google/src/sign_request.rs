@@ -18,10 +18,8 @@
 use http::{Uri, header};
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
-use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::DecodePrivateKey;
-use rsa::rand_core::OsRng;
-use rsa::signature::RandomizedSigner;
+use rsa::sha2::Sha256;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -261,14 +259,16 @@ impl RequestSigner {
     }
 
     fn sign_with_service_account(private_key_pem: &str, string_to_sign: &str) -> Result<String> {
-        let mut rng = OsRng;
-        let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
+        let private_key = rsa::PrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
             reqsign_core::Error::unexpected("failed to parse private key").with_source(e)
         })?;
-        let signing_key = SigningKey::<rsa::sha2::Sha256>::new(private_key);
-        let signature = signing_key.sign_with_rng(&mut rng, string_to_sign.as_bytes());
+        let signature = private_key
+            .pkcs1v15_sign::<Sha256>(string_to_sign.as_bytes())
+            .map_err(|e| {
+                reqsign_core::Error::unexpected("failed to sign request").with_source(e)
+            })?;
 
-        Ok(signature.to_string())
+        Ok(hex_encode_upper(&signature))
     }
 
     fn build_signed_query_with_service_account(
@@ -688,6 +688,7 @@ fn append_query_fragment(uri: &Uri, fragment: &str) -> Result<Uri> {
 mod tests {
     use super::*;
     use bytes::Bytes;
+    use getrandom::SysRng;
     use http::header;
     use reqsign_core::{ErrorKind, HttpSend, ProvideCredential, Signer};
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
@@ -1063,7 +1064,7 @@ mod tests {
 
     #[tokio::test]
     async fn service_account_exchange_preserves_optional_expiration_response() -> Result<()> {
-        let private_key = rsa::RsaPrivateKey::new(&mut OsRng, 1024)
+        let private_key = rsa::PrivateKey::new(&mut SysRng, 1024)
             .expect("private key must generate")
             .to_pkcs8_pem(LineEnding::LF)
             .expect("private key must encode")

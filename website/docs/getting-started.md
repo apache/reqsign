@@ -52,10 +52,7 @@ cargo add http anyhow
 | `volcengine` | Volcengine TOS |
 | `full` | Everything above |
 
-The default `default-context` feature wires a ready-to-use runtime (Tokio
-file reading, reqwest HTTP, Tokio command execution). Keep it unless you are
-[bringing your own runtime](/docs/guides/custom-runtimes/). Requires
-Rust 1.86.0+.
+The default `default-context` feature wires a ready-to-use runtime (Tokio file reading, reqwest HTTP, Tokio command execution). Keep it unless you are [bringing your own runtime](/docs/guides/custom-runtimes/). Requires Rust 1.87.0+.
 
 ## 2. Sign your first request
 

@@ -26,7 +26,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
-use rsa::RsaPrivateKey;
+use rsa::PrivateKey;
 use rsa::pkcs8::DecodePrivateKey;
 use serde::Serialize;
 use sha1::{Digest, Sha1};
@@ -99,7 +99,7 @@ impl ClientCertificateCredentialProvider {
         &self,
         ctx: &Context,
         path: &str,
-    ) -> Result<(Vec<u8>, RsaPrivateKey), reqsign_core::Error> {
+    ) -> Result<(Vec<u8>, PrivateKey), reqsign_core::Error> {
         let cert_data = ctx.file_read(path).await.map_err(|e| {
             reqsign_core::Error::credential_invalid(format!("Failed to read certificate file: {e}"))
         })?;
@@ -141,7 +141,7 @@ impl ClientCertificateCredentialProvider {
         })?;
 
         // Parse private key
-        let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_pem).map_err(|e| {
+        let private_key = PrivateKey::from_pkcs8_pem(&private_key_pem).map_err(|e| {
             reqsign_core::Error::credential_invalid(format!(
                 "Failed to parse private key from PEM: {e}"
             ))
@@ -163,7 +163,7 @@ impl ClientCertificateCredentialProvider {
         tenant_id: &str,
         client_id: &str,
         cert_der: &[u8],
-        private_key: &RsaPrivateKey,
+        private_key: &PrivateKey,
     ) -> Result<String, reqsign_core::Error> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

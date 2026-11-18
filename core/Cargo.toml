@@ -60,3 +60,4 @@ windows-sys = { version = "0.61.0", features = [
 [dev-dependencies]
 asyncband = { workspace = true, features = ["oneshot"] }
 futures = { workspace = true }
+getrandom = { workspace = true }

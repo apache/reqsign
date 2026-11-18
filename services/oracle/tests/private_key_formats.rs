@@ -18,24 +18,24 @@
 use std::sync::LazyLock;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use getrandom::SysRng;
 use http::header::{AUTHORIZATION, DATE};
+use pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use reqsign_core::{Context, ErrorKind, FileRead, Result, SignRequest, Signer};
 use reqsign_oracle::{Credential, RequestSigner, StaticCredentialProvider};
 use rsa::pkcs1::EncodeRsaPrivateKey;
 use rsa::pkcs1v15::{Signature, VerifyingKey};
-use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
-use rsa::rand_core::OsRng;
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use rsa::{PrivateKey, PublicKey};
 
 const KEY_PATH: &str = "test-key.pem";
 const REQUEST_URI: &str = "https://iaas.example.com:8443/20160918/instances?name=a%2Fb&name=c+%20d";
 
-fn private_key() -> &'static RsaPrivateKey {
+fn private_key() -> &'static PrivateKey {
     // Generate one ephemeral key for all formats; never read a developer's OCI files.
-    static KEY: LazyLock<RsaPrivateKey> = LazyLock::new(|| {
-        RsaPrivateKey::new(&mut OsRng, 2048).expect("test RSA key generation must succeed")
+    static KEY: LazyLock<PrivateKey> = LazyLock::new(|| {
+        PrivateKey::new(&mut SysRng, 2048).expect("test RSA key generation must succeed")
     });
     &KEY
 }
@@ -108,7 +108,7 @@ async fn verify_signed_request(pem: &str) -> anyhow::Result<()> {
         original_uri.path_and_query().expect("request target"),
         original_uri.authority().expect("request authority"),
     );
-    let verifier = VerifyingKey::<Sha256>::new(RsaPublicKey::from(private_key()));
+    let verifier = VerifyingKey::<Sha256>::new(PublicKey::from(private_key()));
     verifier.verify(signing_input.as_bytes(), &signature)?;
     assert!(verifier.verify(b"different request", &signature).is_err());
     Ok(())
@@ -156,14 +156,13 @@ async fn assert_rejected_without_mutation(pem: &str) -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn public_keys_are_rejected_without_mutating_request() -> anyhow::Result<()> {
-    let pem = RsaPublicKey::from(private_key()).to_public_key_pem(LineEnding::LF)?;
+    let pem = PublicKey::from(private_key()).to_public_key_pem(LineEnding::LF)?;
     assert_rejected_without_mutation(&pem).await
 }
 
 #[tokio::test]
 async fn encrypted_private_keys_are_rejected_without_mutating_request() -> anyhow::Result<()> {
-    let pem =
-        private_key().to_pkcs8_encrypted_pem(&mut OsRng, "test-passphrase", LineEnding::LF)?;
+    let pem = private_key().to_pkcs8_encrypted_pem("test-passphrase", LineEnding::LF)?;
     assert_rejected_without_mutation(&pem).await
 }
 
