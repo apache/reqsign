@@ -60,8 +60,12 @@ jobs:
             reqsign-tencent-cos
             reqsign-volcengine-tos
           )
+          # Query each root separately so the facade's default-crypto graph is
+          # not unified into the roots. --all-features covers every optional
+          # path; --target all also covers target-specific dependencies.
           for package in "${packages[@]}"; do
-            if cargo tree -p "$package" --edges normal | grep -Eq ' (sha1|sha2|hmac|rsa|p256|aes-gcm) v'; then
+            if cargo tree -p "$package" --all-features --target all --edges normal --prefix none \
+              | grep -Eq '^(sha1|sha2|hmac|rsa|p256|aes-gcm) v'; then
               echo "production cryptographic dependency found in $package"
               exit 1
             fi

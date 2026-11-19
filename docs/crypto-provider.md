@@ -98,6 +98,8 @@ most once per process.
   provider inside `Err`.
 - Concurrent calls are safe: exactly one caller wins and every other caller
   receives `Err`.
+- Installation is not idempotent: a repeated call is rejected rather than
+  succeeding as a no-op.
 - `get_default()` only reads the current value. Calling it before installation
   returns `None` and does not freeze the unset state; a later
   `install_default()` still succeeds.
@@ -228,8 +230,12 @@ their own minimal `CryptoProvider`.
 
 ### Applications
 
-Install one provider once during startup, before constructing signers or calling
-signing operations:
+Install one provider once during startup, before constructing signers and before
+any credential loading that may use cryptography. For example, AWS SSO computes
+its cache key with SHA-1, Google service-account exchange signs a JWT, and Azure
+client certificate authentication signs a client assertion while loading a
+credential. Installing later can change a configuration error into credential
+absence.
 
 ```rust
 use reqsign::RustCryptoProvider;
@@ -246,6 +252,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 A failure from `install_default` means another component already installed a
 provider. Applications that intentionally compose several libraries should
 install their chosen provider before any of them are initialized.
+
+The generic credential chain continues past provider errors and returns
+`Ok(None)` when every source is exhausted; services that select an identity
+before loading, such as AWS SSO, propagate that identity's errors instead. A
+missing provider found through the generic chain can therefore surface as
+credential absence, and `Signer::sign` reports `CredentialInvalid` ("failed to
+load signing credential") with the request unchanged. This preserves the
+existing chain and `Ok(None)` contract; installing before credential loading is
+what makes the missing-provider `ConfigInvalid` visible.
 
 ### Core and Service Crates
 
@@ -271,7 +286,8 @@ Notable service-specific details:
   client assertion uses `jwt::encode_rs256_pem`.
 - Google service-account signing encodes the provider's RSA signature as hex;
   client-side credential access boundary encryption uses AES-GCM through the
-  provider and gets its nonce from `fill_random`.
+  provider and gets its nonce from `fill_random`. Malformed service-account key
+  material returns `CredentialInvalid` while signing the exchange JWT.
 
 ### Removed APIs
 
@@ -294,8 +310,10 @@ The repository verifies this contract with:
 - BoringSSL parity tests against `reqsign-crypto-rustcrypto` for byte-identical
   hashes, HMACs, RSA signatures, and AES-GCM output; cross-backend ECDSA
   verification; error-kind checks; and an AWS SigV4 end-to-end signing test.
-- `cargo tree --edges normal` checks that no core or service production graph
-  contains a cryptographic implementation crate.
+- A per-root `cargo tree --all-features --target all --edges normal` check
+  confirms that no core or service production graph contains a cryptographic
+  implementation crate, without workspace feature unification hiding optional
+  paths.
 - `cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown`,
   the workspace test suite, doc tests, formatting, clippy with `-D warnings`,
   license headers, and the standalone BoringSSL workflow.

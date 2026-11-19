@@ -22,9 +22,9 @@
 //! signing, encryption and random generation performed by reqsign goes through
 //! the installed provider.
 //!
-//! A process can install at most one provider. The installation is idempotent
-//! from the caller's perspective: later attempts return the provider they tried
-//! to install and leave the first provider in place.
+//! A process can install at most one provider. Installation is not
+//! idempotent: later attempts return the provider they tried to install and
+//! leave the first provider in place.
 
 use std::fmt::Debug;
 use std::sync::{Arc, OnceLock};
