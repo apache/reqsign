@@ -32,7 +32,6 @@ bytes = { workspace = true }
 futures = { workspace = true }
 futures-timer = { version = "3", features = ["wasm-bindgen"] }
 form_urlencoded = { workspace = true }
-hex = { workspace = true }
 http = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
