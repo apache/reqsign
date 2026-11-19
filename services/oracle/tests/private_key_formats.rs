@@ -214,7 +214,7 @@ async fn post_signs_caller_supplied_body_metadata() -> anyhow::Result<()> {
         .0;
     let original_uri = parts.uri.clone();
 
-    sign(&pem, &mut parts).await?;
+    sign(pem, &mut parts).await?;
 
     assert_eq!(parts.uri, original_uri);
     assert_eq!(parts.headers["x-original"], "preserved");
@@ -240,7 +240,7 @@ async fn object_storage_put_without_body_metadata_keeps_generic_headers() -> any
     .into_parts()
     .0;
 
-    sign(&pem, &mut parts).await?;
+    sign(pem, &mut parts).await?;
 
     assert_eq!(parts.headers["x-original"], "preserved");
     assert_eq!(signed_headers(&parts)?, "date (request-target) host");
@@ -262,7 +262,7 @@ async fn object_storage_upload_part_signs_supplied_content_length_only() -> anyh
         .into_parts()
         .0;
 
-    sign(&pem, &mut parts).await?;
+    sign(pem, &mut parts).await?;
 
     assert_eq!(parts.headers[CONTENT_LENGTH], "10485760");
     assert_eq!(
@@ -293,7 +293,7 @@ async fn duplicate_signed_body_header_is_rejected_without_mutation() -> anyhow::
         .0;
     let original = parts.clone();
 
-    let error = sign(&pem, &mut parts)
+    let error = sign(pem, &mut parts)
         .await
         .expect_err("duplicate signed body headers must be rejected");
 
