@@ -25,6 +25,7 @@ import tempfile
 import unittest
 
 SCRIPTS = Path(__file__).resolve().parent
+FIXTURE_GITHUB_TOKEN = 'gh-fixture-token'
 FAKE_AZ = r"""#!/usr/bin/env python3
 import json, os, pathlib, sys
 args = sys.argv[1:]
@@ -92,7 +93,7 @@ else:
 
 
 FAKE_CURL = r"""#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, sys, urllib.parse
 args = sys.argv[1:]
 root = pathlib.Path(os.environ['FAKE_AZ_STATE'])
 def option(name, default=''):
@@ -118,6 +119,35 @@ if url.startswith('https://oidc.example.test/token'):
 if url.startswith('https://dev.azure.com/'):
     assert option('--header') == 'Authorization: Bearer fake-devops-token', \
         'unexpected DevOps authorization header'
+if url.startswith('https://api.github.com/'):
+    assert option('--header') == 'Authorization: Bearer __GH_TOKEN__', \
+        'unexpected GitHub authorization header'
+    assert method == 'GET'
+    if os.getenv('RUNS_API_FAIL'):
+        sys.exit(35)
+    query = []
+    for i, arg in enumerate(args):
+        if arg == '--data-urlencode':
+            name, _, value = args[i + 1].partition('=')
+            # curl percent-encodes the value, which matters for branch names.
+            query.append(name + '=' + urllib.parse.quote(value, safe=''))
+    if query:
+        url = url + '?' + '&'.join(query)
+    with (root / 'curl-calls.jsonl').open('a') as f:
+        f.write(json.dumps({'method': method, 'url': url}) + '\n')
+    if os.getenv('RUNS_API_BROKEN'):
+        respond('upstream returned a page, not JSON')
+    elif os.getenv('RUNS_API_STATUS', '200') != '200':
+        respond(json.dumps({'message': 'server error'}), os.getenv('RUNS_API_STATUS'))
+    else:
+        # The fixture answers with the run under test unless a test supplies
+        # the workflow runs the check should see.
+        respond(os.getenv('RUNS_API_BODY') or json.dumps({
+            'total_count': 1,
+            'workflow_runs': [{'id': 100, 'event': 'pull_request',
+                               'head_branch': 'xuanwo/feature',
+                               'status': 'completed', 'conclusion': 'success'}]}))
+    sys.exit(0)
 # Both waiting and cancellation must finish before fixture cleanup.
 assert list(root.glob('ci-probe-*'))
 with (root / 'curl-calls.jsonl').open('a') as f:
@@ -176,7 +206,7 @@ class LiveScriptTests(unittest.TestCase):
         binary.write_text(FAKE_AZ)
         binary.chmod(0o755)
         curl = self.root / 'curl'
-        curl.write_text(FAKE_CURL)
+        curl.write_text(FAKE_CURL.replace('__GH_TOKEN__', FIXTURE_GITHUB_TOKEN))
         curl.chmod(0o755)
         self.env = {
             **os.environ,
@@ -201,6 +231,10 @@ class LiveScriptTests(unittest.TestCase):
             'GITHUB_RUN_ID': '123',
             'GITHUB_RUN_ATTEMPT': '1',
             'GITHUB_OUTPUT': str(self.root / 'outputs'),
+            'GITHUB_TOKEN': FIXTURE_GITHUB_TOKEN,
+            'GITHUB_REPOSITORY': 'apache/reqsign',
+            'GITHUB_EVENT_NAME': 'pull_request',
+            'GITHUB_HEAD_REF': 'xuanwo/feature',
         }
 
     def run_script(self, script, *args):
@@ -443,6 +477,139 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         self.assertNotIn('sensitive-403-response-body', result.stdout + result.stderr)
         self.assertNotIn('fake-devops-token', result.stdout + result.stderr)
         self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+
+    def superseded(self):
+        return (self.root / 'outputs').read_text().strip()
+
+    def runs_api_urls(self):
+        path = self.state / 'curl-calls.jsonl'
+        if not path.exists():
+            return []
+        return [c['url'] for c in self.curl_calls()
+                if c['url'].startswith('https://api.github.com/')]
+
+    def check_probe(self):
+        return self.run_script('superseded-probe.sh', 'azure_storage.yml')
+
+    def newer_run(self, **fields):
+        run = {'id': 200, 'event': 'pull_request', 'head_branch': 'xuanwo/feature',
+               'status': 'queued'}
+        run.update(fields)
+        return json.dumps({'total_count': 1, 'workflow_runs': [run]})
+
+    def test_probe_skipped_when_a_newer_run_is_in_flight(self):
+        self.env['RUNS_API_BODY'] = self.newer_run()
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=true')
+        self.assertIn('Skipping the live probe: newer run 200', result.stdout)
+        self.assertNotIn(FIXTURE_GITHUB_TOKEN, result.stdout + result.stderr)
+        urls = self.runs_api_urls()
+        self.assertEqual(len(urls), 1)
+        self.assertIn('/repos/apache/reqsign/actions/workflows/azure_storage.yml/runs?', urls[0])
+        self.assertIn('event=pull_request', urls[0])
+        self.assertIn('branch=xuanwo%2Ffeature', urls[0])
+        self.assertIn('per_page=50', urls[0])
+
+    def test_probe_kept_when_no_newer_run_is_in_flight(self):
+        self.env['RUNS_API_BODY'] = json.dumps({'workflow_runs': [
+            {'id': 50, 'event': 'pull_request', 'head_branch': 'xuanwo/feature',
+             'status': 'queued'},
+            {'id': 123, 'event': 'pull_request', 'head_branch': 'xuanwo/feature',
+             'status': 'completed'}]})
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+        self.assertIn('Running the live probe', result.stdout)
+
+    def test_probe_kept_when_the_newer_run_already_completed(self):
+        # A finished newer run is not an in-flight replacement; an older probe
+        # that still runs is cheaper than a missing live validation.
+        self.env['RUNS_API_BODY'] = self.newer_run(status='completed',
+                                                  conclusion='cancelled')
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+
+    def test_probe_kept_when_the_newer_run_is_for_another_branch(self):
+        self.env['RUNS_API_BODY'] = self.newer_run(head_branch='xuanwo/other')
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+
+    def test_probe_skipped_for_a_newer_push_on_main(self):
+        del self.env['GITHUB_HEAD_REF']
+        self.env.update(GITHUB_EVENT_NAME='push', GITHUB_REF_NAME='main',
+                        RUNS_API_BODY=self.newer_run(event='push', head_branch='main',
+                                                    status='in_progress'))
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=true')
+        self.assertIn('event=push', self.runs_api_urls()[0])
+        self.assertIn('branch=main', self.runs_api_urls()[0])
+
+    def test_probe_kept_when_the_runs_api_fails(self):
+        self.env['RUNS_API_STATUS'] = '500'
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+        self.assertIn('HTTP 500', result.stderr)
+
+    def test_probe_kept_when_the_runs_api_is_unreadable(self):
+        self.env['RUNS_API_BROKEN'] = '1'
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+
+    def test_probe_kept_when_the_runs_api_is_unreachable(self):
+        self.env['RUNS_API_FAIL'] = '1'
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+        self.assertIn('Could not list workflow runs; running the probe', result.stderr)
+
+    def test_probe_kept_without_a_token(self):
+        del self.env['GITHUB_TOKEN']
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+        self.assertEqual(self.runs_api_urls(), [])
+
+
+ROOT = SCRIPTS.parent.parent
+
+
+class ProbeWiringTests(unittest.TestCase):
+    """The workflow has to skip every remote step for a superseded probe."""
+
+    def probe_job_text(self):
+        text = (ROOT / '.github/workflows/azure_storage.yml').read_text()
+        job = text[text.index('  test_azure_pipelines_provider:'):]
+        return job[:job.index('\n  signing_test:')]
+
+    def test_skip_check_runs_before_any_remote_step(self):
+        job = self.probe_job_text()
+        check = job.index('superseded-probe.sh')
+        for later in ('Configure 1Password Connect', 'Log in to Azure with GitHub OIDC',
+                      'with-probe.sh'):
+            self.assertLess(check, job.index(later), later)
+
+    def test_every_remote_step_waits_for_the_skip_result(self):
+        job = self.probe_job_text()
+        guard = "if: steps.current.outputs.superseded != 'true'"
+        self.assertEqual(job.count(guard), 4)
+        self.assertIn('id: current', job)
+        self.assertIn('superseded: ${{ steps.current.outputs.superseded }}', job)
+        self.assertIn('actions: read', job)
+        self.assertIn("group: ${{ github.workflow }}-azure-pipelines-probe", job)
+        self.assertIn('queue: max', job)
+        self.assertIn('cancel-in-progress: false', job)
+
+    def test_summary_reports_a_superseded_probe_instead_of_a_pass(self):
+        text = (ROOT / '.github/workflows/azure_storage.yml').read_text()
+        self.assertIn('AZURE_PIPELINES_SUPERSEDED', text)
+        self.assertIn('skipped (superseded by a newer run)', text)
 
 
 if __name__ == '__main__':

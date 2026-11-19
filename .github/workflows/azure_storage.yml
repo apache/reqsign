@@ -523,8 +523,9 @@ jobs:
     # The pool behind this probe has a single agent. Serialize probes across
     # pull requests, main and reruns, and never cancel one in progress: a
     # superseded run still has to cancel its Azure run and delete its probe
-    # blob. queue: max keeps pending probes instead of replacing them, so a
-    # newer run cannot drop live coverage already waiting for the agent.
+    # blob. queue: max keeps pending entries instead of replacing them, so a
+    # newer run on another ref cannot drop live coverage; a probe that a newer
+    # run on its own ref really replaces is skipped by the first step below.
     concurrency:
       group: ${{ github.workflow }}-azure-pipelines-probe
       cancel-in-progress: false
@@ -536,17 +537,29 @@ jobs:
       AZURE_DEVOPS_PIPELINE_ID: "1"
     permissions:
       contents: read
+      # List this workflow's runs for the branch so a superseded probe can
+      # leave the single pool agent to its replacement.
+      actions: read
       id-token: write
+    outputs:
+      superseded: ${{ steps.current.outputs.superseded }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check whether a newer run replaces this probe
+        id: current
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/azure-live-tests/superseded-probe.sh azure_storage.yml
       - name: Configure 1Password Connect
+        if: steps.current.outputs.superseded != 'true'
         uses: 1Password/load-secrets-action/configure@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           connect-host: ${{ secrets.OP_CONNECT_HOST }}
           connect-token: ${{ secrets.OP_CONNECT_TOKEN }}
       - name: Load Azure control-plane configuration
+        if: steps.current.outputs.superseded != 'true'
         uses: 1Password/load-secrets-action@70062d7a876d3eb6334754fa26efd2fbd90c32f2 # v5.0.1
         with:
           export-env: true
@@ -554,12 +567,14 @@ jobs:
           AZURE_TENANT_ID: op://reqsign/azure-storage/tenant_id
           AZURE_CLIENT_ID: op://reqsign/azure-storage/client_id
       - name: Log in to Azure with GitHub OIDC
+        if: steps.current.outputs.superseded != 'true'
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
       - name: Test AzurePipelinesCredentialProvider with an ephemeral probe
+        if: steps.current.outputs.superseded != 'true'
         run: bash .github/azure-live-tests/with-probe.sh bash .github/azure-live-tests/azure-pipelines.sh
 
   signing_test:
@@ -626,6 +641,7 @@ jobs:
           DEFAULT_RESULT: ${{ needs.test_default_provider.result }}
           IMDS_RESULT: ${{ needs.test_imds_provider.result }}
           AZURE_PIPELINES_RESULT: ${{ needs.test_azure_pipelines_provider.result }}
+          AZURE_PIPELINES_SUPERSEDED: ${{ needs.test_azure_pipelines_provider.outputs.superseded }}
           SIGNING_RESULT: ${{ needs.signing_test.result }}
         run: |
           {
@@ -643,7 +659,11 @@ jobs:
               echo "| WorkloadIdentityCredentialProvider | GitHub OIDC, Microsoft Entra ID, and Azure Blob Storage | $WORKLOAD_IDENTITY_RESULT |"
               echo "| DefaultCredentialProvider | Azure CLI through the default chain and Azure Blob Storage | $DEFAULT_RESULT |"
               echo "| ImdsCredentialProvider | Ephemeral Azure VM IMDS and Azure Blob Storage | $IMDS_RESULT |"
-              echo "| AzurePipelinesCredentialProvider | GitHub-queued Azure Pipelines service connection and Azure Blob Storage | $AZURE_PIPELINES_RESULT |"
+              if [[ "$AZURE_PIPELINES_SUPERSEDED" == "true" ]]; then
+                echo "| AzurePipelinesCredentialProvider | GitHub-queued Azure Pipelines service connection and Azure Blob Storage | skipped (superseded by a newer run) |"
+              else
+                echo "| AzurePipelinesCredentialProvider | GitHub-queued Azure Pipelines service connection and Azure Blob Storage | ${AZURE_PIPELINES_RESULT} |"
+              fi
               echo "| Azure Shared Key and SAS signing | Azure Blob Storage | $SIGNING_RESULT |"
             else
               echo "| Live service integration tests | Skipped for an untrusted change | skipped |"
