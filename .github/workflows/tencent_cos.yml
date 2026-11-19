@@ -29,57 +29,86 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   unit_test:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run unit tests
+        working-directory: ./services/tencent-cos
+        run: cargo test --no-fail-fast
+        env:
+          RUST_LOG: DEBUG
+          RUST_BACKTRACE: full
+
+  # Live coverage needs a GitHub OIDC token that Tencent Cloud STS exchanges for
+  # temporary credentials. Only this repository's pushes and pull requests may
+  # mint that token, so the job is skipped for forks and dependabot, and it is
+  # skipped with a warning until the REQSIGN_TENCENT_LIVE_* variables exist.
+  check_live_config:
+    runs-on: ubuntu-latest
+    outputs:
+      web_identity: ${{ steps.check.outputs.web_identity }}
+    steps:
+      - name: Check live Web Identity configuration
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          ACTOR: ${{ github.actor }}
+          ROLE_ARN: ${{ vars.REQSIGN_TENCENT_LIVE_ROLE_ARN }}
+          PROVIDER_ID: ${{ vars.REQSIGN_TENCENT_LIVE_PROVIDER_ID }}
+          REGION: ${{ vars.REQSIGN_TENCENT_LIVE_REGION }}
+          OBJECT_URL: ${{ vars.REQSIGN_TENCENT_LIVE_OBJECT_URL }}
+        run: |
+          web_identity=false
+          if [[ "$EVENT_NAME" != "push" && ( "$EVENT_NAME" != "pull_request" || "$IS_FORK" != "false" || "$ACTOR" == "dependabot[bot]" ) ]]; then
+            echo "::warning::Tencent COS Web Identity live test skipped: only pushes and pull requests from this repository mint cloud credentials"
+          elif [[ -z "$ROLE_ARN" || -z "$PROVIDER_ID" || -z "$REGION" || -z "$OBJECT_URL" ]]; then
+            echo "::warning::Tencent COS Web Identity live test skipped: REQSIGN_TENCENT_LIVE_* repository variables are not configured"
+          else
+            web_identity=true
+          fi
+          echo "web_identity=$web_identity" >> "$GITHUB_OUTPUT"
+
+  test_web_identity_provider:
+    needs: check_live_config
+    if: needs.check_live_config.outputs.web_identity == 'true'
+    runs-on: ubuntu-latest
     permissions:
+      contents: read
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Test
-        working-directory: ./services/tencent-cos
-        run: cargo test --no-fail-fast
-        env:
-          RUST_LOG: DEBUG
-          RUST_BACKTRACE: full
-          # Tencent COS Test
-          REQSIGN_TENCENT_COS_TEST: ${{ secrets.REQSIGN_TENCENT_COS_TEST }}
-          REQSIGN_TENCENT_COS_ACCESS_KEY: ${{ secrets.REQSIGN_TENCENT_COS_ACCESS_KEY }}
-          REQSIGN_TENCENT_COS_SECRET_KEY: ${{ secrets.REQSIGN_TENCENT_COS_SECRET_KEY }}
-          REQSIGN_TENCENT_COS_URL: ${{ secrets.REQSIGN_TENCENT_COS_URL }}
-
-  tencent_cloud_web_identify_test:
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: "read"
-      id-token: "write"
-    if: github.event_name == 'push' || (!github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]')
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Get Id Token
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      - name: Get GitHub OIDC token
         id: idtoken
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            let id_token = await core.getIDToken('sts.tencentcloudapi.com')
-            core.exportVariable('GITHUB_ID_TOKEN', id_token)
+            const id_token = await core.getIDToken('sts.tencentcloudapi.com')
             core.setSecret(id_token)
-
-      - name: Test
+            require('fs').writeFileSync(
+              `${{ runner.temp }}/tencent-web-identity-token`,
+              id_token,
+              { mode: 0o600 }
+            )
+      - name: Test AssumeRoleWithWebIdentityCredentialProvider against a private COS object
         working-directory: ./services/tencent-cos
-        run: cargo test --no-fail-fast
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
-          REQSIGN_TENCENT_COS_TEST: ${{ secrets.REQSIGN_TENCENT_COS_TEST }}
-          REQSIGN_TENCENT_COS_ACCESS_KEY: ${{ secrets.REQSIGN_TENCENT_COS_ACCESS_KEY }}
-          REQSIGN_TENCENT_COS_SECRET_KEY: ${{ secrets.REQSIGN_TENCENT_COS_SECRET_KEY }}
-          REQSIGN_TENCENT_COS_URL: ${{ secrets.REQSIGN_TENCENT_COS_URL }}
-          REQSIGN_TENCENT_COS_ROLE_ARN: ${{ secrets.REQSIGN_TENCENT_COS_ROLE_ARN }}
-          REQSIGN_TENCENT_COS_PROVIDER_ID: ${{ secrets.REQSIGN_TENCENT_COS_PROVIDER_ID }}
-          REQSIGN_TENCENT_COS_REGION: ${{ secrets.REQSIGN_TENCENT_COS_REGION }}
+          REQSIGN_TENCENT_COS_TEST_WEB_IDENTITY: "on"
+          TENCENTCLOUD_REGION: ${{ vars.REQSIGN_TENCENT_LIVE_REGION }}
+          TENCENTCLOUD_ROLE_ARN: ${{ vars.REQSIGN_TENCENT_LIVE_ROLE_ARN }}
+          TENCENTCLOUD_PROVIDER_ID: ${{ vars.REQSIGN_TENCENT_LIVE_PROVIDER_ID }}
+          TENCENTCLOUD_WEB_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/tencent-web-identity-token
+          REQSIGN_TENCENT_COS_OBJECT_URL: ${{ vars.REQSIGN_TENCENT_LIVE_OBJECT_URL }}
+        run: |
+          test "${REQSIGN_TENCENT_COS_TEST_WEB_IDENTITY}" = "on"
+          cargo test --test web_identity_live --no-fail-fast -- --no-capture
