@@ -17,16 +17,9 @@
 
 use crate::Credential;
 use http::request::Parts;
-use http::{HeaderValue, header};
-use log::debug;
-use reqsign_aws_core::signing::{
-    append_query_fragment, append_query_pairs, canonical_request_string, canonicalize_headers,
-    canonicalize_headers_with_standard_session_token, canonicalize_query,
-};
-use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
+use reqsign_aws_core::signing::sign_request_parts;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Result, SignRequest, SigningCredential, SigningRequest};
-use std::fmt::Write;
+use reqsign_core::{Context, Result, SignRequest};
 use std::time::Duration;
 
 const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
@@ -132,175 +125,20 @@ impl SignRequest for RequestSigner {
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
     ) -> Result<()> {
-        let Some(cred) = credential else {
+        let Some(credential) = credential else {
             return Ok(());
         };
 
-        let now = self.get_time();
-        let required_until = self.required_valid_until_at(now, expires_in);
-        if !cred.is_valid_at(required_until) {
-            return Err(reqsign_core::Error::credential_invalid(
-                "credential expires before the requested signing operation deadline",
-            ));
-        }
-
-        let original_uri = req.uri.clone();
-        let mut signed_req = SigningRequest::build(req)?;
-
-        // canonicalize context
-        if self.use_standard_session_token {
-            canonicalize_headers_with_standard_session_token(
-                &mut signed_req,
-                cred,
-                expires_in,
-                now,
-            )?;
-        } else {
-            canonicalize_headers(&mut signed_req, cred, expires_in, now)?;
-        }
-        let authentication_query = authentication_query(
-            &signed_req,
-            cred,
+        sign_request_parts(
+            req,
+            credential,
             expires_in,
-            now,
+            self.get_time(),
             &self.service,
             &self.region,
             self.use_standard_session_token,
-        );
-        let canonical_query = canonicalize_query(&signed_req, &authentication_query);
-
-        // build canonical request and string to sign.
-        let creq = canonical_request_string(&signed_req, &canonical_query)?;
-        let encoded_req = hex_sha256(creq.as_bytes());
-
-        // Scope: "20220313/<region>/<service>/aws4_request"
-        let scope = format!(
-            "{}/{}/{}/aws4_request",
-            now.format_date(),
-            self.region,
-            self.service
-        );
-        debug!("calculated scope: {scope}");
-
-        // StringToSign:
-        //
-        // AWS4-HMAC-SHA256
-        // 20220313T072004Z
-        // 20220313/<region>/<service>/aws4_request
-        // <hashed_canonical_request>
-        let string_to_sign = {
-            let mut f = String::new();
-            writeln!(f, "AWS4-HMAC-SHA256").map_err(|e| {
-                reqsign_core::Error::unexpected(format!("failed to write algorithm: {e}"))
-            })?;
-            writeln!(f, "{}", now.format_iso8601()).map_err(|e| {
-                reqsign_core::Error::unexpected(format!("failed to write timestamp: {e}"))
-            })?;
-            writeln!(f, "{}", scope).map_err(|e| {
-                reqsign_core::Error::unexpected(format!("failed to write scope: {e}"))
-            })?;
-            write!(f, "{}", encoded_req).map_err(|e| {
-                reqsign_core::Error::unexpected(format!("failed to write encoded request: {e}"))
-            })?;
-            f
-        };
-        debug!("calculated string to sign: {string_to_sign}");
-
-        let signing_key =
-            generate_signing_key(&cred.secret_access_key, now, &self.region, &self.service);
-        let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
-
-        let final_uri = if expires_in.is_some() {
-            let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
-            Some(append_query_fragment(
-                &unsigned_uri,
-                &format!("X-Amz-Signature={signature}"),
-            )?)
-        } else {
-            let mut authorization = HeaderValue::from_str(&format!(
-                "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-                cred.access_key_id,
-                scope,
-                signed_req.header_name_to_vec_sorted().join(";"),
-                signature
-            ))
-            .map_err(|e| {
-                reqsign_core::Error::unexpected(format!(
-                    "failed to create authorization header: {e}"
-                ))
-            })?;
-            authorization.set_sensitive(true);
-
-            signed_req
-                .headers
-                .insert(header::AUTHORIZATION, authorization);
-            None
-        };
-
-        // Apply to the request.
-        signed_req.apply(req)?;
-        if let Some(uri) = final_uri {
-            req.uri = uri;
-        }
-        Ok(())
+        )
     }
-}
-
-fn authentication_query(
-    ctx: &SigningRequest,
-    cred: &Credential,
-    expires_in: Option<Duration>,
-    now: Timestamp,
-    service: &str,
-    region: &str,
-    use_standard_session_token: bool,
-) -> Vec<(String, String)> {
-    let mut query = Vec::new();
-    if let Some(expire) = expires_in {
-        query.push(("X-Amz-Algorithm".into(), "AWS4-HMAC-SHA256".into()));
-        query.push((
-            "X-Amz-Credential".into(),
-            format!(
-                "{}/{}/{}/{}/aws4_request",
-                cred.access_key_id,
-                now.format_date(),
-                region,
-                service
-            ),
-        ));
-        query.push(("X-Amz-Date".into(), now.format_iso8601()));
-        query.push(("X-Amz-Expires".into(), expire.as_secs().to_string()));
-        query.push((
-            "X-Amz-SignedHeaders".into(),
-            ctx.header_name_to_vec_sorted().join(";"),
-        ));
-
-        if let Some(token) = &cred.session_token {
-            let is_s3_express = !use_standard_session_token
-                && (ctx.authority.as_str().contains("s3express")
-                    || ctx.authority.as_str().contains("--x-s3"));
-            let name = if is_s3_express {
-                "X-Amz-S3session-Token"
-            } else {
-                "X-Amz-Security-Token"
-            };
-            query.push((name.into(), token.into()));
-        }
-    }
-    query
-}
-
-fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &str) -> Vec<u8> {
-    // Sign secret
-    let secret = format!("AWS4{secret}");
-    // Sign date
-    let sign_date = hmac_sha256(secret.as_bytes(), time.format_date().as_bytes());
-    // Sign region
-    let sign_region = hmac_sha256(sign_date.as_slice(), region.as_bytes());
-    // Sign service
-    let sign_service = hmac_sha256(sign_region.as_slice(), service.as_bytes());
-    // Sign request
-    hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes())
 }
 
 #[cfg(test)]
@@ -316,11 +154,17 @@ mod tests {
     use aws_sigv4::http_request::SignatureLocation;
     use aws_sigv4::http_request::SigningSettings;
     use aws_sigv4::sign::v4;
+    use http::HeaderValue;
     use http::Request;
     use http::header;
     use reqsign_aws_core::constants::X_AMZ_CONTENT_SHA_256;
-    use reqsign_aws_core::signing::canonical_uri;
-    use reqsign_core::{ErrorKind, ProvideCredential, Signer};
+    use reqsign_aws_core::signing::{
+        canonical_request_string, canonical_uri, canonicalize_headers,
+        canonicalize_headers_with_standard_session_token, canonicalize_query,
+        sigv4_authentication_query,
+    };
+    use reqsign_core::hash::hex_sha256;
+    use reqsign_core::{ErrorKind, ProvideCredential, Signer, SigningRequest};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::VecDeque;
@@ -411,7 +255,7 @@ mod tests {
         } else {
             canonicalize_headers(&mut signing_request, &credential, expires_in, now)?;
         }
-        let authentication_query = authentication_query(
+        let authentication_query = sigv4_authentication_query(
             &signing_request,
             &credential,
             expires_in,
@@ -970,7 +814,7 @@ mod tests {
             Some(Duration::from_secs(60)),
             now,
         )?;
-        let auth_query = authentication_query(
+        let auth_query = sigv4_authentication_query(
             &signing_req,
             &credential,
             Some(Duration::from_secs(60)),
