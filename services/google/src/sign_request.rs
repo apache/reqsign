@@ -1366,13 +1366,8 @@ mod tests {
     }
 
     fn test_service_account(client_email: &str) -> ServiceAccount {
-        let private_key = rsa::RsaPrivateKey::new(&mut OsRng, 1024)
-            .expect("private key must generate")
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("private key must encode")
-            .to_string();
         ServiceAccount {
-            private_key,
+            private_key: RSA_PKCS8_PEM.to_string(),
             client_email: client_email.to_string(),
         }
     }
