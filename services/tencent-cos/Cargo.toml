@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-tencent-cos"
-version = "3.0.8"
+version = "3.0.9"
 
 description = "Tencent Cloud COS signing implementation for reqsign."
 
@@ -36,6 +36,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
 dotenvy = { workspace = true }
 env_logger = { workspace = true }
 reqsign-core = { workspace = true }

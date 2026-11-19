@@ -29,6 +29,9 @@ pub use region::IMDSv2RegionProvider;
 pub mod assume_role;
 pub use assume_role::AssumeRoleGrant;
 
+mod percent_encoding_mode;
+pub use percent_encoding_mode::PercentEncodingMode;
+
 mod credential;
 pub use credential::Credential;
 

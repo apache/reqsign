@@ -21,9 +21,29 @@ on:
   push:
     branches:
       - main
+    # Live coverage needs this service and the shared workspace crates. Keep
+    # unrelated changes out of the hosted runner queue and the cloud quota.
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "core/**"
+      - "context/**"
+      - "reqsign/**"
+      - "services/aliyun-oss/**"
+      - ".github/workflows/aliyun_oss.yml"
   pull_request:
     branches:
       - main
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "core/**"
+      - "context/**"
+      - "reqsign/**"
+      - "services/aliyun-oss/**"
+      - ".github/workflows/aliyun_oss.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
