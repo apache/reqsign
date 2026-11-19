@@ -47,6 +47,9 @@ pub use service_account_impersonation::{
 mod sign_request;
 pub use sign_request::RequestSigner;
 
+#[cfg(test)]
+mod test_support;
+
 mod provide_credential;
 pub use provide_credential::{
     AuthorizedUserCredentialProvider, DefaultCredentialProvider, DefaultCredentialProviderBuilder,

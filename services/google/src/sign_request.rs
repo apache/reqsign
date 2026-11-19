@@ -20,8 +20,7 @@ use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
 use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::DecodePrivateKey;
-use rsa::rand_core::OsRng;
-use rsa::signature::RandomizedSigner;
+use rsa::signature::Signer;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -261,12 +260,13 @@ impl RequestSigner {
     }
 
     fn sign_with_service_account(private_key_pem: &str, string_to_sign: &str) -> Result<String> {
-        let mut rng = OsRng;
-        let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
+        let private_key = rsa::PrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
             reqsign_core::Error::unexpected("failed to parse private key").with_source(e)
         })?;
         let signing_key = SigningKey::<rsa::sha2::Sha256>::new(private_key);
-        let signature = signing_key.sign_with_rng(&mut rng, string_to_sign.as_bytes());
+        let signature = signing_key
+            .try_sign(string_to_sign.as_bytes())
+            .map_err(|e| reqsign_core::Error::unexpected("failed to sign").with_source(e))?;
 
         Ok(signature.to_string())
     }
@@ -690,9 +690,10 @@ mod tests {
     use bytes::Bytes;
     use http::header;
     use reqsign_core::{ErrorKind, HttpSend, ProvideCredential, Signer};
-    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+
+    use crate::test_support::RSA_PKCS8_PEM;
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -1063,13 +1064,8 @@ mod tests {
 
     #[tokio::test]
     async fn service_account_exchange_preserves_optional_expiration_response() -> Result<()> {
-        let private_key = rsa::RsaPrivateKey::new(&mut OsRng, 1024)
-            .expect("private key must generate")
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("private key must encode")
-            .to_string();
         let credential = Credential::with_service_account(ServiceAccount {
-            private_key,
+            private_key: RSA_PKCS8_PEM.to_string(),
             client_email: "signer@example.iam.gserviceaccount.com".to_string(),
         });
         let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")

@@ -343,10 +343,9 @@ mod tests {
     use http::{HeaderMap, Method};
     use reqsign_core::hash::base64_decode;
     use reqsign_core::{ErrorKind, FileRead, Granter, HttpSend, StaticEnv, time::Timestamp};
-    use rsa::RsaPrivateKey;
-    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-    use rsa::rand_core::OsRng;
     use serde_json::Value;
+
+    use crate::test_support::RSA_PKCS8_PEM;
 
     use crate::{
         CredentialAccessBoundaryGrant, CredentialAccessBoundaryPermissions,
@@ -436,13 +435,8 @@ mod tests {
     }
 
     fn service_account() -> ServiceAccount {
-        let key = RsaPrivateKey::new(&mut OsRng, 1024).expect("test RSA key must generate");
-        let private_key = key
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("test RSA key must encode")
-            .to_string();
         ServiceAccount {
-            private_key,
+            private_key: RSA_PKCS8_PEM.to_string(),
             client_email: "provider@example.iam.gserviceaccount.com".to_string(),
         }
     }
