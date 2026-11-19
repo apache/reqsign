@@ -20,28 +20,44 @@ use std::time::Duration;
 
 use http::{HeaderValue, Uri, header};
 use log::debug;
-use percent_encoding::{percent_decode_str, utf8_percent_encode};
+use percent_encoding::{AsciiSet, percent_decode_str, utf8_percent_encode};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Result, SigningRequest};
 
-use crate::Credential;
 use crate::constants::{
     AWS_QUERY_ENCODE_SET, AWS_URI_ENCODE_SET, X_AMZ_CONTENT_SHA_256, X_AMZ_DATE,
     X_AMZ_S3_SESSION_TOKEN, X_AMZ_SECURITY_TOKEN,
 };
+use crate::{Credential, PercentEncodingMode};
+
+static AWS_URI_DOUBLE_ENCODE_SET: AsciiSet = AWS_URI_ENCODE_SET.remove(b'/');
 
 /// Build the canonical request shared by AWS SigV4-family algorithms.
 pub fn canonical_request_string(
     request: &SigningRequest,
     canonical_query: &[(String, String)],
 ) -> Result<String> {
+    canonical_request_string_with_encoding(request, canonical_query, PercentEncodingMode::Single)
+}
+
+/// Build an AWS canonical request with the selected URI percent-encoding mode.
+///
+/// The mode only affects the canonical URI, not the request's wire URI or query.
+pub fn canonical_request_string_with_encoding(
+    request: &SigningRequest,
+    canonical_query: &[(String, String)],
+    percent_encoding_mode: PercentEncodingMode,
+) -> Result<String> {
     let mut output = String::with_capacity(256);
 
     writeln!(output, "{}", request.method)
         .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write method: {e}")))?;
-    writeln!(output, "{}", canonical_uri(&request.path)?).map_err(|e| {
-        reqsign_core::Error::unexpected(format!("failed to write encoded path: {e}"))
-    })?;
+    writeln!(
+        output,
+        "{}",
+        canonical_uri_with_encoding(&request.path, percent_encoding_mode)?
+    )
+    .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write encoded path: {e}")))?;
     writeln!(
         output,
         "{}",
@@ -96,20 +112,25 @@ pub fn canonical_request_string(
 }
 
 /// Add headers shared by AWS SigV4-family algorithms.
+///
+/// Session tokens always use the standard AWS `x-amz-security-token` header.
+/// Service-specific representations, such as the S3 Express CreateSession
+/// token, are selected by the signing service configuration rather than
+/// inferred from the request authority.
 pub fn canonicalize_headers(
     request: &mut SigningRequest,
     credential: &Credential,
     expires_in: Option<Duration>,
     now: Timestamp,
 ) -> Result<()> {
-    canonicalize_headers_inner(request, credential, expires_in, now, false)
+    canonicalize_headers_inner(request, credential, expires_in, now, X_AMZ_SECURITY_TOKEN)
 }
 
 /// Add SigV4 headers while always using the standard AWS session-token header.
 ///
-/// S3 Express is the only supported AWS flow that uses
-/// `x-amz-s3session-token`. Operations whose endpoint is configurable must not
-/// infer that service semantic from an arbitrary hostname.
+/// This is the explicit standard-token entry point for shared callers. S3
+/// Express callers that need the CreateSession representation select it from
+/// their signing service configuration.
 #[doc(hidden)]
 pub fn canonicalize_headers_with_standard_session_token(
     request: &mut SigningRequest,
@@ -117,7 +138,7 @@ pub fn canonicalize_headers_with_standard_session_token(
     expires_in: Option<Duration>,
     now: Timestamp,
 ) -> Result<()> {
-    canonicalize_headers_inner(request, credential, expires_in, now, true)
+    canonicalize_headers_inner(request, credential, expires_in, now, X_AMZ_SECURITY_TOKEN)
 }
 
 fn canonicalize_headers_inner(
@@ -125,7 +146,7 @@ fn canonicalize_headers_inner(
     credential: &Credential,
     expires_in: Option<Duration>,
     now: Timestamp,
-    force_standard_session_token: bool,
+    session_token_header: &'static str,
 ) -> Result<()> {
     if request.headers.get(header::HOST).is_none() {
         request.headers.insert(
@@ -162,14 +183,7 @@ fn canonicalize_headers_inner(
         })?;
         value.set_sensitive(true);
 
-        let is_s3_express = !force_standard_session_token
-            && (request.authority.as_str().contains("s3express")
-                || request.authority.as_str().contains("--x-s3"));
-        if is_s3_express {
-            request.headers.insert(X_AMZ_S3_SESSION_TOKEN, value);
-        } else {
-            request.headers.insert(X_AMZ_SECURITY_TOKEN, value);
-        }
+        request.headers.insert(session_token_header, value);
     }
 
     Ok(())
@@ -195,8 +209,26 @@ pub fn canonicalize_query(
     query
 }
 
-/// Encode a wire-ready path for use in an AWS canonical request.
+/// Encode a wire-ready path with the default single-encoding behavior.
 pub fn canonical_uri(path: &str) -> Result<String> {
+    canonical_uri_with_encoding(path, PercentEncodingMode::Single)
+}
+
+/// Encode a wire-ready path for use in an AWS canonical request.
+///
+/// This does not normalize path segments or modify the original wire path.
+pub fn canonical_uri_with_encoding(
+    path: &str,
+    percent_encoding_mode: PercentEncodingMode,
+) -> Result<String> {
+    if percent_encoding_mode == PercentEncodingMode::Double {
+        // The input is already the caller's encoded wire path. Do not decode it:
+        // doing so would lose percent-escape spelling and reject non-UTF-8 bytes.
+        return Ok(utf8_percent_encode(path, &AWS_URI_DOUBLE_ENCODE_SET).to_string());
+    }
+
+    // Keep the existing single-encoding behavior, including escape normalization
+    // and rejection of percent-encoded non-UTF-8 bytes, for S3 compatibility.
     path.split('/')
         .map(|segment| {
             let decoded = percent_decode_str(segment).decode_utf8().map_err(|e| {
@@ -248,6 +280,20 @@ pub fn append_query_fragment(uri: &Uri, fragment: &str) -> Result<Uri> {
     })
 }
 
+/// Service-selected options for the shared SigV4 request implementation.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct SigV4SigningOptions<'a> {
+    /// AWS signing service name.
+    pub service: &'a str,
+    /// AWS signing region.
+    pub region: &'a str,
+    /// Canonical URI percent-encoding mode.
+    pub percent_encoding_mode: PercentEncodingMode,
+    /// Whether the signing service selected the S3 Express CreateSession token.
+    pub uses_s3_express_session_token: bool,
+}
+
 /// Sign a wire-ready request with AWS Signature Version 4.
 ///
 /// This is the shared implementation used by the public SigV4 signer and by
@@ -261,9 +307,7 @@ pub fn sign_request_parts(
     credential: &Credential,
     expires_in: Option<Duration>,
     now: Timestamp,
-    service: &str,
-    region: &str,
-    use_standard_session_token: bool,
+    options: SigV4SigningOptions<'_>,
 ) -> Result<()> {
     use reqsign_core::SigningCredential;
 
@@ -277,32 +321,39 @@ pub fn sign_request_parts(
     let original_uri = req.uri.clone();
     let mut signed_req = SigningRequest::build(req)?;
 
-    if use_standard_session_token {
-        canonicalize_headers_with_standard_session_token(
-            &mut signed_req,
-            credential,
-            expires_in,
-            now,
-        )?;
-    } else {
-        canonicalize_headers(&mut signed_req, credential, expires_in, now)?;
-    }
+    canonicalize_signing_headers(
+        &mut signed_req,
+        credential,
+        expires_in,
+        now,
+        options.uses_s3_express_session_token,
+    )?;
     let authentication_query = sigv4_authentication_query(
         &signed_req,
         credential,
         expires_in,
         now,
-        service,
-        region,
-        use_standard_session_token,
+        options.service,
+        options.region,
+        options.uses_s3_express_session_token,
     );
     let canonical_query = canonicalize_query(&signed_req, &authentication_query);
 
-    let creq = canonical_request_string(&signed_req, &canonical_query)?;
+    // build canonical request and string to sign.
+    let creq = canonical_request_string_with_encoding(
+        &signed_req,
+        &canonical_query,
+        options.percent_encoding_mode,
+    )?;
     let encoded_req = reqsign_core::hash::hex_sha256(creq.as_bytes());
 
     // Scope: "20220313/<region>/<service>/aws4_request"
-    let scope = format!("{}/{}/{}/aws4_request", now.format_date(), region, service);
+    let scope = format!(
+        "{}/{}/{}/aws4_request",
+        now.format_date(),
+        options.region,
+        options.service
+    );
     debug!("calculated scope: {scope}");
 
     // StringToSign:
@@ -328,7 +379,12 @@ pub fn sign_request_parts(
     };
     debug!("calculated string to sign: {string_to_sign}");
 
-    let signing_key = generate_signing_key(&credential.secret_access_key, now, region, service);
+    let signing_key = generate_signing_key(
+        &credential.secret_access_key,
+        now,
+        options.region,
+        options.service,
+    );
     let signature = reqsign_core::hash::hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
 
     let final_uri = if expires_in.is_some() {
@@ -363,6 +419,32 @@ pub fn sign_request_parts(
     Ok(())
 }
 
+/// Add shared SigV4 headers and apply the service-selected session token choice.
+#[doc(hidden)]
+pub fn canonicalize_signing_headers(
+    request: &mut SigningRequest,
+    credential: &Credential,
+    expires_in: Option<Duration>,
+    now: Timestamp,
+    uses_s3_express_session_token: bool,
+) -> Result<()> {
+    canonicalize_headers(request, credential, expires_in, now)?;
+
+    if !uses_s3_express_session_token || expires_in.is_some() || credential.session_token.is_none()
+    {
+        return Ok(());
+    }
+
+    // Shared canonicalization writes the standard header. S3 Express selects
+    // its representation from the signing service, so move the same sensitive
+    // header value before the canonical request is built.
+    if let Some(value) = request.headers.remove(X_AMZ_SECURITY_TOKEN) {
+        request.headers.insert(X_AMZ_S3_SESSION_TOKEN, value);
+    }
+
+    Ok(())
+}
+
 #[doc(hidden)]
 pub fn sigv4_authentication_query(
     ctx: &SigningRequest,
@@ -371,7 +453,7 @@ pub fn sigv4_authentication_query(
     now: Timestamp,
     service: &str,
     region: &str,
-    use_standard_session_token: bool,
+    uses_s3_express_session_token: bool,
 ) -> Vec<(String, String)> {
     let mut query = Vec::new();
     if let Some(expire) = expires_in {
@@ -394,10 +476,7 @@ pub fn sigv4_authentication_query(
         ));
 
         if let Some(token) = &cred.session_token {
-            let is_s3_express = !use_standard_session_token
-                && (ctx.authority.as_str().contains("s3express")
-                    || ctx.authority.as_str().contains("--x-s3"));
-            let name = if is_s3_express {
+            let name = if uses_s3_express_session_token {
                 "X-Amz-S3session-Token"
             } else {
                 "X-Amz-Security-Token"
@@ -415,4 +494,93 @@ fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &s
     let sign_region = reqsign_core::hash::hmac_sha256(sign_date.as_slice(), region.as_bytes());
     let sign_service = reqsign_core::hash::hmac_sha256(sign_region.as_slice(), service.as_bytes());
     reqsign_core::hash::hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::Request;
+
+    #[test]
+    fn canonical_uri_encoding_modes() -> Result<()> {
+        let cases = [
+            ("/", "/", "/"),
+            ("/a%25b", "/a%25b", "/a%2525b"),
+            ("/a%2Fb", "/a%2Fb", "/a%252Fb"),
+            ("/a%20b", "/a%20b", "/a%2520b"),
+            ("/a%40b", "/a%40b", "/a%2540b"),
+            ("/a%3Db", "/a%3Db", "/a%253Db"),
+            ("/a@b=c", "/a%40b%3Dc", "/a%40b%3Dc"),
+            ("/a%2fb%3d", "/a%2Fb%3D", "/a%252fb%253d"),
+            ("/%7E/%41", "/~/A", "/%257E/%2541"),
+            (
+                "/%E4%B8%AD%E6%96%87",
+                "/%E4%B8%AD%E6%96%87",
+                "/%25E4%25B8%25AD%25E6%2596%2587",
+            ),
+            ("/a//./b/../c/", "/a//./b/../c/", "/a//./b/../c/"),
+            ("/-._~AZaz09", "/-._~AZaz09", "/-._~AZaz09"),
+        ];
+
+        assert_eq!(PercentEncodingMode::default(), PercentEncodingMode::Single);
+        for (wire_path, single, double) in cases {
+            assert_eq!(canonical_uri(wire_path)?, single, "default: {wire_path}");
+            assert_eq!(
+                canonical_uri_with_encoding(wire_path, PercentEncodingMode::Single)?,
+                single,
+                "single: {wire_path}"
+            );
+            assert_eq!(
+                canonical_uri_with_encoding(wire_path, PercentEncodingMode::Double)?,
+                double,
+                "double: {wire_path}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn double_encoding_does_not_decode_non_utf8_escapes() -> Result<()> {
+        for (wire_path, double) in [("/%FF", "/%25FF"), ("/%C3%28", "/%25C3%2528")] {
+            assert!(canonical_uri(wire_path).is_err());
+            assert!(canonical_uri_with_encoding(wire_path, PercentEncodingMode::Single).is_err());
+            assert_eq!(
+                canonical_uri_with_encoding(wire_path, PercentEncodingMode::Double)?,
+                double
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn encoding_changes_only_the_canonical_uri() -> Result<()> {
+        let mut parts = Request::get("https://example.com/a%2Fb?key=%25")
+            .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+            .body(())
+            .expect("request must be valid")
+            .into_parts()
+            .0;
+        let original_uri = parts.uri.clone();
+        let request = SigningRequest::build(&mut parts)?;
+        let canonical_query = canonicalize_query(&request, &[]);
+        let default = canonical_request_string(&request, &canonical_query)?;
+        let single = canonical_request_string_with_encoding(
+            &request,
+            &canonical_query,
+            PercentEncodingMode::Single,
+        )?;
+        let double = canonical_request_string_with_encoding(
+            &request,
+            &canonical_query,
+            PercentEncodingMode::Double,
+        )?;
+
+        assert_eq!(default, single);
+        assert_eq!(single.lines().nth(1), Some("/a%2Fb"));
+        assert_eq!(double.lines().nth(1), Some("/a%252Fb"));
+        assert_eq!(double, single.replacen("/a%2Fb", "/a%252Fb", 1));
+        assert_eq!(request.path, "/a%2Fb");
+        assert_eq!(parts.uri, original_uri);
+        Ok(())
+    }
 }

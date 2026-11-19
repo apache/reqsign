@@ -72,8 +72,8 @@ async fn main() -> Result<()> {
             );
             println!("X-Amz-Date header: {:?}", parts.headers.get("x-amz-date"));
 
-            // The RequestSigner now automatically detects S3 Express endpoints
-            // and uses x-amz-s3session-token instead of x-amz-security-token
+            // The s3express signing service selects the S3 Express session-token
+            // representation regardless of the request authority.
             if let Some(token_header) = parts.headers.get("x-amz-s3session-token") {
                 println!("S3 Express session token header found (correct!)");
                 println!("Token header: {token_header:?}");

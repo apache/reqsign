@@ -30,7 +30,7 @@
 //! ## Quick Start
 //!
 //! ```no_run
-//! use reqsign_aws_v4::{RequestSigner, DefaultCredentialProvider};
+//! use reqsign_aws_v4::{DefaultCredentialProvider, EMPTY_STRING_SHA256, RequestSigner};
 //! use reqsign_core::{Context, Signer};
 //! use reqsign_file_read_tokio::TokioFileRead;
 //! use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -53,6 +53,7 @@
 //!
 //!     // Sign requests
 //!     let mut req = http::Request::get("https://s3.amazonaws.com/mybucket/mykey")
+//!         .header("x-amz-content-sha256", EMPTY_STRING_SHA256)
 //!         .body(())
 //!         .unwrap()
 //!         .into_parts()
@@ -62,6 +63,17 @@
 //!     Ok(())
 //! }
 //! ```
+//!
+//! ## Payload Signing
+//!
+//! `RequestSigner` receives request parts, not the request body. Set
+//! `x-amz-content-sha256` before signing when the signature must cover the
+//! payload: use [`EMPTY_STRING_SHA256`] for an empty body and
+//! [`reqsign_core::hash::hex_sha256`] for non-empty bytes. When the header is
+//! absent, header authentication adds `x-amz-content-sha256: UNSIGNED-PAYLOAD`
+//! (including for empty bodies), while presigning uses that value in the
+//! canonical request without adding the header. See [`RequestSigner`] for
+//! service and endpoint caveats.
 //!
 //! ## Credential Sources
 //!
@@ -166,6 +178,7 @@ pub use provide_credential::{
     S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionPartition,
     S3ExpressSessionProvider,
 };
+pub use reqsign_aws_core::PercentEncodingMode;
 pub use reqsign_aws_core::constants;
 pub use reqsign_aws_core::{
     AssumeRoleCredentialProvider, AssumeRoleGrant, AssumeRoleWithWebIdentityCredentialProvider,

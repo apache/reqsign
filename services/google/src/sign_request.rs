@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use asyncband::mutex::Mutex;
+use form_urlencoded::Serializer;
 use http::{Uri, header};
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
@@ -23,6 +25,9 @@ use rsa::pkcs8::DecodePrivateKey;
 use rsa::rand_core::OsRng;
 use rsa::signature::RandomizedSigner;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::fmt::{self, Debug, Formatter};
+use std::sync::{Arc, Mutex as SyncMutex, Weak};
 use std::time::Duration;
 
 use reqsign_core::{
@@ -34,6 +39,7 @@ use crate::constants::{
     TOKEN_OPERATION_HEADROOM,
 };
 use crate::credential::{Credential, ServiceAccount, Token};
+use crate::provide_credential::oauth::oauth_error;
 
 /// Claims is used to build JWT for Google Cloud.
 #[derive(Debug, Serialize)]
@@ -83,13 +89,145 @@ struct TokenResponse {
     expires_in: Option<u64>,
 }
 
+const TOKEN_CACHE_CAPACITY: usize = 64;
+const JWT_BEARER_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
+
+#[derive(Clone, PartialEq, Eq)]
+struct TokenCacheKey {
+    client_email: String,
+    private_key_hash: String,
+    scope: String,
+}
+
+#[derive(Default)]
+struct TokenCache {
+    entries: VecDeque<(TokenCacheKey, Token)>,
+}
+
+impl TokenCache {
+    fn find(&mut self, key: &TokenCacheKey) -> Option<Token> {
+        let now = Timestamp::now();
+        self.entries
+            .retain(|(_, token)| token.expires_at.is_some() && token.is_valid_at(now));
+        let index = self
+            .entries
+            .iter()
+            .position(|(candidate, token)| candidate == key && token.is_valid())?;
+        let entry = self.entries.remove(index)?;
+        let token = entry.1.clone();
+        self.entries.push_back(entry);
+        Some(token)
+    }
+
+    fn insert(&mut self, key: TokenCacheKey, token: Token) {
+        let now = Timestamp::now();
+        self.entries.retain(|(candidate, cached)| {
+            candidate != &key && cached.expires_at.is_some() && cached.is_valid_at(now)
+        });
+        while self.entries.len() >= TOKEN_CACHE_CAPACITY {
+            self.entries.pop_front();
+        }
+        self.entries.push_back((key, token));
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+#[derive(Default)]
+struct TokenState {
+    cache: Mutex<TokenCache>,
+    refresh_locks: RefreshLockRegistry,
+}
+
+impl TokenState {
+    fn refresh_lock(&self, key: &TokenCacheKey) -> RefreshLockLease {
+        let mut refresh_locks = self
+            .refresh_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(lock) = refresh_locks
+            .iter()
+            .find_map(|(candidate, lock)| (candidate == key).then(|| lock.upgrade()).flatten())
+        {
+            return RefreshLockLease {
+                key: key.clone(),
+                lock,
+                registry: self.refresh_locks.clone(),
+            };
+        }
+
+        let lock = Arc::new(Mutex::new(()));
+        refresh_locks.push((key.clone(), Arc::downgrade(&lock)));
+        RefreshLockLease {
+            key: key.clone(),
+            lock,
+            registry: self.refresh_locks.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    fn refresh_lock_len(&self) -> usize {
+        self.refresh_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+}
+
+struct RefreshLockLease {
+    key: TokenCacheKey,
+    lock: Arc<Mutex<()>>,
+    registry: RefreshLockRegistry,
+}
+
+type RefreshLockRegistry = Arc<SyncMutex<Vec<(TokenCacheKey, Weak<Mutex<()>>)>>>;
+
+impl Drop for RefreshLockLease {
+    fn drop(&mut self) {
+        let mut registry = self
+            .registry
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if Arc::strong_count(&self.lock) != 1 {
+            return;
+        }
+        registry.retain(|(candidate, weak)| {
+            candidate != &self.key
+                || weak
+                    .upgrade()
+                    .is_none_or(|lock| !Arc::ptr_eq(&lock, &self.lock))
+        });
+    }
+}
+
 /// RequestSigner for Google service requests.
-#[derive(Debug)]
+///
+/// When signing requests for header authentication with a [`ServiceAccount`] credential,
+/// `RequestSigner` exchanges the service account for an OAuth2 access token and caches tokens
+/// that carry an explicit expiration in a bounded internal cache partitioned by service account
+/// identity and resolved scope. Clones of a `RequestSigner` share this token cache and coordinate
+/// refreshes per partition.
+#[derive(Clone)]
 pub struct RequestSigner {
     service: String,
     region: String,
     scope: Option<String>,
     signer_email: Option<String>,
+    token_state: Arc<TokenState>,
+}
+
+impl Debug for RequestSigner {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RequestSigner")
+            .field("service", &self.service)
+            .field("region", &self.region)
+            .field("scope", &self.scope)
+            .field("signer_email", &self.signer_email)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for RequestSigner {
@@ -99,6 +237,7 @@ impl Default for RequestSigner {
             region: "auto".to_string(),
             scope: None,
             signer_email: None,
+            token_state: Arc::default(),
         }
     }
 }
@@ -108,9 +247,7 @@ impl RequestSigner {
     pub fn new(service: impl Into<String>) -> Self {
         Self {
             service: service.into(),
-            region: "auto".to_string(),
-            scope: None,
-            signer_email: None,
+            ..Default::default()
         }
     }
 
@@ -140,28 +277,82 @@ impl RequestSigner {
         Timestamp::now() + TOKEN_OPERATION_HEADROOM
     }
 
+    fn resolve_scope(&self, ctx: &Context) -> String {
+        self.scope
+            .clone()
+            .or_else(|| ctx.env_var(GOOGLE_SCOPE))
+            .unwrap_or_else(|| DEFAULT_SCOPE.to_string())
+    }
+
+    #[cfg(test)]
+    async fn cache_len(&self) -> usize {
+        self.token_state.cache.lock().await.len()
+    }
+
+    #[cfg(test)]
+    fn refresh_lock_len(&self) -> usize {
+        self.token_state.refresh_lock_len()
+    }
+
+    /// Exchange a service account for an access token, reusing a cached token
+    /// when it remains fresh and covers the operation headroom.
+    async fn cached_or_exchange_token(&self, ctx: &Context, sa: &ServiceAccount) -> Result<Token> {
+        let scope = self.resolve_scope(ctx);
+        let key = TokenCacheKey {
+            client_email: sa.client_email.clone(),
+            private_key_hash: hex_sha256(sa.private_key.as_bytes()),
+            scope: scope.clone(),
+        };
+
+        if let Some(token) = self.token_state.cache.lock().await.find(&key) {
+            return Ok(token);
+        }
+
+        let refresh_lock = self.token_state.refresh_lock(&key);
+        let _refresh_guard = refresh_lock.lock.lock().await;
+        if let Some(token) = self.token_state.cache.lock().await.find(&key) {
+            return Ok(token);
+        }
+
+        let token = self.exchange_token(ctx, sa, &scope).await?;
+        if !token.is_valid_at(self.token_required_until()) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "exchanged token is not valid long enough for header authentication",
+            ));
+        }
+        if token.expires_at.is_some() && token.is_valid() {
+            self.token_state
+                .cache
+                .lock()
+                .await
+                .insert(key, token.clone());
+        }
+        Ok(token)
+    }
+
     /// Exchange a service account for an access token.
     ///
     /// This method is used internally when a token is needed but only a service account
     /// is available. It creates a JWT and exchanges it for an OAuth2 access token.
-    async fn exchange_token(&self, ctx: &Context, sa: &ServiceAccount) -> Result<Token> {
-        let scope = self
-            .scope
-            .clone()
-            .or_else(|| ctx.env_var(GOOGLE_SCOPE))
-            .unwrap_or_else(|| DEFAULT_SCOPE.to_string());
-
+    async fn exchange_token(
+        &self,
+        ctx: &Context,
+        sa: &ServiceAccount,
+        scope: &str,
+    ) -> Result<Token> {
         debug!("exchanging service account for token with scope: {scope}");
 
         let jwt = reqsign_core::jwt::encode_rs256_pem(
             &JwtHeader::rs256(),
-            &Claims::new(&sa.client_email, &scope),
+            &Claims::new(&sa.client_email, scope),
             sa.private_key.as_bytes(),
         )?;
 
         // Exchange JWT for access token
-        let body =
-            format!("grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion={jwt}");
+        let body = Serializer::new(String::new())
+            .append_pair("grant_type", JWT_BEARER_GRANT_TYPE)
+            .append_pair("assertion", &jwt)
+            .finish();
         let req = http::Request::builder()
             .method(http::Method::POST)
             .uri("https://oauth2.googleapis.com/token")
@@ -174,15 +365,18 @@ impl RequestSigner {
         let resp = ctx.http_send(req).await?;
 
         if resp.status() != http::StatusCode::OK {
-            let body = String::from_utf8_lossy(resp.body());
-            return Err(reqsign_core::Error::unexpected(format!(
-                "exchange token failed: {body}"
-            )));
+            return Err(oauth_error(resp.status(), resp.body()));
         }
 
         let token_resp: TokenResponse = serde_json::from_slice(resp.body()).map_err(|e| {
             reqsign_core::Error::unexpected("failed to parse token response").with_source(e)
         })?;
+
+        if token_resp.expires_in == Some(0) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "exchanged token is not valid long enough for header authentication",
+            ));
+        }
 
         let expires_at = token_resp
             .expires_in
@@ -470,14 +664,9 @@ impl SignRequest for RequestSigner {
                         .as_ref()
                         .filter(|service_account| service_account.is_valid())
                     {
-                        // Token expired, but we have SA, exchange for new token
-                        debug!("token expired, exchanging service account for new token");
-                        let new_token = self.exchange_token(ctx, sa).await?;
-                        if !new_token.is_valid_at(self.token_required_until()) {
-                            return Err(reqsign_core::Error::credential_invalid(
-                                "exchanged token is not valid long enough for header authentication",
-                            ));
-                        }
+                        // Token expired, but we have SA, use cached token or exchange for new token
+                        debug!("token expired, obtaining token from service account");
+                        let new_token = self.cached_or_exchange_token(ctx, sa).await?;
                         (self.build_token_auth(req, &new_token)?, None)
                     } else {
                         return Err(reqsign_core::Error::credential_invalid(
@@ -489,14 +678,8 @@ impl SignRequest for RequestSigner {
                     .as_ref()
                     .filter(|service_account| service_account.is_valid())
                 {
-                    // No token but have SA, exchange for token
-                    debug!("no token available, exchanging service account for token");
-                    let token = self.exchange_token(ctx, sa).await?;
-                    if !token.is_valid_at(self.token_required_until()) {
-                        return Err(reqsign_core::Error::credential_invalid(
-                            "exchanged token is not valid long enough for header authentication",
-                        ));
-                    }
+                    // No token but have SA, use cached token or exchange for token
+                    let token = self.cached_or_exchange_token(ctx, sa).await?;
                     (self.build_token_auth(req, &token)?, None)
                 } else {
                     return Err(reqsign_core::Error::credential_invalid(
@@ -1144,5 +1327,715 @@ mod tests {
         assert_eq!(parts.uri, original.uri);
         assert_eq!(parts.headers, original.headers);
         Ok(())
+    }
+
+    #[derive(Clone, Debug)]
+    struct QueuedOAuthHttpSend {
+        responses: Arc<Mutex<VecDeque<http::Response<Bytes>>>>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl QueuedOAuthHttpSend {
+        fn new(responses: impl IntoIterator<Item = http::Response<Bytes>>) -> Self {
+            Self {
+                responses: Arc::new(Mutex::new(responses.into_iter().collect())),
+                calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn json_response(body: &str) -> http::Response<Bytes> {
+            Self::status_response(http::StatusCode::OK, body)
+        }
+
+        fn status_response(status: http::StatusCode, body: &str) -> http::Response<Bytes> {
+            http::Response::builder()
+                .status(status)
+                .body(Bytes::copy_from_slice(body.as_bytes()))
+                .expect("response must build")
+        }
+    }
+
+    impl HttpSend for QueuedOAuthHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            assert_eq!(req.method(), http::Method::POST);
+            assert_eq!(req.uri(), "https://oauth2.googleapis.com/token");
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self
+                .responses
+                .lock()
+                .expect("lock must not be poisoned")
+                .pop_front()
+                .expect("queued OAuth response must exist"))
+        }
+    }
+
+    fn test_service_account(client_email: &str) -> ServiceAccount {
+        let private_key = rsa::RsaPrivateKey::new(&mut OsRng, 1024)
+            .expect("private key must generate")
+            .to_pkcs8_pem(LineEnding::LF)
+            .expect("private key must encode")
+            .to_string();
+        ServiceAccount {
+            private_key,
+            client_email: client_email.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn service_account_token_is_cached_and_reused_across_requests() -> Result<()> {
+        let http = QueuedOAuthHttpSend::new([QueuedOAuthHttpSend::json_response(
+            r#"{"access_token":"cached-sa-token","expires_in":3600}"#,
+        )]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential::with_service_account(test_service_account(
+            "signer@example.iam.gserviceaccount.com",
+        ));
+        let provider_calls = Arc::new(AtomicUsize::new(0));
+        let provider = RepeatingProvider {
+            credential,
+            calls: provider_calls.clone(),
+        };
+        let request_signer = RequestSigner::new("storage");
+        let signer = Signer::new(ctx, provider, request_signer.clone());
+
+        for _ in 0..5 {
+            let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+                .body(())?
+                .into_parts()
+                .0;
+            signer.sign(&mut parts, None).await?;
+            assert_eq!(
+                parts.headers[header::AUTHORIZATION],
+                "Bearer cached-sa-token"
+            );
+        }
+
+        assert_eq!(provider_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        assert!(!format!("{request_signer:?}").contains("cached-sa-token"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_account_token_refreshes_when_entering_refresh_window() -> Result<()> {
+        let http = QueuedOAuthHttpSend::new([
+            QueuedOAuthHttpSend::json_response(
+                r#"{"access_token":"short-lived-token","expires_in":30}"#,
+            ),
+            QueuedOAuthHttpSend::json_response(
+                r#"{"access_token":"fresh-token","expires_in":3600}"#,
+            ),
+        ]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential::with_service_account(test_service_account(
+            "signer@example.iam.gserviceaccount.com",
+        ));
+        let provider = RepeatingProvider {
+            credential,
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let signer = Signer::new(ctx, provider, RequestSigner::new("storage"));
+
+        let mut first = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+        signer.sign(&mut first, None).await?;
+        assert_eq!(
+            first.headers[header::AUTHORIZATION],
+            "Bearer short-lived-token"
+        );
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+
+        let mut second = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+        signer.sign(&mut second, None).await?;
+        assert_eq!(second.headers[header::AUTHORIZATION], "Bearer fresh-token");
+        assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+
+        let mut third = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+        signer.sign(&mut third, None).await?;
+        assert_eq!(third.headers[header::AUTHORIZATION], "Bearer fresh-token");
+        assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_service_account_requests_share_single_token_exchange() -> Result<()> {
+        #[derive(Clone, Debug)]
+        struct GatedOAuthHttpSend {
+            started: Arc<asyncband::semaphore::Semaphore>,
+            release: Arc<asyncband::semaphore::Semaphore>,
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl HttpSend for GatedOAuthHttpSend {
+            async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+                assert_eq!(req.method(), http::Method::POST);
+                assert_eq!(req.uri(), "https://oauth2.googleapis.com/token");
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.started.release(1);
+                self.release.acquire(1).await.forget();
+                Ok(QueuedOAuthHttpSend::json_response(
+                    r#"{"access_token":"shared-concurrent-token","expires_in":3600}"#,
+                ))
+            }
+        }
+
+        let http = GatedOAuthHttpSend {
+            started: Arc::new(asyncband::semaphore::Semaphore::new(0)),
+            release: Arc::new(asyncband::semaphore::Semaphore::new(0)),
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential::with_service_account(test_service_account(
+            "signer@example.iam.gserviceaccount.com",
+        ));
+        let provider = RepeatingProvider {
+            credential,
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let signer = Signer::new(ctx, provider, RequestSigner::new("storage"));
+
+        let mut tasks = Vec::new();
+        for _ in 0..8 {
+            let signer = signer.clone();
+            tasks.push(tokio::spawn(async move {
+                let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+                    .body(())
+                    .expect("request must build")
+                    .into_parts()
+                    .0;
+                signer.sign(&mut parts, None).await?;
+                Ok::<_, reqsign_core::Error>(parts.headers[header::AUTHORIZATION].clone())
+            }));
+        }
+
+        http.started.acquire(1).await.forget();
+        for _ in 0..4 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        http.release.release(1);
+
+        for task in tasks {
+            let header_val = task.await.expect("task must not panic")?;
+            assert_eq!(header_val, "Bearer shared-concurrent-token");
+        }
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_account_token_cache_partitions_by_scope_and_service_account() -> Result<()> {
+        let http = QueuedOAuthHttpSend::new([
+            QueuedOAuthHttpSend::json_response(
+                r#"{"access_token":"token-sa1-s1","expires_in":3600}"#,
+            ),
+            QueuedOAuthHttpSend::json_response(
+                r#"{"access_token":"token-sa1-s2","expires_in":3600}"#,
+            ),
+            QueuedOAuthHttpSend::json_response(
+                r#"{"access_token":"token-sa2-s1","expires_in":3600}"#,
+            ),
+        ]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let sa1 = Credential::with_service_account(test_service_account(
+            "sa1@example.iam.gserviceaccount.com",
+        ));
+        let sa2 = Credential::with_service_account(test_service_account(
+            "sa2@example.iam.gserviceaccount.com",
+        ));
+
+        let signer_s1 = RequestSigner::new("storage").with_scope("scope-1");
+        let signer_s2 = signer_s1.clone().with_scope("scope-2");
+
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+        signer_s1
+            .sign_request(&ctx, &mut parts, Some(&sa1), None)
+            .await?;
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer token-sa1-s1");
+
+        signer_s2
+            .sign_request(&ctx, &mut parts, Some(&sa1), None)
+            .await?;
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer token-sa1-s2");
+
+        signer_s1
+            .sign_request(&ctx, &mut parts, Some(&sa2), None)
+            .await?;
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer token-sa2-s1");
+
+        // Reusing (sa1, scope-1) and (sa1, scope-2) must hit the shared cache without extra HTTP calls.
+        signer_s1
+            .sign_request(&ctx, &mut parts, Some(&sa1), None)
+            .await?;
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer token-sa1-s1");
+        signer_s2
+            .sign_request(&ctx, &mut parts, Some(&sa1), None)
+            .await?;
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer token-sa1-s2");
+
+        assert_eq!(http.calls.load(Ordering::SeqCst), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_account_exchange_without_expires_in_is_not_cached() -> Result<()> {
+        let http = QueuedOAuthHttpSend::new([
+            QueuedOAuthHttpSend::json_response(r#"{"access_token":"ephemeral-1"}"#),
+            QueuedOAuthHttpSend::json_response(r#"{"access_token":"ephemeral-2"}"#),
+        ]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential::with_service_account(test_service_account(
+            "signer@example.iam.gserviceaccount.com",
+        ));
+        let signer = RequestSigner::new("storage");
+
+        for expected in ["Bearer ephemeral-1", "Bearer ephemeral-2"] {
+            let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+                .body(())?
+                .into_parts()
+                .0;
+            signer
+                .sign_request(&ctx, &mut parts, Some(&credential), None)
+                .await?;
+            assert_eq!(parts.headers[header::AUTHORIZATION], expected);
+            assert_eq!(signer.cache_len().await, 0);
+        }
+
+        assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn short_lived_service_account_token_inside_refresh_window_is_not_cached() -> Result<()> {
+        let http = QueuedOAuthHttpSend::new([QueuedOAuthHttpSend::json_response(
+            r#"{"access_token":"short-lived","expires_in":30}"#,
+        )]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential::with_service_account(test_service_account(
+            "signer@example.iam.gserviceaccount.com",
+        ));
+        let signer = RequestSigner::new("storage");
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        signer
+            .sign_request(&ctx, &mut parts, Some(&credential), None)
+            .await?;
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer short-lived");
+        assert_eq!(signer.cache_len().await, 0);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_account_exchange_rejects_token_shorter_than_operation_headroom() -> Result<()>
+    {
+        let http = QueuedOAuthHttpSend::new([QueuedOAuthHttpSend::json_response(
+            r#"{"access_token":"too-short","expires_in":5}"#,
+        )]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential::with_service_account(test_service_account(
+            "signer@example.iam.gserviceaccount.com",
+        ));
+        let signer = RequestSigner::new("storage");
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        let err = signer
+            .sign_request(&ctx, &mut parts, Some(&credential), None)
+            .await
+            .expect_err("token shorter than operation headroom must be rejected");
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_eq!(signer.cache_len().await, 0);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unrelated_service_account_partitions_do_not_block_each_other() -> Result<()> {
+        #[derive(Clone, Debug)]
+        struct PartitionGatedHttpSend {
+            started: Arc<asyncband::semaphore::Semaphore>,
+            release: Arc<asyncband::semaphore::Semaphore>,
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl HttpSend for PartitionGatedHttpSend {
+            async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+                assert_eq!(req.method(), http::Method::POST);
+                assert_eq!(req.uri(), "https://oauth2.googleapis.com/token");
+                let call_index = self.calls.fetch_add(1, Ordering::SeqCst);
+                self.started.release(1);
+                self.release.acquire(1).await.forget();
+                Ok(QueuedOAuthHttpSend::json_response(&format!(
+                    r#"{{"access_token":"partition-token-{call_index}","expires_in":3600}}"#
+                )))
+            }
+        }
+
+        let http = PartitionGatedHttpSend {
+            started: Arc::new(asyncband::semaphore::Semaphore::new(0)),
+            release: Arc::new(asyncband::semaphore::Semaphore::new(0)),
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let ctx = Context::new().with_http_send(http.clone());
+        let signer = RequestSigner::new("storage");
+        let sa_a = Credential::with_service_account(test_service_account(
+            "sa-a@example.iam.gserviceaccount.com",
+        ));
+        let sa_b = Credential::with_service_account(test_service_account(
+            "sa-b@example.iam.gserviceaccount.com",
+        ));
+
+        let first = tokio::spawn({
+            let signer = signer.clone();
+            let ctx = ctx.clone();
+            let sa_a = sa_a.clone();
+            async move {
+                let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+                    .body(())
+                    .expect("request must build")
+                    .into_parts()
+                    .0;
+                signer
+                    .sign_request(&ctx, &mut parts, Some(&sa_a), None)
+                    .await
+            }
+        });
+        http.started.acquire(1).await.forget();
+
+        let second = tokio::spawn({
+            let signer = signer.clone();
+            let ctx = ctx.clone();
+            let sa_b = sa_b.clone();
+            async move {
+                let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+                    .body(())
+                    .expect("request must build")
+                    .into_parts()
+                    .0;
+                signer
+                    .sign_request(&ctx, &mut parts, Some(&sa_b), None)
+                    .await
+            }
+        });
+        let second_started =
+            tokio::time::timeout(Duration::from_secs(1), http.started.acquire(1)).await;
+        http.release.release(2);
+        second_started
+            .expect("unrelated service account partition must not wait for the first OAuth call")
+            .forget();
+
+        first.await.expect("first task must not panic")?;
+        second.await.expect("second task must not panic")?;
+        assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(signer.cache_len().await, 2);
+        assert_eq!(signer.refresh_lock_len(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_service_account_exchange_is_not_cached_and_waiter_retries() -> Result<()> {
+        let http = QueuedOAuthHttpSend::new([
+            QueuedOAuthHttpSend::status_response(
+                http::StatusCode::SERVICE_UNAVAILABLE,
+                r#"{"error":"temporarily_unavailable","error_description":"sensitive-body"}"#,
+            ),
+            QueuedOAuthHttpSend::json_response(
+                r#"{"access_token":"recovered-token","expires_in":3600}"#,
+            ),
+        ]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential::with_service_account(test_service_account(
+            "signer@example.iam.gserviceaccount.com",
+        ));
+        let signer = RequestSigner::new("storage");
+
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+        let err = signer
+            .sign_request(&ctx, &mut parts, Some(&credential), None)
+            .await
+            .expect_err("503 OAuth response must fail");
+        assert_eq!(err.kind(), ErrorKind::Unexpected);
+        assert!(err.is_retryable());
+        assert!(!format!("{err:?}").contains("sensitive-body"));
+        assert_eq!(signer.cache_len().await, 0);
+        assert_eq!(signer.refresh_lock_len(), 0);
+
+        signer
+            .sign_request(&ctx, &mut parts, Some(&credential), None)
+            .await?;
+        assert_eq!(
+            parts.headers[header::AUTHORIZATION],
+            "Bearer recovered-token"
+        );
+        assert_eq!(signer.cache_len().await, 1);
+        assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_service_account_exchange_releases_partition_lock_without_caching()
+    -> Result<()> {
+        #[derive(Clone, Debug)]
+        struct GatedCancelHttpSend {
+            started: Arc<asyncband::semaphore::Semaphore>,
+            release: Arc<asyncband::semaphore::Semaphore>,
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl HttpSend for GatedCancelHttpSend {
+            async fn http_send(&self, _req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.started.release(1);
+                self.release.acquire(1).await.forget();
+                Ok(QueuedOAuthHttpSend::json_response(
+                    r#"{"access_token":"after-cancel-token","expires_in":3600}"#,
+                ))
+            }
+        }
+
+        let http = GatedCancelHttpSend {
+            started: Arc::new(asyncband::semaphore::Semaphore::new(0)),
+            release: Arc::new(asyncband::semaphore::Semaphore::new(0)),
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential::with_service_account(test_service_account(
+            "signer@example.iam.gserviceaccount.com",
+        ));
+        let signer = RequestSigner::new("storage");
+
+        let cancelled = tokio::spawn({
+            let signer = signer.clone();
+            let ctx = ctx.clone();
+            let credential = credential.clone();
+            async move {
+                let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+                    .body(())
+                    .expect("request must build")
+                    .into_parts()
+                    .0;
+                signer
+                    .sign_request(&ctx, &mut parts, Some(&credential), None)
+                    .await
+            }
+        });
+        http.started.acquire(1).await.forget();
+        cancelled.abort();
+        assert!(
+            cancelled
+                .await
+                .expect_err("task must be cancelled")
+                .is_cancelled()
+        );
+        assert_eq!(signer.cache_len().await, 0);
+        assert_eq!(signer.refresh_lock_len(), 0);
+
+        http.release.release(1);
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            signer.sign_request(&ctx, &mut parts, Some(&credential), None),
+        )
+        .await
+        .expect("retry after cancellation must not deadlock")?;
+        assert_eq!(
+            parts.headers[header::AUTHORIZATION],
+            "Bearer after-cancel-token"
+        );
+        assert_eq!(signer.cache_len().await, 1);
+        assert_eq!(signer.refresh_lock_len(), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn service_account_token_cache_partitions_by_private_key_and_env_scope() -> Result<()> {
+        let http = QueuedOAuthHttpSend::new([
+            QueuedOAuthHttpSend::json_response(
+                r#"{"access_token":"key-1-token","expires_in":3600}"#,
+            ),
+            QueuedOAuthHttpSend::json_response(
+                r#"{"access_token":"key-2-token","expires_in":3600}"#,
+            ),
+            QueuedOAuthHttpSend::json_response(
+                r#"{"access_token":"env-scope-token","expires_in":3600}"#,
+            ),
+        ]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let email = "same-email@example.iam.gserviceaccount.com";
+        let key_1 = Credential::with_service_account(test_service_account(email));
+        let key_2 = Credential::with_service_account(test_service_account(email));
+        let signer = RequestSigner::new("storage");
+
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+        signer
+            .sign_request(&ctx, &mut parts, Some(&key_1), None)
+            .await?;
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer key-1-token");
+
+        signer
+            .sign_request(&ctx, &mut parts, Some(&key_2), None)
+            .await?;
+        assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer key-2-token");
+
+        let env_ctx =
+            Context::new()
+                .with_http_send(http.clone())
+                .with_env(reqsign_core::StaticEnv {
+                    home_dir: None,
+                    envs: std::collections::HashMap::from([(
+                        GOOGLE_SCOPE.to_string(),
+                        "https://www.googleapis.com/auth/devstorage.read_only".to_string(),
+                    )]),
+                });
+        signer
+            .sign_request(&env_ctx, &mut parts, Some(&key_1), None)
+            .await?;
+        assert_eq!(
+            parts.headers[header::AUTHORIZATION],
+            "Bearer env-scope-token"
+        );
+        assert_eq!(http.calls.load(Ordering::SeqCst), 3);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn expired_credential_token_with_service_account_uses_token_cache() -> Result<()> {
+        let http = QueuedOAuthHttpSend::new([QueuedOAuthHttpSend::json_response(
+            r#"{"access_token":"exchanged-from-expired","expires_in":3600}"#,
+        )]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential {
+            service_account: Some(test_service_account(
+                "signer@example.iam.gserviceaccount.com",
+            )),
+            token: Some(Token {
+                access_token: "expired-token".to_string(),
+                expires_at: Some(Timestamp::now() - Duration::from_secs(60)),
+            }),
+            signer_email: None,
+        };
+        let signer = RequestSigner::new("storage");
+
+        for _ in 0..3 {
+            let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+                .body(())?
+                .into_parts()
+                .0;
+            signer
+                .sign_request(&ctx, &mut parts, Some(&credential), None)
+                .await?;
+            assert_eq!(
+                parts.headers[header::AUTHORIZATION],
+                "Bearer exchanged-from-expired"
+            );
+        }
+
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(signer.cache_len().await, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn query_signing_with_service_account_stays_offline_and_bypasses_token_cache()
+    -> Result<()> {
+        let http = QueuedOAuthHttpSend::new([]);
+        let ctx = Context::new().with_http_send(http.clone());
+        let credential = Credential::with_service_account(test_service_account(
+            "signer@example.iam.gserviceaccount.com",
+        ));
+        let signer = RequestSigner::new("storage");
+        let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        signer
+            .sign_request(
+                &ctx,
+                &mut parts,
+                Some(&credential),
+                Some(Duration::from_secs(3600)),
+            )
+            .await?;
+
+        assert!(
+            parts
+                .uri
+                .query()
+                .expect("signed URL query must exist")
+                .contains("X-Goog-Signature=")
+        );
+        assert_eq!(http.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(signer.cache_len().await, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn token_cache_enforces_lru_capacity_and_promotes_hits() {
+        let mut cache = TokenCache::default();
+        let expires_at = Some(Timestamp::now() + Duration::from_secs(3600));
+        let key_for = |index: usize| TokenCacheKey {
+            client_email: format!("sa-{index}@example.iam.gserviceaccount.com"),
+            private_key_hash: "hash".to_string(),
+            scope: DEFAULT_SCOPE.to_string(),
+        };
+
+        for index in 0..TOKEN_CACHE_CAPACITY {
+            cache.insert(
+                key_for(index),
+                Token {
+                    access_token: format!("token-{index}"),
+                    expires_at,
+                },
+            );
+        }
+        assert_eq!(cache.len(), TOKEN_CACHE_CAPACITY);
+
+        // Promote entry 0 to most-recently-used so entry 1 becomes oldest.
+        assert_eq!(
+            cache
+                .find(&key_for(0))
+                .expect("entry 0 must exist")
+                .access_token,
+            "token-0"
+        );
+
+        cache.insert(
+            key_for(TOKEN_CACHE_CAPACITY),
+            Token {
+                access_token: format!("token-{TOKEN_CACHE_CAPACITY}"),
+                expires_at,
+            },
+        );
+        assert_eq!(cache.len(), TOKEN_CACHE_CAPACITY);
+        assert!(cache.find(&key_for(0)).is_some());
+        assert!(cache.find(&key_for(1)).is_none());
+        assert!(cache.find(&key_for(TOKEN_CACHE_CAPACITY)).is_some());
     }
 }

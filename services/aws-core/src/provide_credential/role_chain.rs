@@ -21,7 +21,7 @@ use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 
 use crate::assume_role::{AssumeRoleOperation, regional_sts_endpoint};
-use crate::signing::sign_request_parts;
+use crate::signing::{SigV4SigningOptions, sign_request_parts};
 use crate::{
     AssumeRoleGrant, Credential, Profile, ProfileCredentialProvider, SSOCredentialProvider,
     SharedConfig,
@@ -190,9 +190,12 @@ impl ProvideCredential for AssumeRoleChainCredentialProvider {
                 &credential,
                 None,
                 Timestamp::now(),
-                "sts",
-                &region,
-                false,
+                SigV4SigningOptions {
+                    service: "sts",
+                    region: &region,
+                    percent_encoding_mode: crate::PercentEncodingMode::Single,
+                    uses_s3_express_session_token: false,
+                },
             )?;
             credential = operation
                 .send(ctx, http::Request::from_parts(parts, body))

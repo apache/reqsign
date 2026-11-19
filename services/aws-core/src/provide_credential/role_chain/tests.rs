@@ -301,6 +301,7 @@ async fn resolves_explicit_role_profile_through_named_sso_in_order() {
         requests[1].headers()["x-amz-security-token"],
         "sso-source-session-token"
     );
+    assert!(requests[1].headers().get("x-amz-s3session-token").is_none());
 
     assert_eq!(query_value(&requests[2], "RoleArn"), OPERATOR_ROLE);
     assert_eq!(
