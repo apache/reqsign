@@ -465,10 +465,7 @@ impl UserDelegationSharedAccessSignature {
         let string_to_sign = fields.join("\n");
 
         let decoded_key = hash::base64_decode(&self.key.value)?;
-        Ok(hash::base64_hmac_sha256(
-            &decoded_key,
-            string_to_sign.as_bytes(),
-        ))
+        hash::base64_hmac_sha256(&decoded_key, string_to_sign.as_bytes())
     }
 
     pub(crate) fn token(&self) -> Result<Vec<(String, String)>> {

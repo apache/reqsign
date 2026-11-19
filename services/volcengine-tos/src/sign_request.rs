@@ -179,8 +179,8 @@ impl SignRequest for RequestSigner {
 
         debug!("string to sign: {}", string_to_sign);
 
-        let signing_key = generate_signing_key(&cred.secret_access_key, &date_only, &self.region);
-        let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
+        let signing_key = generate_signing_key(&cred.secret_access_key, &date_only, &self.region)?;
+        let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes())?;
 
         let final_uri = if expires_in.is_some() {
             let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
@@ -417,20 +417,20 @@ fn canonical_request_hash(
 
     canonical_request.push_str(payload_hash);
 
-    let hash = hex_sha256(canonical_request.as_bytes());
+    let hash = hex_sha256(canonical_request.as_bytes())?;
 
     Ok((hash, canonical_request))
 }
 
-fn generate_signing_key(secret: &str, date: &str, region: &str) -> Vec<u8> {
+fn generate_signing_key(secret: &str, date: &str, region: &str) -> Result<Vec<u8>> {
     // Sign date
-    let sign_date = hmac_sha256(secret.as_bytes(), date.as_bytes());
+    let sign_date = hmac_sha256(secret.as_bytes(), date.as_bytes())?;
     // Sign region
-    let sign_region = hmac_sha256(sign_date.as_slice(), region.as_bytes());
+    let sign_region = hmac_sha256(sign_date.as_slice(), region.as_bytes())?;
     // Sign service
-    let sign_service = hmac_sha256(sign_region.as_slice(), "tos".as_bytes());
+    let sign_service = hmac_sha256(sign_region.as_slice(), "tos".as_bytes())?;
     // Sign request
-    hmac_sha256(sign_service.as_slice(), "request".as_bytes())
+    Ok(hmac_sha256(sign_service.as_slice(), "request".as_bytes())?.to_vec())
 }
 
 #[cfg(test)]

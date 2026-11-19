@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::sync::{Arc, Mutex, OnceLock};
 
 use bytes::Bytes;

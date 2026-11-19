@@ -26,6 +26,10 @@ the default credential chain is unchanged.
   full presigned URL lifetime. Header signing continues to check the signing
   time.
 
+> Signing requires a process-wide `CryptoProvider`. Install one at startup
+> before constructing signers; see
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust,no_run

@@ -16,6 +16,8 @@
 // under the License.
 
 //! Integration tests for ProvideCredentialChain with Oracle Cloud Infrastructure
+mod common;
+
 use reqsign_core::ProvideCredentialChain;
 use reqsign_core::{Context, OsEnv, ProvideCredential, Result};
 use reqsign_file_read_tokio::TokioFileRead;

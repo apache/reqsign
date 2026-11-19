@@ -21,6 +21,10 @@ credentials through `Granter<Credential>`. The result carries the exact IAM
 credentials are rejected by header signing or presigning when they do not cover
 the requested operation deadline.
 
+> Signing requires a process-wide `CryptoProvider`. Install one at startup
+> before constructing signers; see
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust,no_run

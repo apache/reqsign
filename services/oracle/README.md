@@ -6,6 +6,10 @@ The default credential provider checks OCI environment variables and then the
 OCI configuration file at `~/.oci/config`. The config path and profile can be
 selected with `OCI_CONFIG_FILE` and `OCI_PROFILE`.
 
+> Signing requires a process-wide `CryptoProvider`. Install one at startup
+> before constructing signers; see
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust,no_run

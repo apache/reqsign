@@ -455,7 +455,7 @@ mod tests {
         let expected_signature = base64_hmac_sha1(
             format!("{}&", base_credential.access_key_secret).as_bytes(),
             string_to_sign.as_bytes(),
-        );
+        )?;
         assert_eq!(
             Some(expected_signature.as_str()),
             params.get("Signature").map(String::as_str)

@@ -25,11 +25,8 @@ use crate::provide_credential::entra::{
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, ProvideCredential};
-use rsa::RsaPrivateKey;
-use rsa::pkcs8::DecodePrivateKey;
+use reqsign_core::{Context, ProvideCredential, hash};
 use serde::Serialize;
-use sha1::{Digest, Sha1};
 
 /// Generate a unique JWT ID using timestamp and a pseudo-random component
 fn generate_jti(now: u64) -> String {
@@ -99,7 +96,7 @@ impl ClientCertificateCredentialProvider {
         &self,
         ctx: &Context,
         path: &str,
-    ) -> Result<(Vec<u8>, RsaPrivateKey), reqsign_core::Error> {
+    ) -> Result<(Vec<u8>, Vec<u8>), reqsign_core::Error> {
         let cert_data = ctx.file_read(path).await.map_err(|e| {
             reqsign_core::Error::credential_invalid(format!("Failed to read certificate file: {e}"))
         })?;
@@ -140,21 +137,13 @@ impl ClientCertificateCredentialProvider {
             reqsign_core::Error::credential_invalid("PEM does not contain a private key")
         })?;
 
-        // Parse private key
-        let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_pem).map_err(|e| {
-            reqsign_core::Error::credential_invalid(format!(
-                "Failed to parse private key from PEM: {e}"
-            ))
-        })?;
-
-        Ok((cert_der, private_key))
+        Ok((cert_der, private_key_pem.into_bytes()))
     }
 
     /// Calculate certificate thumbprint (x5t)
     /// Azure AD expects SHA1 thumbprint for x5t field
-    fn calculate_thumbprint(&self, cert_der: &[u8]) -> String {
-        let hash = Sha1::digest(cert_der);
-        URL_SAFE_NO_PAD.encode(hash)
+    fn calculate_thumbprint(&self, cert_der: &[u8]) -> Result<String, reqsign_core::Error> {
+        Ok(URL_SAFE_NO_PAD.encode(hash::sha1(cert_der)?))
     }
 
     /// Create JWT client assertion
@@ -163,7 +152,7 @@ impl ClientCertificateCredentialProvider {
         tenant_id: &str,
         client_id: &str,
         cert_der: &[u8],
-        private_key: &RsaPrivateKey,
+        private_key_pem: &[u8],
     ) -> Result<String, reqsign_core::Error> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -184,10 +173,10 @@ impl ClientCertificateCredentialProvider {
         let header = ClientAssertionHeader {
             alg: "RS256",
             typ: "JWT",
-            x5t: self.calculate_thumbprint(cert_der),
+            x5t: self.calculate_thumbprint(cert_der)?,
         };
 
-        reqsign_core::jwt::encode_rs256(&header, &claims, private_key)
+        reqsign_core::jwt::encode_rs256_pem(&header, &claims, private_key_pem)
     }
 
     /// Exchange client assertion for access token
@@ -289,11 +278,11 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
             };
 
         // Load certificate and private key
-        let (cert_der, private_key) = self.load_certificate(ctx, &certificate_path).await?;
+        let (cert_der, private_key_pem) = self.load_certificate(ctx, &certificate_path).await?;
 
         // Create client assertion
         let client_assertion =
-            self.create_client_assertion(&tenant_id, &client_id, &cert_der, &private_key)?;
+            self.create_client_assertion(&tenant_id, &client_id, &cert_der, &private_key_pem)?;
 
         // Exchange for access token
         let token_response = self
@@ -319,7 +308,9 @@ mod tests {
         // Test certificate DER (simplified example)
         let cert_der = b"test certificate";
         let provider = ClientCertificateCredentialProvider::new();
-        let thumbprint = provider.calculate_thumbprint(cert_der);
+        let thumbprint = provider
+            .calculate_thumbprint(cert_der)
+            .expect("thumbprint calculation must succeed");
 
         // Should produce a valid base64url encoded hash
         assert!(!thumbprint.is_empty());

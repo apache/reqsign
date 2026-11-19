@@ -21,13 +21,12 @@ use std::time::Duration;
 use http::request::Parts;
 use http::{HeaderValue, header};
 use log::debug;
-use p256::ecdsa::signature::Signer as _;
-use p256::ecdsa::{DerSignature, SigningKey};
 use reqsign_aws_core::Credential;
 use reqsign_aws_core::signing::{
     append_query_fragment, append_query_pairs, canonical_request_string_with_encoding,
     canonicalize_headers_with_standard_session_token, canonicalize_query,
 };
+use reqsign_core::crypto;
 use reqsign_core::hash::{hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, Result, SignRequest, SigningCredential, SigningRequest};
@@ -37,6 +36,12 @@ use crate::{PercentEncodingMode, SigningRegionSet};
 
 const ALGORITHM: &str = "AWS4-ECDSA-P256-SHA256";
 const X_AMZ_REGION_SET: &str = "x-amz-region-set";
+// P-256 group order minus two: the largest KDF output k0 for which k0 + 1
+// remains a valid private scalar (k0 + 1 <= n - 1).
+const P256_ORDER_MINUS_2: [u8; 32] = [
+    0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x4f,
+];
 const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 
 /// Request signer implementing
@@ -166,7 +171,7 @@ impl SignRequest for RequestSigner {
             &canonical_query,
             self.percent_encoding_mode,
         )?;
-        let encoded_request = hex_sha256(canonical_request.as_bytes());
+        let encoded_request = hex_sha256(canonical_request.as_bytes())?;
 
         let scope = format!("{}/{}/aws4_request", now.format_date(), self.service);
         debug!("calculated scope: {scope}");
@@ -176,7 +181,7 @@ impl SignRequest for RequestSigner {
 
         let signing_key =
             generate_signing_key(&credential.access_key_id, &credential.secret_access_key)?;
-        let signature = calculate_signature(&signing_key, string_to_sign.as_bytes());
+        let signature = calculate_signature(&signing_key, string_to_sign.as_bytes())?;
 
         let final_uri = if expires_in.is_some() {
             let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
@@ -265,12 +270,20 @@ fn string_to_sign(now: Timestamp, scope: &str, encoded_request: &str) -> Result<
     Ok(output)
 }
 
-fn calculate_signature(signing_key: &SigningKey, string_to_sign: &[u8]) -> String {
-    let signature: DerSignature = signing_key.sign(string_to_sign);
-    hex::encode(signature.as_bytes())
+fn calculate_signature(signing_key: &[u8; 32], string_to_sign: &[u8]) -> Result<String> {
+    let provider = crypto::get_default().ok_or_else(|| {
+        Error::config_invalid(
+            "no CryptoProvider is installed; install one during application startup",
+        )
+    })?;
+    let signature = provider.ecdsa_p256_sha256_sign(signing_key, string_to_sign)?;
+    Ok(hex::encode(signature))
 }
 
-fn generate_signing_key(access_key_id: &str, secret_access_key: &str) -> Result<SigningKey> {
+fn generate_signing_key(
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<Zeroizing<[u8; 32]>> {
     let mut input_key = Zeroizing::new(Vec::with_capacity(secret_access_key.len() + 5));
     input_key.extend_from_slice(b"AWS4A");
     input_key.extend_from_slice(secret_access_key.as_bytes());
@@ -284,16 +297,15 @@ fn generate_signing_key(access_key_id: &str, secret_access_key: &str) -> Result<
         input.push(counter);
         input.extend_from_slice(&256_u32.to_be_bytes());
 
-        let digest = Zeroizing::new(hmac_sha256(input_key.as_slice(), input.as_slice()));
+        let digest = Zeroizing::new(hmac_sha256(input_key.as_slice(), input.as_slice())?);
+        if digest.as_slice() > P256_ORDER_MINUS_2.as_slice() {
+            continue;
+        }
+
         let mut scalar = Zeroizing::new([0_u8; 32]);
         scalar.copy_from_slice(digest.as_slice());
         increment_big_endian(scalar.as_mut());
-
-        // P-256 accepts k0 + 1 exactly when the KDF output k0 is in the
-        // specification's [0, n - 2] range.
-        if let Ok(signing_key) = SigningKey::from_slice(scalar.as_ref()) {
-            return Ok(signing_key);
-        }
+        return Ok(scalar);
     }
 
     Err(Error::unexpected(
@@ -324,6 +336,7 @@ mod tests {
     use aws_sigv4::sign::v4a;
     use http::Request;
     use p256::ecdsa::DerSignature;
+    use p256::ecdsa::SigningKey as P256SigningKey;
     use p256::ecdsa::signature::Verifier;
     use pretty_assertions::assert_eq;
     use reqsign_core::ErrorKind;
@@ -406,7 +419,9 @@ mod tests {
 
     #[test]
     fn signing_key_matches_aws_public_key_vector() -> AnyResult<()> {
-        let signing_key = generate_signing_key(ACCESS_KEY_ID, SECRET_ACCESS_KEY)?;
+        let scalar = generate_signing_key(ACCESS_KEY_ID, SECRET_ACCESS_KEY)?;
+        let signing_key = P256SigningKey::from_slice(scalar.as_slice())
+            .expect("derived scalar must be a valid P-256 key");
         let public_key = signing_key.verifying_key().to_sec1_point(false);
 
         assert_eq!(
@@ -418,7 +433,7 @@ mod tests {
             "865ed22a7eadc9c5cb9d2cbaca1b3699139fedc5043dc6661864218330c8e518"
         );
 
-        let signature = calculate_signature(&signing_key, HEADER_STRING_TO_SIGN.as_bytes());
+        let signature = calculate_signature(&scalar, HEADER_STRING_TO_SIGN.as_bytes())?;
         let signature_bytes = hex::decode(signature)?;
         let signature = DerSignature::try_from(signature_bytes.as_slice())
             .expect("generated signature must use DER encoding");
@@ -503,7 +518,7 @@ mod tests {
         };
         format!(
             "AWS4-ECDSA-P256-SHA256\n20150830T123600Z\n20150830/service/aws4_request\n{}",
-            hex_sha256(canonical_request.as_bytes()),
+            hex_sha256(canonical_request.as_bytes()).expect("SHA-256 must succeed"),
         )
     }
 
@@ -525,9 +540,12 @@ mod tests {
         let signature_bytes = hex::decode(signature)?;
         let signature = DerSignature::try_from(signature_bytes.as_slice())
             .expect("signature must use DER encoding");
-        let key = generate_signing_key(ACCESS_KEY_ID, SECRET_ACCESS_KEY)?;
+        let scalar = generate_signing_key(ACCESS_KEY_ID, SECRET_ACCESS_KEY)?;
+        let signing_key = P256SigningKey::from_slice(scalar.as_slice())
+            .expect("derived scalar must be a valid P-256 key");
         assert!(
-            key.verifying_key()
+            signing_key
+                .verifying_key()
                 .verify(string_to_sign.as_bytes(), &signature)
                 .is_ok(),
             "signature must verify the expected canonical request for {}",

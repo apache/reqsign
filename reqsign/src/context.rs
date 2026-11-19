@@ -31,6 +31,11 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 /// - `ReqwestHttpSend` for HTTP requests
 /// - `OsEnv` for environment variable access
 ///
+/// This function does not install a crypto provider. Applications must call
+/// `reqsign::RustCryptoProvider::install_default()` once during startup (or
+/// install another provider) before hashing or signing. Integrating middleware
+/// must leave that choice to the application.
+///
 /// # Example
 ///
 /// ```no_run

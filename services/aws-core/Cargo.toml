@@ -42,9 +42,10 @@ rust-ini = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_urlencoded = "0.7"
-sha1 = { workspace = true }
 
 [dev-dependencies]
+ctor = "1"
+reqsign-crypto-rustcrypto = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }
 env_logger = { workspace = true }

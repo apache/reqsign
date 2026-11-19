@@ -20,6 +20,8 @@ use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    reqsign::RustCryptoProvider::install_default()
+        .expect("no CryptoProvider must be installed before this example");
     let signer = aws::default_signer("s3", "us-east-1");
     let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/report.csv")
         .body(())?

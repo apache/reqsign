@@ -32,3 +32,11 @@ mod uri;
 pub use uri::{percent_encode_path, percent_encode_query};
 
 pub use sign_request::RequestSigner;
+
+// Unit tests exercise signing paths, so install the test provider before
+// any test in this binary runs.
+#[cfg(test)]
+#[ctor::ctor(unsafe)]
+fn install_test_crypto_provider() {
+    let _ = reqsign_crypto_rustcrypto::RustCryptoProvider::install_default();
+}

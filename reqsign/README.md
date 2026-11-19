@@ -42,7 +42,10 @@ Add `reqsign` to your `Cargo.toml`:
 reqsign = "0.20"
 ```
 
-By default, this includes the `default-context` feature which provides a ready-to-use context implementation using `reqwest` and `tokio`.
+By default, this includes `default-context` (a ready-to-use context using
+`reqwest` and `tokio`) and `default-crypto` (the RustCrypto provider). The
+provider is re-exported but not installed automatically; applications call
+`RustCryptoProvider::install_default()` once during startup.
 
 To use specific services only:
 
@@ -59,10 +62,13 @@ The easiest way to get started is using the default signers provided for each se
 
 ```rust,ignore
 use anyhow::Result;
-use reqsign::aws;
+use reqsign::{RustCryptoProvider, aws};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    RustCryptoProvider::install_default()
+        .map_err(|_| anyhow::anyhow!("a CryptoProvider is already installed"))?;
+
     // Create a default signer for AWS S3 in us-east-1
     // This will automatically:
     // - Set up HTTP client and file reader
@@ -91,11 +97,14 @@ For more control, you can manually assemble the signer components:
 
 ```rust,ignore
 use anyhow::Result;
-use reqsign::{Context, Signer, default_context};
+use reqsign::{Context, RustCryptoProvider, Signer, default_context};
 use reqsign::aws::{DefaultCredentialProvider, RequestSigner};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    RustCryptoProvider::install_default()
+        .map_err(|_| anyhow::anyhow!("a CryptoProvider is already installed"))?;
+
     // Create a context with default implementations
     let ctx = default_context();
 

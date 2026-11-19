@@ -40,6 +40,15 @@ For security-sensitive changes, follow [SECURITY.md](SECURITY.md) and
 [THREAT_MODEL.md](THREAT_MODEL.md) as the source of truth for Reqsign's
 security boundary and its relationship to OpenDAL and other host applications.
 
+### Crypto Provider
+
+All signing cryptography goes through the process-wide
+`reqsign_core::crypto::CryptoProvider`. `reqsign-core` and every `services/*`
+crate carry no production cryptographic implementation. Follow
+[docs/crypto-provider.md](docs/crypto-provider.md) as the source of truth for
+the provider contract, installation ownership, error semantics, and the
+official RustCrypto/BoringSSL implementations.
+
 ### Default Credential Provider
 
 All future refactors and API reviews around `DefaultCredentialProvider` must

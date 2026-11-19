@@ -20,14 +20,13 @@ use std::fmt::{self, Debug};
 use std::sync::{Arc, Mutex as SyncMutex, Weak};
 use std::time::Duration;
 
-use aes_gcm::aead::{Aead, Generate, KeyInit, array::Array};
-use aes_gcm::{Aes128Gcm, Aes256Gcm};
 use asyncband::mutex::Mutex;
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use form_urlencoded::Serializer;
 use http::header::{ACCEPT, CONTENT_TYPE};
 use prost::Message;
+use reqsign_core::crypto;
 use reqsign_core::hash::hex_sha256;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, GrantCredential, Result, SigningCredential};
@@ -574,7 +573,7 @@ impl ClientSideCredentialAccessBoundaryGranter {
         })?;
         Ok(IntermediaryCacheKey {
             endpoint: STS_ENDPOINT,
-            source_authority: hex_sha256(source.access_token.as_bytes()),
+            source_authority: hex_sha256(source.access_token.as_bytes())?,
             source_expires_at,
         })
     }
@@ -653,8 +652,14 @@ impl ClientSideCredentialAccessBoundaryGranter {
                 .ok_or_else(|| Error::unexpected("test CAB nonce queue is empty"));
         }
 
-        <[u8; AES_GCM_NONCE_BYTES]>::try_generate()
-            .map_err(|_| Error::unexpected("failed to generate client-side CAB encryption nonce"))
+        let provider = crypto::get_default().ok_or_else(|| {
+            Error::config_invalid(
+                "no CryptoProvider is installed; install one during application startup",
+            )
+        })?;
+        let mut nonce = [0u8; AES_GCM_NONCE_BYTES];
+        provider.fill_random(&mut nonce)?;
+        Ok(nonce)
     }
 
     #[cfg(test)]
@@ -829,20 +834,12 @@ impl TinkAesGcmKey {
     }
 
     fn encrypt(&self, restrictions: &[u8], nonce: &[u8; AES_GCM_NONCE_BYTES]) -> Result<Vec<u8>> {
-        let ciphertext = match self.key_value.len() {
-            16 => Aes128Gcm::new_from_slice(&self.key_value)
-                .map_err(|_| Error::unexpected("failed to initialize client-side CAB encryption"))?
-                .encrypt(&Array(*nonce), restrictions),
-            32 => Aes256Gcm::new_from_slice(&self.key_value)
-                .map_err(|_| Error::unexpected("failed to initialize client-side CAB encryption"))?
-                .encrypt(&Array(*nonce), restrictions),
-            _ => {
-                return Err(Error::unexpected(
-                    "client-side CAB session key uses an unsupported AEAD key",
-                ));
-            }
-        }
-        .map_err(|_| Error::unexpected("failed to encrypt client-side CAB restrictions"))?;
+        let provider = crypto::get_default().ok_or_else(|| {
+            Error::config_invalid(
+                "no CryptoProvider is installed; install one during application startup",
+            )
+        })?;
+        let ciphertext = provider.aes_gcm_encrypt(&self.key_value, nonce, b"", restrictions)?;
 
         let mut encrypted =
             Vec::with_capacity(self.output_prefix.len() + nonce.len() + ciphertext.len());
@@ -1068,6 +1065,8 @@ struct AesGcmKeyProto {
 
 #[cfg(test)]
 mod tests {
+    use aes_gcm::aead::{Aead, KeyInit, array::Array};
+    use aes_gcm::{Aes128Gcm, Aes256Gcm};
     use std::collections::{BTreeMap, HashSet, VecDeque};
     use std::fmt::Formatter;
     use std::sync::atomic::{AtomicUsize, Ordering};

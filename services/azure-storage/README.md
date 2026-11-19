@@ -5,6 +5,10 @@ Azure Storage signing support for reqsign.
 This crate signs requests for Blob, File, Queue, and Table Storage. It supports
 shared key, SAS token, and Azure AD bearer token credentials.
 
+> Signing requires a process-wide `CryptoProvider`. Install one at startup
+> before constructing signers; see
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust

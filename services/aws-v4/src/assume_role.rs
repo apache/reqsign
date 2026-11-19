@@ -604,7 +604,7 @@ mod tests {
                 .expect("payload hash must be set")
                 .to_str()
                 .expect("payload hash must be text"),
-            hex_sha256(&request.body)
+            hex_sha256(&request.body).expect("SHA-256 must succeed")
         );
         assert_eq!(
             request

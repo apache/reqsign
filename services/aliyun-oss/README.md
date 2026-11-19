@@ -6,6 +6,10 @@ Aliyun OSS signing implementation for reqsign.
 
 This crate provides signing support for Alibaba Cloud Object Storage Service (OSS), enabling secure authentication for all OSS operations.
 
+> Signing requires a process-wide `CryptoProvider`. Install one at startup
+> before constructing signers; see
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust

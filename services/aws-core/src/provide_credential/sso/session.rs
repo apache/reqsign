@@ -20,6 +20,7 @@
 
 use asyncband::mutex::Mutex;
 use http::{Method, Request, StatusCode};
+use reqsign_core::hash::hex_sha1;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, Result};
 use serde::Deserialize;
@@ -46,7 +47,7 @@ impl SessionKey {
             .join(".aws")
             .join("sso")
             .join("cache")
-            .join(format!("{}.json", hex_sha1(name.as_bytes())));
+            .join(format!("{}.json", hex_sha1(name.as_bytes())?));
         Ok(SessionKey {
             path: path.to_string_lossy().into_owned(),
             config_path: config.config_path.clone(),
@@ -294,12 +295,4 @@ pub(super) fn login_required(reason: &str) -> Error {
     Error::config_invalid(format!(
         "{reason}. Please run 'aws sso login' for the selected profile"
     ))
-}
-
-// Simple SHA1 implementation for cache key generation
-pub(super) fn hex_sha1(data: &[u8]) -> String {
-    use sha1::{Digest, Sha1};
-    let mut hasher = Sha1::new();
-    hasher.update(data);
-    hex::encode(hasher.finalize())
 }

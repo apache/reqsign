@@ -22,11 +22,9 @@ use http::request::Parts;
 use http::{HeaderMap, HeaderName, Method};
 use log::debug;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Error, Result, SignRequest, SigningCredential, SigningRequest};
-use rsa::pkcs1v15::SigningKey;
-use rsa::sha2::Sha256;
-use rsa::signature::{SignatureEncoding, Signer};
-use rsa::{RsaPrivateKey, pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey};
+use reqsign_core::{
+    Context, Error, Result, SignRequest, SigningCredential, SigningRequest, crypto,
+};
 use std::fmt::Write;
 use std::time::Duration;
 
@@ -103,21 +101,17 @@ impl SignRequest for RequestSigner {
 
         debug!("string to sign: {}", string_to_sign);
 
-        // Read private key from file
+        // Read private key from file. Both unencrypted PKCS#8 and PKCS#1 PEM
+        // keys are accepted by the configured CryptoProvider.
         let private_key_content = ctx.file_read_as_string(&cred.key_file).await?;
-        // Older OpenSSL versions produce PKCS#1 PEM keys with `openssl genrsa`.
-        let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_content)
-            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&private_key_content))
-            .map_err(|e| {
-                reqsign_core::Error::credential_invalid(format!("Failed to read private key: {e}"))
-            })?;
-
-        // Sign the string
-        let signing_key = SigningKey::<Sha256>::new(private_key);
-        let signature = signing_key
-            .try_sign(string_to_sign.as_bytes())
-            .map_err(|e| reqsign_core::Error::unexpected(format!("Failed to sign: {e}")))?;
-        let encoded_signature = general_purpose::STANDARD.encode(signature.to_bytes());
+        let provider = crypto::get_default().ok_or_else(|| {
+            Error::config_invalid(
+                "no CryptoProvider is installed; install one during application startup",
+            )
+        })?;
+        let signature = provider
+            .rsa_pkcs1v15_sha256_sign(private_key_content.as_bytes(), string_to_sign.as_bytes())?;
+        let encoded_signature = general_purpose::STANDARD.encode(signature);
 
         // Set headers
         signing_req
@@ -208,6 +202,7 @@ fn single_header_value<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Result<
 mod tests {
     use super::*;
     use reqsign_core::FileRead;
+    use rsa::RsaPrivateKey;
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use rsa::rand_core::OsRng;
 

@@ -410,15 +410,15 @@ impl AssumeRoleGranter {
         );
         let string_to_sign = format!(
             "HMAC-SHA256\n{date}\n{credential_scope}\n{}",
-            hex_sha256(canonical_request.as_bytes())
+            hex_sha256(canonical_request.as_bytes())?
         );
         let signing_key = derive_signing_key(
             &credential.secret_access_key,
             &short_date,
             &self.region,
             DEFAULT_STS_SERVICE,
-        );
-        let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
+        )?;
+        let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes())?;
         let authorization = format!(
             "HMAC-SHA256 Credential={}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}",
             credential.access_key_id
@@ -562,11 +562,11 @@ fn canonical_query_string(params: &BTreeMap<String, String>) -> String {
         .join("&")
 }
 
-fn derive_signing_key(secret: &str, date: &str, region: &str, service: &str) -> Vec<u8> {
-    let date_key = hmac_sha256(secret.as_bytes(), date.as_bytes());
-    let region_key = hmac_sha256(&date_key, region.as_bytes());
-    let service_key = hmac_sha256(&region_key, service.as_bytes());
-    hmac_sha256(&service_key, b"request")
+fn derive_signing_key(secret: &str, date: &str, region: &str, service: &str) -> Result<Vec<u8>> {
+    let date_key = hmac_sha256(secret.as_bytes(), date.as_bytes())?;
+    let region_key = hmac_sha256(&date_key, region.as_bytes())?;
+    let service_key = hmac_sha256(&region_key, service.as_bytes())?;
+    Ok(hmac_sha256(&service_key, b"request")?.to_vec())
 }
 
 #[derive(Deserialize)]

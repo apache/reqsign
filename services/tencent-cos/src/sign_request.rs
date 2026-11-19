@@ -101,7 +101,7 @@ impl SignRequest for RequestSigner {
 
         let final_uri = if let Some(expires) = expires_in {
             // Query signing
-            let signature = build_signature(&signing_req, cred, now, expires);
+            let signature = build_signature(&signing_req, cred, now, expires)?;
 
             signing_req
                 .headers
@@ -117,7 +117,7 @@ impl SignRequest for RequestSigner {
             Some(append_query_fragment(&original_uri, &authentication)?)
         } else {
             // Header signing (default 3600s expiration)
-            let signature = build_signature(&signing_req, cred, now, Duration::from_secs(3600));
+            let signature = build_signature(&signing_req, cred, now, Duration::from_secs(3600))?;
 
             signing_req
                 .headers
@@ -151,9 +151,9 @@ fn build_signature(
     cred: &Credential,
     now: Timestamp,
     expires: Duration,
-) -> String {
+) -> Result<String> {
     let key_time = format!("{};{}", now.as_second(), (now + expires).as_second());
-    let sign_key = hex_hmac_sha1(cred.secret_key.as_bytes(), key_time.as_bytes());
+    let sign_key = hex_hmac_sha1(cred.secret_key.as_bytes(), key_time.as_bytes())?;
 
     let (param_list, param_string) = canonical_query(ctx);
     debug!("param list: {param_list}");
@@ -201,16 +201,16 @@ fn build_signature(
     string_to_sign.push('\n');
     string_to_sign.push_str(&key_time);
     string_to_sign.push('\n');
-    string_to_sign.push_str(&hex_sha1(http_string.as_bytes()));
+    string_to_sign.push_str(&hex_sha1(http_string.as_bytes())?);
     string_to_sign.push('\n');
     debug!("string_to_sign: {string_to_sign}");
 
-    let signature = hex_hmac_sha1(sign_key.as_bytes(), string_to_sign.as_bytes());
+    let signature = hex_hmac_sha1(sign_key.as_bytes(), string_to_sign.as_bytes())?;
 
-    format!(
+    Ok(format!(
         "q-sign-algorithm=sha1&q-ak={}&q-sign-time={}&q-key-time={}&q-header-list={}&q-url-param-list={}&q-signature={}",
         cred.secret_id, key_time, key_time, header_list, param_list, signature
-    )
+    ))
 }
 
 fn canonical_query(ctx: &SigningRequest) -> (String, String) {

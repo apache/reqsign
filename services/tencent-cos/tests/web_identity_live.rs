@@ -23,6 +23,8 @@
 //! temporary Tencent Cloud credentials through the real STS endpoint, then
 //! reads a private COS object with the credentials returned by the provider.
 
+mod common;
+
 use std::env;
 use std::time::Duration;
 

@@ -6,6 +6,10 @@ The default credential provider checks Tencent Cloud environment variables and
 then web identity configuration. It supports both header authentication and
 presigned query authentication.
 
+> Signing requires a process-wide `CryptoProvider`. Install one at startup
+> before constructing signers; see
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust,no_run

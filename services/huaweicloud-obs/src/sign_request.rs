@@ -125,7 +125,7 @@ impl SignRequest for RequestSigner {
 
         let string_to_sign = string_to_sign(&mut ctx, cred, now, method, &self.bucket)?;
         let signature =
-            base64_hmac_sha1(cred.secret_access_key.as_bytes(), string_to_sign.as_bytes());
+            base64_hmac_sha1(cred.secret_access_key.as_bytes(), string_to_sign.as_bytes())?;
 
         let final_uri = match method {
             SigningMethod::Header => {

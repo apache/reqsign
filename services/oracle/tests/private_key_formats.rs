@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::sync::LazyLock;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};

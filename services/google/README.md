@@ -7,6 +7,10 @@ account credentials. Its default Application Default Credentials chain checks
 `GOOGLE_APPLICATION_CREDENTIALS`, the well-known gcloud credentials file, and
 the Compute Engine metadata service.
 
+> Signing requires a process-wide `CryptoProvider`. Install one at startup
+> before constructing signers; see
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust,no_run

@@ -331,20 +331,20 @@ impl GetFederationTokenGranter {
         let signed_headers = "content-type;host";
         let canonical_request = format!(
             "POST\n/\n\n{canonical_headers}\n{signed_headers}\n{}",
-            hex_sha256(&body)
+            hex_sha256(&body)?
         );
         let credential_scope = format!("{date}/{STS_SERVICE}/tc3_request");
         let string_to_sign = format!(
             "TC3-HMAC-SHA256\n{timestamp}\n{credential_scope}\n{}",
-            hex_sha256(canonical_request.as_bytes())
+            hex_sha256(canonical_request.as_bytes())?
         );
         let secret_date = hmac_sha256(
             format!("TC3{}", credential.secret_key).as_bytes(),
             date.as_bytes(),
-        );
-        let secret_service = hmac_sha256(&secret_date, STS_SERVICE.as_bytes());
-        let secret_signing = hmac_sha256(&secret_service, b"tc3_request");
-        let signature = hex_hmac_sha256(&secret_signing, string_to_sign.as_bytes());
+        )?;
+        let secret_service = hmac_sha256(&secret_date, STS_SERVICE.as_bytes())?;
+        let secret_signing = hmac_sha256(&secret_service, b"tc3_request")?;
+        let signature = hex_hmac_sha256(&secret_signing, string_to_sign.as_bytes())?;
         let authorization = format!(
             "TC3-HMAC-SHA256 Credential={}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}",
             credential.secret_id

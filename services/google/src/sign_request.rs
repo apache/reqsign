@@ -20,10 +20,6 @@ use form_urlencoded::Serializer;
 use http::{Uri, header};
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
-use rsa::pkcs1v15::SigningKey;
-use rsa::pkcs8::DecodePrivateKey;
-use rsa::rand_core::OsRng;
-use rsa::signature::RandomizedSigner;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fmt::{self, Debug, Formatter};
@@ -31,7 +27,8 @@ use std::sync::{Arc, Mutex as SyncMutex, Weak};
 use std::time::Duration;
 
 use reqsign_core::{
-    Context, Result, SignRequest, SigningCredential, SigningRequest, hash::hex_sha256, time::*,
+    Context, Error as ReqsignError, Result, SignRequest, SigningCredential, SigningRequest, crypto,
+    hash::hex_sha256, time::*,
 };
 
 use crate::constants::{
@@ -300,7 +297,7 @@ impl RequestSigner {
         let scope = self.resolve_scope(ctx);
         let key = TokenCacheKey {
             client_email: sa.client_email.clone(),
-            private_key_hash: hex_sha256(sa.private_key.as_bytes()),
+            private_key_hash: hex_sha256(sa.private_key.as_bytes())?,
             scope: scope.clone(),
         };
 
@@ -428,7 +425,7 @@ impl RequestSigner {
         let canonical_query = canonicalize_query(req, &authentication_query);
 
         let creq = canonical_request_string(req, &canonical_query)?;
-        let encoded_req = hex_sha256(creq.as_bytes());
+        let encoded_req = hex_sha256(creq.as_bytes())?;
 
         let scope = format!(
             "{}/{}/{}/goog4_request",
@@ -455,14 +452,15 @@ impl RequestSigner {
     }
 
     fn sign_with_service_account(private_key_pem: &str, string_to_sign: &str) -> Result<String> {
-        let mut rng = OsRng;
-        let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
-            reqsign_core::Error::unexpected("failed to parse private key").with_source(e)
+        let provider = crypto::get_default().ok_or_else(|| {
+            ReqsignError::config_invalid(
+                "no CryptoProvider is installed; install one during application startup",
+            )
         })?;
-        let signing_key = SigningKey::<rsa::sha2::Sha256>::new(private_key);
-        let signature = signing_key.sign_with_rng(&mut rng, string_to_sign.as_bytes());
+        let signature = provider
+            .rsa_pkcs1v15_sha256_sign(private_key_pem.as_bytes(), string_to_sign.as_bytes())?;
 
-        Ok(signature.to_string())
+        Ok(hex::encode(signature))
     }
 
     fn build_signed_query_with_service_account(
@@ -874,6 +872,7 @@ mod tests {
     use http::header;
     use reqsign_core::{ErrorKind, HttpSend, ProvideCredential, Signer};
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+    use rsa::rand_core::OsRng;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 

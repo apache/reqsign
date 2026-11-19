@@ -45,6 +45,9 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 });
 
 pub fn bench(c: &mut Criterion) {
+    reqsign_crypto_rustcrypto::RustCryptoProvider::install_default()
+        .expect("no CryptoProvider must be installed before this benchmark");
+
     let mut group = c.benchmark_group("aws_v4");
 
     group.bench_function("reqsign", |b| {

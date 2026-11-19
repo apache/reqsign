@@ -24,6 +24,9 @@ use reqwest::Client;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    reqsign_crypto_rustcrypto::RustCryptoProvider::install_default()
+        .expect("no CryptoProvider must be installed before this example");
+
     // Initialize logging for debugging
     let _ = env_logger::builder().is_test(true).try_init();
 

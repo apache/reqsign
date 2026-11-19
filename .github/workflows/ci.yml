@@ -44,6 +44,29 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      - name: Check production crypto dependencies
+        run: |
+          packages=(
+            reqsign-core
+            reqsign-aliyun-oss
+            reqsign-aws-core
+            reqsign-aws-v4
+            reqsign-aws-v4a
+            reqsign-azure-storage
+            reqsign-google
+            reqsign-huaweicloud-obs
+            reqsign-openstack-keystone
+            reqsign-oracle
+            reqsign-tencent-cos
+            reqsign-volcengine-tos
+          )
+          for package in "${packages[@]}"; do
+            if cargo tree -p "$package" --edges normal | grep -Eq ' (sha1|sha2|hmac|rsa|p256|aes-gcm) v'; then
+              echo "production cryptographic dependency found in $package"
+              exit 1
+            fi
+          done
+
   licenses:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -99,10 +122,11 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo check -p reqsign-core --target wasm32-unknown-unknown
+          cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown
           cargo check -p reqsign-aws-core --target wasm32-unknown-unknown
           cargo check -p reqsign-aws-v4a --target wasm32-unknown-unknown
           cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,aws,aws-v4a,azure,aliyun,tencent
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,tencent
 
   unit:
     runs-on: ubuntu-latest

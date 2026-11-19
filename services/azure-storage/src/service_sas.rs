@@ -701,11 +701,14 @@ impl ServiceSharedAccessSignature {
         .join("\n")
     }
 
-    fn signature_with_decoded_key(&self, decoded_key: &[u8]) -> String {
+    fn signature_with_decoded_key(&self, decoded_key: &[u8]) -> reqsign_core::Result<String> {
         hash::base64_hmac_sha256(decoded_key, self.string_to_sign().as_bytes())
     }
 
-    fn token_with_decoded_key(&self, decoded_key: &[u8]) -> Vec<(String, String)> {
+    fn token_with_decoded_key(
+        &self,
+        decoded_key: &[u8],
+    ) -> reqsign_core::Result<Vec<(String, String)>> {
         let mut elements: Vec<(String, String)> = vec![
             ("sv".to_string(), self.version.to_string()),
             ("se".to_string(), self.expiry.format_rfc3339_zulu()),
@@ -728,16 +731,16 @@ impl ServiceSharedAccessSignature {
 
         elements.push((
             "sig".to_string(),
-            self.signature_with_decoded_key(decoded_key),
+            self.signature_with_decoded_key(decoded_key)?,
         ));
 
-        elements
+        Ok(elements)
     }
 
     /// Generate SAS query parameters.
     pub fn token(&self) -> Result<Vec<(String, String)>> {
         let decoded_key = hash::base64_decode(&self.key)?;
-        Ok(self.token_with_decoded_key(&decoded_key))
+        self.token_with_decoded_key(&decoded_key)
     }
 }
 
@@ -945,7 +948,9 @@ impl GrantCredential for ServiceSasGranter {
             signer = signer.with_ip(ip);
         }
 
-        let pairs = signer.token_with_decoded_key(&decoded_key);
+        let pairs = signer
+            .token_with_decoded_key(&decoded_key)
+            .expect("service SAS token must build");
         let token = encode_query_pairs(&pairs);
         let after_generation = self.now_after_generation();
         if times.expiry <= after_generation {

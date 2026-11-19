@@ -507,16 +507,16 @@ fn authorization_header(
 
     let canonical_request = format!(
         "{method}\n{canonical_uri}\n{query}\n{canonical_headers}\n{signed_headers}\n{}",
-        hex_sha256(body)
+        hex_sha256(body)?
     );
     let signing_date = normalized_headers.get(X_SDK_DATE).ok_or_else(|| {
         Error::request_invalid("Huawei Cloud IAM request is missing the X-Sdk-Date header")
     })?;
     let string_to_sign = format!(
         "{SDK_HMAC_SHA256}\n{signing_date}\n{}",
-        hex_sha256(canonical_request.as_bytes())
+        hex_sha256(canonical_request.as_bytes())?
     );
-    let signature = hex_hmac_sha256(secret_access_key.as_bytes(), string_to_sign.as_bytes());
+    let signature = hex_hmac_sha256(secret_access_key.as_bytes(), string_to_sign.as_bytes())?;
 
     Ok(format!(
         "{SDK_HMAC_SHA256} Access={access_key_id}, SignedHeaders={signed_headers}, Signature={signature}"

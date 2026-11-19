@@ -191,3 +191,11 @@ pub use reqsign_aws_core::{IMDSv2RegionProvider, Profile, SharedConfig};
 pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
 
 pub const EMPTY_STRING_SHA256: &str = reqsign_aws_core::EMPTY_STRING_SHA256;
+
+// Unit tests exercise signing paths, so install the test provider before
+// any test in this binary runs.
+#[cfg(test)]
+#[ctor::ctor(unsafe)]
+fn install_test_crypto_provider() {
+    let _ = reqsign_crypto_rustcrypto::RustCryptoProvider::install_default();
+}

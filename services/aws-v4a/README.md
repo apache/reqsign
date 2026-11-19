@@ -7,6 +7,10 @@ SigV4a uses ECDSA P-256 signatures and a signing region set, allowing one
 signed request to be accepted in multiple AWS regions. See the
 [AWS SigV4a signing documentation](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html).
 
+> Signing requires a process-wide `CryptoProvider`. Install one at startup
+> before constructing signers; see
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ```rust
 use reqsign_aws_v4a::{RequestSigner, SigningRegionSet};
 

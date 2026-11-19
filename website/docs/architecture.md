@@ -103,6 +103,27 @@ capabilities by simply not providing them; and WASM targets provide
 browser-backed implementations. See
 [Custom runtimes & WASM](/docs/guides/custom-runtimes/).
 
+## Crypto provider
+
+Cryptography is not a `Context` capability. Reqsign resolves every hash, MAC,
+asymmetric signature, AES-GCM operation, and random draw through one
+process-wide `CryptoProvider` installed by the application at startup:
+
+```rust
+use reqsign::RustCryptoProvider;
+
+RustCryptoProvider::install_default()
+    .map_err(|_| "a CryptoProvider is already installed")?;
+```
+
+`reqsign-core` and the service crates contain no cryptographic implementation,
+so signing without an installed provider returns `ConfigInvalid`. The facade's
+`default-crypto` feature supplies the RustCrypto provider but does not install
+it; `default_context()` does not install it either. Applications choose the
+provider, and integrating middleware such as OpenDAL must leave that choice to
+the application. See [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md) for the full
+contract and error semantics.
+
 ## ProvideCredential
 
 One trait behind every credential source — an env reader, a config-file

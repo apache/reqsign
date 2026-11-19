@@ -22,10 +22,14 @@ The simplest way to use `reqsign` is with the default signers provided by each s
 
 ```rust
 use anyhow::Result;
-use reqsign::aws;
+use reqsign::{RustCryptoProvider, aws};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the process-wide crypto provider once, before any signing.
+    RustCryptoProvider::install_default()
+        .map_err(|_| anyhow::anyhow!("a CryptoProvider is already installed"))?;
+
     // Create a default signer for S3 in us-east-1
     // This will automatically:
     // - Load credentials from environment variables, config files, or IAM roles
@@ -56,13 +60,16 @@ For more control over the components, you can manually assemble the signer:
 
 ```rust
 use anyhow::Result;
-use reqsign::{Context, Signer};
+use reqsign::{Context, RustCryptoProvider, Signer};
 use reqsign_aws_v4::{DefaultCredentialProvider, RequestSigner};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    RustCryptoProvider::install_default()
+        .map_err(|_| anyhow::anyhow!("a CryptoProvider is already installed"))?;
+
     // Build your own context with specific implementations
     let ctx = Context::new()
         .with_file_read(TokioFileRead)

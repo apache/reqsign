@@ -672,13 +672,13 @@ impl UserDelegationSasGranter {
         &self,
         endpoint: &ParsedEndpoint,
         bearer_token: &str,
-    ) -> UserDelegationKeyCacheKey {
-        UserDelegationKeyCacheKey {
+    ) -> Result<UserDelegationKeyCacheKey> {
+        Ok(UserDelegationKeyCacheKey {
             account: self.account.clone(),
             endpoint: endpoint.identity.clone(),
-            source_authority: hex_sha256(bearer_token.as_bytes()),
+            source_authority: hex_sha256(bearer_token.as_bytes())?,
             service_version: USER_DELEGATION_SERVICE_VERSION,
-        }
+        })
     }
 
     fn key_covers(
@@ -726,7 +726,9 @@ impl GrantCredential for UserDelegationSasGranter {
         let Ok(times) = self.operation_times(expires_in) else {
             return now + BEARER_TOKEN_OPERATION_HEADROOM;
         };
-        let cache_key = self.cache_key(&endpoint, token);
+        let Ok(cache_key) = self.cache_key(&endpoint, token) else {
+            return now + BEARER_TOKEN_OPERATION_HEADROOM;
+        };
         if self.cached_key(&cache_key, &times).is_some() {
             now
         } else {
@@ -757,7 +759,7 @@ impl GrantCredential for UserDelegationSasGranter {
             ));
         }
 
-        let cache_key = self.cache_key(&endpoint, token);
+        let cache_key = self.cache_key(&endpoint, token)?;
         let cached = self.cached_key(&cache_key, &times);
         let (key, fetched) = if let Some(key) = cached {
             (key, false)
@@ -829,7 +831,7 @@ impl GrantCredential for UserDelegationSasGranter {
         }
 
         let pairs = signer.token().map_err(|e| {
-            Error::unexpected("failed to generate Azure user delegation SAS").with_source(e)
+            Error::new(e.kind(), "failed to generate Azure user delegation SAS").with_source(e)
         })?;
         let token = encode_query_pairs(&pairs);
         let output = Credential::with_sas_token_expires_at(&token, times.expiry);

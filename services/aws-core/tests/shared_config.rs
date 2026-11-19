@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use bytes::Bytes;
 use reqsign_aws_core::{IMDSv2RegionProvider, SharedConfig};
 use reqsign_core::{Context, Error, ErrorKind, FileRead, HttpSend, Result, StaticEnv};

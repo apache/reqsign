@@ -22,6 +22,8 @@ use reqsign::aws::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    reqsign::RustCryptoProvider::install_default()
+        .expect("no CryptoProvider must be installed before this example");
     let provider = S3ExpressSessionProvider::new(
         "my-bucket--usw2-az1--x-s3",
         DefaultCredentialProvider::new(),

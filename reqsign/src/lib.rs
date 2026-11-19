@@ -21,6 +21,11 @@
 // Re-export core types
 pub use reqsign_core::*;
 
+// The default cryptographic backend. Applications install it at startup; neither
+// this facade nor `default_context` installs a provider implicitly.
+#[cfg(feature = "default-crypto")]
+pub use reqsign_crypto_rustcrypto::RustCryptoProvider;
+
 // Context utilities
 #[cfg(feature = "default-context")]
 mod context;

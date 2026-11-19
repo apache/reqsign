@@ -320,7 +320,7 @@ impl SignRequest for RequestSigner {
                         let cache_key = UserDelegationPresignCacheKey {
                             account: account.clone(),
                             endpoint: format!("{}://{}", sctx.scheme, sctx.authority),
-                            source_authority: reqsign_core::hash::hex_sha256(token.as_bytes()),
+                            source_authority: reqsign_core::hash::hex_sha256(token.as_bytes())?,
                             version: version.to_string(),
                         };
 
@@ -405,7 +405,8 @@ impl SignRequest for RequestSigner {
                         }
 
                         let signer_token = signer.token().map_err(|e| {
-                            reqsign_core::Error::unexpected(
+                            reqsign_core::Error::new(
+                                e.kind(),
                                 "failed to generate user delegation SAS token",
                             )
                             .with_source(e)
@@ -470,8 +471,11 @@ impl SignRequest for RequestSigner {
                         }
 
                         let signer_token = signer.token().map_err(|e| {
-                            reqsign_core::Error::unexpected("failed to generate service SAS token")
-                                .with_source(e)
+                            reqsign_core::Error::new(
+                                e.kind(),
+                                "failed to generate service SAS token",
+                            )
+                            .with_source(e)
                         })?;
                         final_uri = Some(append_query_pairs(&original_uri, &signer_token)?);
                     }
@@ -482,7 +486,7 @@ impl SignRequest for RequestSigner {
                                 .with_source(e)
                         })?;
                         let signature =
-                            base64_hmac_sha256(&decode_content, string_to_sign.as_bytes());
+                            base64_hmac_sha256(&decode_content, string_to_sign.as_bytes())?;
 
                         sctx.headers.insert(header::AUTHORIZATION, {
                             let mut value: HeaderValue =

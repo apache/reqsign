@@ -239,7 +239,7 @@ impl RequestSigner {
             &additional_headers,
         )?;
         let signature =
-            base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+            base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes())?;
 
         let authorization = if additional_headers.is_empty() {
             format!(
@@ -295,7 +295,7 @@ impl RequestSigner {
             &additional_headers,
         )?;
         let signature =
-            base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+            base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes())?;
         query_pairs.push((X_OSS_SIGNATURE.to_string(), signature));
 
         self.apply_query_pairs(req, &query_pairs, existing_query_count)
@@ -309,7 +309,7 @@ impl RequestSigner {
     ) -> Result<()> {
         let string_to_sign = self.build_string_to_sign(req, cred, signing_time, None)?;
         let signature =
-            base64_hmac_sha1(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+            base64_hmac_sha1(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes())?;
 
         // Add date header
         req.headers
@@ -339,7 +339,7 @@ impl RequestSigner {
         let expiration_time = signing_time + expires;
         let string_to_sign = self.build_string_to_sign(req, cred, signing_time, Some(expires))?;
         let signature =
-            base64_hmac_sha1(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+            base64_hmac_sha1(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes())?;
 
         let mut authentication = vec![
             format!(
@@ -497,7 +497,7 @@ impl RequestSigner {
         let scope = self.v4_scope(signing_time, region);
         let string_to_sign =
             self.build_v4_string_to_sign(signing_time, &scope, &canonical_request)?;
-        let signature = self.build_v4_signature(cred, signing_time, region, &string_to_sign);
+        let signature = self.build_v4_signature(cred, signing_time, region, &string_to_sign)?;
 
         let final_uri = if expires_in.is_some() {
             let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
@@ -707,7 +707,7 @@ impl RequestSigner {
         writeln!(&mut s, "{OSS_V4_ALGORITHM}")?;
         writeln!(&mut s, "{}", signing_time.format_iso8601())?;
         writeln!(&mut s, "{scope}")?;
-        write!(&mut s, "{}", hex_sha256(canonical_request.as_bytes()))?;
+        write!(&mut s, "{}", hex_sha256(canonical_request.as_bytes())?)?;
         Ok(s)
     }
 
@@ -717,14 +717,14 @@ impl RequestSigner {
         signing_time: Timestamp,
         region: &str,
         string_to_sign: &str,
-    ) -> String {
+    ) -> Result<String> {
         let date_key = hmac_sha256(
             format!("aliyun_v4{}", cred.access_key_secret).as_bytes(),
             signing_time.format_date().as_bytes(),
-        );
-        let region_key = hmac_sha256(&date_key, region.as_bytes());
-        let service_key = hmac_sha256(&region_key, OSS_V4_SERVICE.as_bytes());
-        let signing_key = hmac_sha256(&service_key, OSS_V4_REQUEST.as_bytes());
+        )?;
+        let region_key = hmac_sha256(&date_key, region.as_bytes())?;
+        let service_key = hmac_sha256(&region_key, OSS_V4_SERVICE.as_bytes())?;
+        let signing_key = hmac_sha256(&service_key, OSS_V4_REQUEST.as_bytes())?;
         hex_hmac_sha256(&signing_key, string_to_sign.as_bytes())
     }
 

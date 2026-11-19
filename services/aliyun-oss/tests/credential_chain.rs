@@ -16,6 +16,8 @@
 // under the License.
 
 //! Integration tests for ProvideCredentialChain with Aliyun OSS
+mod common;
+
 use reqsign_aliyun_oss::{Credential, EnvCredentialProvider};
 use reqsign_core::ProvideCredentialChain;
 use reqsign_core::{Context, OsEnv, ProvideCredential, Result};

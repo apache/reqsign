@@ -52,10 +52,21 @@ mod tests {
 
     #[test]
     fn empty_string_sha256_matches_computed_digest() {
-        assert_eq!(EMPTY_STRING_SHA256, hex_sha256(b""));
+        assert_eq!(
+            EMPTY_STRING_SHA256,
+            hex_sha256(b"").expect("SHA-256 must succeed")
+        );
         assert_eq!(
             EMPTY_STRING_SHA256,
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
     }
+}
+
+// Unit tests exercise signing paths, so install the test provider before
+// any test in this binary runs.
+#[cfg(test)]
+#[ctor::ctor(unsafe)]
+fn install_test_crypto_provider() {
+    let _ = reqsign_crypto_rustcrypto::RustCryptoProvider::install_default();
 }

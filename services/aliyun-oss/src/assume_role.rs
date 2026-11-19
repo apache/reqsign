@@ -168,7 +168,7 @@ pub(crate) fn signed_rpc_request(
     let signature = base64_hmac_sha1(
         format!("{access_key_secret}&").as_bytes(),
         string_to_sign.as_bytes(),
-    );
+    )?;
 
     let url = format!(
         "{}/?{}&Signature={}",
@@ -657,7 +657,8 @@ mod tests {
         expected.insert("Version".to_string(), "2015-04-01".to_string());
         let canonical = canonicalized_query_string(&expected);
         let string_to_sign = format!("GET&%2F&{}", percent_encode_query_value(&canonical));
-        let expected_signature = base64_hmac_sha1("base-sk&".as_bytes(), string_to_sign.as_bytes());
+        let expected_signature =
+            base64_hmac_sha1("base-sk&".as_bytes(), string_to_sign.as_bytes())?;
         assert_eq!(
             Some(expected_signature.as_str()),
             params.get("Signature").map(String::as_str)

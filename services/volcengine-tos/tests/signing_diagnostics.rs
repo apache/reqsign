@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::sync::{Mutex, Once};
 use std::time::Duration;
 

@@ -17,6 +17,8 @@
 
 #![cfg(feature = "credential-access-boundary-client-side")]
 
+mod common;
+
 use std::env;
 
 use log::warn;

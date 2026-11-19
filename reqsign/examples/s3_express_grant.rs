@@ -23,6 +23,8 @@ use reqsign::{Granter, default_context};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    reqsign::RustCryptoProvider::install_default()
+        .expect("no CryptoProvider must be installed before this example");
     let config = S3ExpressSessionConfig::from_bucket("my-bucket--usw2-az1--x-s3", "us-west-2")?;
     let grant = S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly);
     let granter = Granter::new(

@@ -19,21 +19,18 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use rsa::RsaPrivateKey;
-use rsa::pkcs1v15::SigningKey;
-use rsa::pkcs8::DecodePrivateKey;
-use rsa::rand_core::OsRng;
-use rsa::sha2::Sha256;
-use rsa::signature::{RandomizedSigner, SignatureEncoding};
 use serde::Serialize;
 
+use crate::crypto;
 use crate::{Error, Result};
 
-/// Encode a JWS compact JWT using the RS256 algorithm.
+/// Encode a JWS compact JWT using an RSA private key in PKCS#8 or PKCS#1 PEM
+/// format.
 ///
 /// RS256 is RSA PKCS#1 v1.5 with SHA-256. The caller owns the JWT header and
 /// claims shape so service-specific fields such as `x5t` stay service-local.
-pub fn encode_rs256<H, C>(header: &H, claims: &C, private_key: &RsaPrivateKey) -> Result<String>
+/// Signing is performed by the installed [`crypto::CryptoProvider`].
+pub fn encode_rs256_pem<H, C>(header: &H, claims: &C, private_key_pem: &[u8]) -> Result<String>
 where
     H: Serialize,
     C: Serialize,
@@ -42,28 +39,13 @@ where
     let encoded_claims = encode_json(claims)?;
     let signing_input = format!("{encoded_header}.{encoded_claims}");
 
-    let mut rng = OsRng;
-    let signing_key = SigningKey::<Sha256>::new(private_key.clone());
-    let signature = signing_key.sign_with_rng(&mut rng, signing_input.as_bytes());
-    let encoded_signature = URL_SAFE_NO_PAD.encode(signature.to_bytes());
+    let signature = crypto::require_default()?
+        .rsa_pkcs1v15_sha256_sign(private_key_pem, signing_input.as_bytes())?;
 
-    Ok(format!("{signing_input}.{encoded_signature}"))
-}
-
-/// Encode a JWS compact JWT using an RSA private key in PKCS#8 PEM format.
-pub fn encode_rs256_pem<H, C>(header: &H, claims: &C, private_key_pem: &[u8]) -> Result<String>
-where
-    H: Serialize,
-    C: Serialize,
-{
-    let private_key_pem = std::str::from_utf8(private_key_pem).map_err(|e| {
-        Error::credential_invalid("RSA private key PEM is not valid UTF-8").with_source(e)
-    })?;
-    let private_key = RsaPrivateKey::from_pkcs8_pem(private_key_pem).map_err(|e| {
-        Error::credential_invalid("failed to parse PKCS#8 RSA private key PEM").with_source(e)
-    })?;
-
-    encode_rs256(header, claims, &private_key)
+    Ok(format!(
+        "{signing_input}.{}",
+        URL_SAFE_NO_PAD.encode(signature)
+    ))
 }
 
 fn encode_json<T>(value: &T) -> Result<String>
@@ -78,9 +60,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::install_default;
+    use crate::test_support::TestCryptoProvider;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use rsa::RsaPrivateKey;
+    use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey};
     use rsa::pkcs1v15::{Signature, VerifyingKey};
+    use rsa::pkcs8::{DecodePrivateKey, EncodePrivateKey};
     use rsa::rand_core::OsRng;
+    use rsa::sha2::Sha256;
     use rsa::signature::Verifier;
     use serde_json::json;
 
@@ -99,13 +87,88 @@ mod tests {
         exp: u64,
     }
 
-    #[test]
-    fn encode_rs256_keeps_jws_shape_and_verifiable_signature() -> Result<()> {
-        let mut rng = OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048)
-            .map_err(|e| Error::unexpected("failed to generate test RSA key").with_source(e))?;
+    fn private_key() -> RsaPrivateKey {
+        RsaPrivateKey::new(&mut OsRng, 1024).expect("test RSA key generation must work")
+    }
 
-        let jwt = encode_rs256(
+    fn verify(header: &Header<'_>, claims: &Claims<'_>, jwt: &str, pem: &[u8]) {
+        let parts = jwt.split('.').collect::<Vec<_>>();
+        assert_eq!(parts.len(), 3);
+
+        let header_value: serde_json::Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD
+                .decode(parts[0])
+                .expect("JWT header must decode"),
+        )
+        .expect("JWT header must be JSON");
+        assert_eq!(
+            header_value,
+            json!({
+                "alg": header.alg,
+                "typ": header.typ,
+                "x5t": header.x5t
+            })
+        );
+        assert_eq!(
+            URL_SAFE_NO_PAD
+                .decode(parts[1])
+                .expect("JWT claims must decode"),
+            serde_json::to_vec(claims).expect("claims must serialize")
+        );
+
+        let signature = URL_SAFE_NO_PAD
+            .decode(parts[2])
+            .expect("JWT signature must decode");
+        let signature = Signature::try_from(signature.as_slice())
+            .expect("JWT signature must be a PKCS#1 v1.5 signature");
+        let private_key =
+            RsaPrivateKey::from_pkcs8_pem(std::str::from_utf8(pem).expect("PEM must be UTF-8"))
+                .or_else(|_| {
+                    RsaPrivateKey::from_pkcs1_pem(
+                        std::str::from_utf8(pem).expect("PEM must be UTF-8"),
+                    )
+                })
+                .expect("test PEM must parse");
+        let verifying_key = VerifyingKey::<Sha256>::new(private_key.to_public_key());
+        verifying_key
+            .verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &signature)
+            .expect("JWT signature must verify");
+    }
+
+    #[test]
+    fn encode_rs256_pem_keeps_jws_shape_and_verifiable_signature() {
+        let _ = install_default(TestCryptoProvider);
+        let private_key = private_key();
+        let header = Header {
+            alg: "RS256",
+            typ: "JWT",
+            x5t: "thumbprint",
+        };
+        let claims = Claims {
+            iss: "client",
+            sub: "client",
+            aud: "https://example.com/token",
+            exp: 1,
+        };
+
+        for pem in [
+            private_key
+                .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
+                .expect("test key must encode as PKCS#8"),
+            private_key
+                .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+                .expect("test key must encode as PKCS#1"),
+        ] {
+            let jwt = encode_rs256_pem(&header, &claims, pem.as_bytes())
+                .expect("JWT encoding must succeed");
+            verify(&header, &claims, &jwt, pem.as_bytes());
+        }
+    }
+
+    #[test]
+    fn encode_rs256_pem_rejects_malformed_key_material() {
+        let _ = install_default(TestCryptoProvider);
+        let err = encode_rs256_pem(
             &Header {
                 alg: "RS256",
                 typ: "JWT",
@@ -117,37 +180,10 @@ mod tests {
                 aud: "https://example.com/token",
                 exp: 1,
             },
-            &private_key,
-        )?;
-
-        let parts = jwt.split('.').collect::<Vec<_>>();
-        assert_eq!(parts.len(), 3);
-
-        let header: serde_json::Value = serde_json::from_slice(
-            &URL_SAFE_NO_PAD
-                .decode(parts[0])
-                .map_err(|e| Error::unexpected("failed to decode JWT header").with_source(e))?,
+            b"not a private key",
         )
-        .map_err(|e| Error::unexpected("failed to parse JWT header").with_source(e))?;
-        assert_eq!(
-            header,
-            json!({
-                "alg": "RS256",
-                "typ": "JWT",
-                "x5t": "thumbprint"
-            })
-        );
+        .expect_err("malformed private key must fail");
 
-        let signature = URL_SAFE_NO_PAD
-            .decode(parts[2])
-            .map_err(|e| Error::unexpected("failed to decode JWT signature").with_source(e))?;
-        let signature = Signature::try_from(signature.as_slice())
-            .map_err(|e| Error::unexpected("failed to parse JWT signature").with_source(e))?;
-        let verifying_key = VerifyingKey::<Sha256>::new(private_key.to_public_key());
-        verifying_key
-            .verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &signature)
-            .map_err(|e| Error::unexpected("failed to verify JWT signature").with_source(e))?;
-
-        Ok(())
+        assert_eq!(err.kind(), crate::ErrorKind::CredentialInvalid);
     }
 }

@@ -221,7 +221,7 @@ impl AssumeRoleOperation {
                 Bytes::from(self.parameters.clone()),
             )
         };
-        let payload_hash = hex_sha256(&body);
+        let payload_hash = hex_sha256(&body)?;
 
         http::Request::builder()
             .method(method)
@@ -746,7 +746,7 @@ mod tests {
                 .headers()
                 .get(X_AMZ_CONTENT_SHA_256)
                 .expect("payload hash must be present"),
-            &hex_sha256(request.body())
+            &hex_sha256(request.body()).expect("SHA-256 must succeed")
         );
     }
 

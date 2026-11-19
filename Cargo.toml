@@ -16,7 +16,8 @@
 # under the License.
 
 [workspace]
-members = ["core", "context/*", "services/*", "reqsign"]
+members = ["core", "context/*", "crypto/rustcrypto", "services/*", "reqsign"]
+exclude = ["crypto/boring"]
 resolver = "3"
 
 [workspace.package]
@@ -34,6 +35,7 @@ reqsign-aws-v4a = { version = "3.1.1", path = "services/aws-v4a" }
 reqsign-azure-storage = { version = "3.3.2", path = "services/azure-storage" }
 reqsign-command-execute-tokio = { version = "3.0.9", path = "context/command-execute-tokio" }
 reqsign-core = { version = "3.3.4", path = "core" }
+reqsign-crypto-rustcrypto = { version = "3.3.4", path = "crypto/rustcrypto" }
 reqsign-file-read-tokio = { version = "3.0.9", path = "context/file-read-tokio" }
 reqsign-google = { version = "3.3.1", path = "services/google" }
 reqsign-http-send-reqwest = { version = "4.0.9", path = "context/http-send-reqwest" }
@@ -54,6 +56,7 @@ dotenvy = "0.15"
 env_logger = "0.11"
 form_urlencoded = "1"
 futures = "0.3"
+getrandom = "0.3"
 hex = "0.4"
 hmac = "0.13"
 http = "1"

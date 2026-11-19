@@ -2,6 +2,10 @@
 
 AWS SigV4 signing implementation for `reqsign`.
 
+> Signing requires a process-wide `CryptoProvider`. Install one at startup
+> before constructing signers; see
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust,no_run
@@ -87,7 +91,7 @@ let body: &[u8] = b"Hello, World!";
 let payload_hash = if body.is_empty() {
     EMPTY_STRING_SHA256.to_string()
 } else {
-    hex_sha256(body)
+    hex_sha256(body).expect("SHA-256 must succeed")
 };
 
 let request = http::Request::put("https://s3.amazonaws.com/mybucket/hello.txt")
