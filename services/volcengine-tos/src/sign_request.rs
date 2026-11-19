@@ -21,6 +21,7 @@ use log::debug;
 use percent_encoding::percent_decode_str;
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
+use reqsign_core::utils::Redact;
 use reqsign_core::{Context, Result, SignRequest, SigningCredential, SigningRequest};
 use std::fmt::Write;
 use std::sync::LazyLock;
@@ -185,7 +186,13 @@ impl SignRequest for RequestSigner {
                 cred.access_key_id, credential_scope, signed_headers_str, signature
             );
 
-            debug!("authorization: {}", authorization);
+            debug!(
+                "authorization: {TOS_ALGORITHM} Credential={:?}/{}, SignedHeaders={}, Signature={:?}",
+                Redact::from(&cred.access_key_id),
+                credential_scope,
+                signed_headers_str,
+                Redact::from(&signature),
+            );
 
             let mut auth_value: HeaderValue = authorization.parse()?;
             auth_value.set_sensitive(true);
