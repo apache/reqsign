@@ -32,12 +32,14 @@ use std::fmt::{self, Debug, Formatter};
 use std::time::Duration;
 
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
+use percent_encoding::utf8_percent_encode;
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, GrantCredential, Result, SigningCredential};
 use serde::{Deserialize, Serialize};
 
 use crate::Credential;
+use crate::constants::TENCENT_URI_ENCODE_SET;
 
 const DEFAULT_STS_ENDPOINT: &str = "https://sts.tencentcloudapi.com";
 const STS_ACTION: &str = "GetFederationToken";
@@ -49,10 +51,11 @@ const MAX_DURATION_SECONDS: u64 = 129_600;
 /// A typed, explicitly bound Tencent Cloud STS `GetFederationToken` grant.
 ///
 /// The caller owns the authorization policy. `name` is the caller name returned
-/// in the issued temporary identity, and `policy` is a CAM policy that the
-/// service intersects with the source identity's permissions. Reqsign validates
-/// that both values are non-empty before I/O but does not parse or evaluate the
-/// policy. Bind a new grant for each authorization decision.
+/// in the issued temporary identity and must contain ASCII letters only, as
+/// required by the API. `policy` is a raw CAM policy document that the service
+/// intersects with the source identity's permissions. Reqsign URL-encodes the
+/// policy exactly once for the wire field before signing; it does not parse or
+/// evaluate the policy. Bind a new grant for each authorization decision.
 #[derive(Clone)]
 pub struct GetFederationTokenGrant {
     name: String,
@@ -69,10 +72,11 @@ impl Debug for GetFederationTokenGrant {
 }
 
 impl GetFederationTokenGrant {
-    /// Create a grant with a caller name and a CAM policy.
+    /// Create a grant with a caller name and a raw CAM policy.
     ///
-    /// `policy` is preserved verbatim and sent in the request body. The host is
-    /// responsible for the policy's syntax, resources, and permissions.
+    /// `name` must contain ASCII letters only. `policy` is preserved verbatim
+    /// as the CAM document and URL-encoded once when the request is built. The
+    /// host is responsible for the policy's syntax, resources, and permissions.
     pub fn new(name: impl Into<String>, policy: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -81,9 +85,9 @@ impl GetFederationTokenGrant {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.name.trim().is_empty() {
+        if self.name.is_empty() || !self.name.bytes().all(|byte| byte.is_ascii_alphabetic()) {
             return Err(Error::request_invalid(
-                "Tencent Cloud STS GetFederationToken requires a non-empty Name",
+                "Tencent Cloud STS GetFederationToken Name must contain ASCII letters only",
             ));
         }
         if self.policy.trim().is_empty() {
@@ -112,6 +116,13 @@ impl GetFederationTokenGrant {
 /// temporary secret ID, secret key, token, and the exact `ExpiredTime` from the
 /// response, so it can be consumed directly by [`crate::RequestSigner`].
 ///
+/// The service default of 1800 seconds is shorter than the COS request signer's
+/// default 3600-second header-signing lifetime. A credential granted with the
+/// default lifetime is therefore rejected by `Signer::sign(..., None)`. Request
+/// a longer grant, such as 7200 seconds for a main account, or pass a shorter
+/// explicit `expires_in` to the signer. The signer's lifetime checks and default
+/// are unchanged.
+///
 /// # Example
 ///
 /// ```no_run
@@ -125,16 +136,18 @@ impl GetFederationTokenGrant {
 /// # async fn example() -> reqsign_core::Result<()> {
 /// let source = StaticCredentialProvider::new("source-secret-id", "source-secret-key");
 /// let grant = GetFederationTokenGrant::new(
-///     "customer-a",
-///     r#"{"version":"2.0","statement":[{"effect":"allow","action":["cos:GetObject"],"resource":["*"]}]}"#,
+///     "customer",
+///     r#"{"version":"2.0","statement":[{"effect":"allow","action":["cos:GetObject"],"resource":["qcs::cos:ap-beijing:uid/100000000001:bucket/example/reports/2025-Q1.csv"]}]}"#,
 /// );
 /// // Supply a Context configured with an HttpSend implementation.
+/// // The COS signer defaults to a 3600-second header lifetime, so request
+/// // longer than that when using the granted credential with the default.
 /// let credential = Granter::new(
 ///     Context::new(),
 ///     source,
 ///     GetFederationTokenGranter::new(grant),
 /// )
-/// .grant(Some(Duration::from_secs(3600)))
+/// .grant(Some(Duration::from_secs(7200)))
 /// .await?;
 /// # let _ = credential;
 /// # Ok(())
@@ -299,9 +312,10 @@ impl GetFederationTokenGranter {
         signing_time: Timestamp,
     ) -> Result<http::Request<Vec<u8>>> {
         let endpoint = self.endpoint()?;
+        let policy = encode_policy(&self.grant.policy);
         let body = serde_json::to_vec(&GetFederationTokenRequest {
             name: &self.grant.name,
-            policy: &self.grant.policy,
+            policy: &policy,
             duration_seconds,
         })
         .map_err(|err| {
@@ -490,6 +504,10 @@ fn tc3_date(signing_time: Timestamp) -> String {
     format!("{}-{}-{}", &date[0..4], &date[4..6], &date[6..8])
 }
 
+fn encode_policy(policy: &str) -> String {
+    utf8_percent_encode(policy, &TENCENT_URI_ENCODE_SET).to_string()
+}
+
 #[derive(Serialize)]
 struct GetFederationTokenRequest<'a> {
     #[serde(rename = "Name")]
@@ -608,6 +626,7 @@ mod tests {
 
     use bytes::Bytes;
     use http::header::{HeaderMap, HeaderValue};
+    use percent_encoding::percent_decode_str;
     use reqsign_core::{ErrorKind, Granter, HttpSend, ProvideCredential, Signer};
 
     use super::*;
@@ -616,8 +635,8 @@ mod tests {
     const SUCCESS_BODY: &[u8] = br#"{"Response":{"Credentials":{"TmpSecretId":"sts-secret-id","TmpSecretKey":"sts-secret-key","Token":"sts-security-token"},"ExpiredTime":4872311117,"Expiration":"2124-05-25T11:45:17Z","RequestId":"request-id"}}"#;
     const SOURCE_SECRET_ID: &str = "source-secret-id";
     const SOURCE_SECRET_KEY: &str = "source-secret-key";
-    const GRANT_NAME: &str = "reqsign-test";
-    const POLICY: &str = r#"{"version":"2.0","statement":[{"effect":"allow","action":["cos:GetObject"],"resource":["*"]}]}"#;
+    const GRANT_NAME: &str = "reqsign";
+    const POLICY: &str = r#"{"version":"2.0","statement":[{"effect":"allow","action":["cos:GetObject"],"resource":["qcs::cos:ap-beijing:uid/100000000001:bucket/example/reports/2025%2FQ1+final&draft=yes.csv"]}]}"#;
 
     #[derive(Clone)]
     struct CapturedRequest {
@@ -736,6 +755,31 @@ mod tests {
             .expect("response must build")
     }
 
+    fn success_response(expired_time: i64) -> http::Response<Bytes> {
+        let body = serde_json::json!({
+            "Response": {
+                "Credentials": {
+                    "TmpSecretId": "sts-secret-id",
+                    "TmpSecretKey": "sts-secret-key",
+                    "Token": "sts-security-token",
+                },
+                "ExpiredTime": expired_time,
+            }
+        });
+        response(
+            http::StatusCode::OK,
+            serde_json::to_vec(&body).expect("response body must serialize"),
+        )
+    }
+
+    fn request_parts() -> http::request::Parts {
+        http::Request::get("https://bucket.cos.ap-beijing.myqcloud.com/object")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0
+    }
+
     fn granter(signing_time: Timestamp) -> GetFederationTokenGranter {
         GetFederationTokenGranter::new(GetFederationTokenGrant::new(GRANT_NAME, POLICY))
             .with_sts_endpoint("https://sts.example.com")
@@ -744,6 +788,23 @@ mod tests {
 
     fn request_json(request: &CapturedRequest) -> serde_json::Value {
         serde_json::from_slice(&request.body).expect("request body must be valid JSON")
+    }
+
+    #[test]
+    fn policy_encoding_is_rfc3986_and_round_trips() {
+        assert_eq!(
+            "a%20b%2Bc%25d%26e%3Df%2Fg%3Ah",
+            encode_policy("a b+c%d&e=f/g:h")
+        );
+
+        let encoded = encode_policy(POLICY);
+        assert_ne!(POLICY, encoded);
+        assert_eq!(
+            POLICY,
+            percent_decode_str(&encoded)
+                .decode_utf8()
+                .expect("encoded policy must be valid UTF-8")
+        );
     }
 
     #[test]
@@ -796,14 +857,21 @@ mod tests {
         assert!(!request.headers.contains_key("X-TC-Token"));
         assert!(!request.headers.contains_key("X-TC-Region"));
         assert_eq!(
-            "TC3-HMAC-SHA256 Credential=source-secret-id/2024-03-05/sts/tc3_request, SignedHeaders=content-type;host, Signature=a348d5174d14eddd899ebec6f7e16728702bd7c441b7f479ba98e975a3495e43",
+            "TC3-HMAC-SHA256 Credential=source-secret-id/2024-03-05/sts/tc3_request, SignedHeaders=content-type;host, Signature=09c6966e359938640cf430c5b819a480100f671adefe3e78366c68faa314805f",
             request.headers[AUTHORIZATION]
         );
         assert!(request.headers[AUTHORIZATION].is_sensitive());
 
         let body = request_json(request);
         assert_eq!(GRANT_NAME, body["Name"]);
-        assert_eq!(POLICY, body["Policy"]);
+        let encoded_policy = body["Policy"].as_str().expect("Policy must be a string");
+        assert_eq!(encode_policy(POLICY), encoded_policy);
+        assert_eq!(
+            POLICY,
+            percent_decode_str(encoded_policy)
+                .decode_utf8()
+                .expect("encoded policy must be valid UTF-8")
+        );
         assert_eq!(3600, body["DurationSeconds"]);
         assert_eq!(3, body.as_object().expect("body must be an object").len());
         Ok(())
@@ -856,10 +924,12 @@ mod tests {
             assert_eq!(0, http_send.calls());
         }
 
-        for grant in [
-            GetFederationTokenGrant::new("", POLICY),
-            GetFederationTokenGrant::new(GRANT_NAME, ""),
-        ] {
+        let mut invalid_grants = vec![GetFederationTokenGrant::new(GRANT_NAME, "")];
+        invalid_grants.extend(
+            ["", "reqsign-test", "reqsign1", "reqsign test"]
+                .map(|name| GetFederationTokenGrant::new(name, POLICY)),
+        );
+        for grant in invalid_grants {
             let http_send = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
             let ctx = Context::new().with_http_send(http_send.clone());
             let err = Granter::new(
@@ -976,10 +1046,41 @@ mod tests {
 
     #[tokio::test]
     async fn granted_credential_is_consumable_by_the_cos_signer() -> Result<()> {
-        let signing_time = timestamp("2024-03-05T06:07:08Z");
-        let http_send = MockHttpSend::new([response(http::StatusCode::OK, SUCCESS_BODY)]);
+        let now = Timestamp::now();
+        let http_send = MockHttpSend::new([success_response(now.as_second() + 7200)]);
         let ctx = Context::new().with_http_send(http_send);
-        let granted = Granter::new(ctx, source_provider(), granter(signing_time))
+        let granted = Granter::new(ctx, source_provider(), granter(now))
+            .grant(Some(Duration::from_secs(7200)))
+            .await?;
+
+        let signer = Signer::new(
+            Context::new(),
+            FixedCredentialProvider {
+                credential: granted,
+            },
+            RequestSigner::new(),
+        );
+        let mut request = request_parts();
+        signer.sign(&mut request, None).await?;
+
+        let authorization = request.headers[AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be ASCII");
+        assert!(authorization.contains("q-ak=sts-secret-id"));
+        assert_eq!(
+            "sts-security-token",
+            request.headers["x-cos-security-token"]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn default_grant_lifetime_is_shorter_than_the_default_cos_signing_lifetime() -> Result<()>
+    {
+        let now = Timestamp::now();
+        let http_send = MockHttpSend::new([success_response(now.as_second() + 1800)]);
+        let ctx = Context::new().with_http_send(http_send);
+        let granted = Granter::new(ctx, source_provider(), granter(now))
             .grant(None)
             .await?;
 
@@ -990,20 +1091,27 @@ mod tests {
             },
             RequestSigner::new(),
         );
-        let mut request = http::Request::get("https://bucket.cos.ap-beijing.myqcloud.com/object")
-            .body(())
-            .expect("request must build")
-            .into_parts()
-            .0;
-        signer.sign(&mut request, None).await?;
+        let mut request = request_parts();
+        let err = signer
+            .sign(&mut request, None)
+            .await
+            .expect_err("default COS signing lifetime must reject a 1800-second grant");
+        assert_eq!(ErrorKind::CredentialInvalid, err.kind());
+        assert!(
+            format!("{err:?}").contains("requested operation deadline"),
+            "error must come from the signing deadline check: {err:?}"
+        );
 
-        let authorization = request.headers[AUTHORIZATION]
-            .to_str()
-            .expect("authorization must be ASCII");
-        assert!(authorization.contains("q-ak=sts-secret-id"));
-        assert_eq!(
-            "sts-security-token",
-            request.headers["x-cos-security-token"]
+        let mut request = request_parts();
+        signer
+            .sign(&mut request, Some(Duration::from_secs(900)))
+            .await?;
+        assert!(
+            request
+                .uri
+                .query()
+                .is_some_and(|query| query.contains("q-signature=")),
+            "shorter explicit lifetime must select query authentication"
         );
         Ok(())
     }
