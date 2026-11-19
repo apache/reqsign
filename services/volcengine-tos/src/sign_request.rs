@@ -83,6 +83,14 @@ impl RequestSigner {
     fn get_time(&self) -> Timestamp {
         self.time.unwrap_or_else(Timestamp::now)
     }
+
+    fn required_valid_until_at(
+        &self,
+        signing_time: Timestamp,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        signing_time + expires_in.unwrap_or_default()
+    }
 }
 impl SignRequest for RequestSigner {
     type Credential = Credential;
@@ -90,9 +98,9 @@ impl SignRequest for RequestSigner {
     fn required_valid_until(
         &self,
         _credential: &Self::Credential,
-        _expires_in: Option<std::time::Duration>,
+        expires_in: Option<std::time::Duration>,
     ) -> Timestamp {
-        self.get_time()
+        self.required_valid_until_at(self.get_time(), expires_in)
     }
 
     async fn sign_request(
@@ -107,7 +115,8 @@ impl SignRequest for RequestSigner {
         };
 
         let now = self.get_time();
-        if !cred.is_valid_at(now) {
+        let required_until = self.required_valid_until_at(now, expires_in);
+        if !cred.is_valid_at(required_until) {
             return Err(reqsign_core::Error::credential_invalid(
                 "credential expires before the requested signing operation deadline",
             ));

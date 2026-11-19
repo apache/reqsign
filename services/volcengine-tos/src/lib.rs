@@ -21,6 +21,9 @@ mod constants;
 mod credential;
 pub use credential::Credential;
 
+mod assume_role;
+pub use assume_role::{AssumeRoleGrant, AssumeRoleGranter};
+
 mod provide_credential;
 pub use provide_credential::*;
 
