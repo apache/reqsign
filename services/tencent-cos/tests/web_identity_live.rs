@@ -17,11 +17,11 @@
 
 //! Live coverage for `AssumeRoleWithWebIdentityCredentialProvider`.
 //!
-//! The test only runs when `REQSIGN_TENCENT_COS_TEST_WEB_IDENTITY` is `on`,
-//! which the trusted job in `.github/workflows/tencent_cos.yml` sets. It
-//! exchanges a GitHub OIDC token for temporary Tencent Cloud credentials
-//! through the real STS endpoint, then reads a private COS object with the
-//! credentials returned by the provider.
+//! The test only runs when `REQSIGN_TENCENT_COS_TEST_WEB_IDENTITY` is `on`.
+//! CI sets that gate in `.github/workflows/tencent_cos_live.yml`, which runs
+//! only from the main branch. The test exchanges a GitHub OIDC token for
+//! temporary Tencent Cloud credentials through the real STS endpoint, then
+//! reads a private COS object with the credentials returned by the provider.
 
 use std::env;
 use std::time::Duration;
@@ -50,8 +50,39 @@ async fn test_web_identity_credential_reads_private_object() -> Result<()> {
         return Ok(());
     }
 
+    let required = [
+        "TENCENTCLOUD_REGION",
+        "TENCENTCLOUD_ROLE_ARN",
+        "TENCENTCLOUD_PROVIDER_ID",
+        "TENCENTCLOUD_WEB_IDENTITY_TOKEN_FILE",
+        "REQSIGN_TENCENT_COS_OBJECT_URL",
+    ];
+    let missing = required
+        .iter()
+        .filter(|name| env::var_os(name).is_none())
+        .copied()
+        .collect::<Vec<_>>();
+    assert!(
+        missing.is_empty(),
+        "REQSIGN_TENCENT_COS_TEST_WEB_IDENTITY is on, but these variables are not set: {}",
+        missing.join(", ")
+    );
+
+    let token_file = env::var("TENCENTCLOUD_WEB_IDENTITY_TOKEN_FILE").unwrap_or_default();
+    let token_size = std::fs::metadata(&token_file)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    assert!(
+        token_size > 0,
+        "TENCENTCLOUD_WEB_IDENTITY_TOKEN_FILE must reference the non-empty OIDC token file written by the live job"
+    );
+
     let object_url = env::var("REQSIGN_TENCENT_COS_OBJECT_URL")
         .expect("REQSIGN_TENCENT_COS_OBJECT_URL must be set");
+    assert!(
+        object_url.starts_with("https://"),
+        "REQSIGN_TENCENT_COS_OBJECT_URL must use https so the temporary credential and signed request are not sent in cleartext"
+    );
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
