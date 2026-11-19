@@ -25,6 +25,7 @@ import tempfile
 import unittest
 
 SCRIPTS = Path(__file__).resolve().parent
+FIXTURE_GITHUB_TOKEN = 'gh-fixture-token'
 FAKE_AZ = r"""#!/usr/bin/env python3
 import json, os, pathlib, sys
 args = sys.argv[1:]
@@ -92,7 +93,7 @@ else:
 
 
 FAKE_CURL = r"""#!/usr/bin/env python3
-import json, os, pathlib, sys
+import json, os, pathlib, sys, urllib.parse
 args = sys.argv[1:]
 root = pathlib.Path(os.environ['FAKE_AZ_STATE'])
 def option(name, default=''):
@@ -130,6 +131,35 @@ if url.startswith('https://oidc.example.test/token'):
 if url.startswith('https://dev.azure.com/'):
     assert option('--header') == 'Authorization: Bearer fake-devops-token', \
         'unexpected DevOps authorization header'
+if url.startswith('https://api.github.com/'):
+    assert option('--header') == 'Authorization: Bearer __GH_TOKEN__', \
+        'unexpected GitHub authorization header'
+    assert method == 'GET'
+    if os.getenv('RUNS_API_FAIL'):
+        sys.exit(35)
+    query = []
+    for i, arg in enumerate(args):
+        if arg == '--data-urlencode':
+            name, _, value = args[i + 1].partition('=')
+            # curl percent-encodes the value, which matters for branch names.
+            query.append(name + '=' + urllib.parse.quote(value, safe=''))
+    if query:
+        url = url + '?' + '&'.join(query)
+    with (root / 'curl-calls.jsonl').open('a') as f:
+        f.write(json.dumps({'method': method, 'url': url}) + '\n')
+    if os.getenv('RUNS_API_BROKEN'):
+        respond('upstream returned a page, not JSON')
+    elif os.getenv('RUNS_API_STATUS', '200') != '200':
+        respond(json.dumps({'message': 'server error'}), os.getenv('RUNS_API_STATUS'))
+    else:
+        # The fixture answers with the run under test unless a test supplies
+        # the workflow runs the check should see.
+        respond(os.getenv('RUNS_API_BODY') or json.dumps({
+            'total_count': 1,
+            'workflow_runs': [{'id': 100, 'event': 'pull_request',
+                               'head_branch': 'xuanwo/feature',
+                               'status': 'completed', 'conclusion': 'success'}]}))
+    sys.exit(0)
 # Both waiting and cancellation must finish before fixture cleanup.
 assert list(root.glob('ci-probe-*'))
 with (root / 'curl-calls.jsonl').open('a') as f:
@@ -196,7 +226,7 @@ class LiveScriptTests(unittest.TestCase):
         binary.write_text(FAKE_AZ)
         binary.chmod(0o755)
         curl = self.root / 'curl'
-        curl.write_text(FAKE_CURL)
+        curl.write_text(FAKE_CURL.replace('__GH_TOKEN__', FIXTURE_GITHUB_TOKEN))
         curl.chmod(0o755)
         self.env = {
             **os.environ,
@@ -221,6 +251,10 @@ class LiveScriptTests(unittest.TestCase):
             'GITHUB_RUN_ID': '123',
             'GITHUB_RUN_ATTEMPT': '1',
             'GITHUB_OUTPUT': str(self.root / 'outputs'),
+            'GITHUB_TOKEN': FIXTURE_GITHUB_TOKEN,
+            'GITHUB_REPOSITORY': 'apache/reqsign',
+            'GITHUB_EVENT_NAME': 'pull_request',
+            'GITHUB_HEAD_REF': 'xuanwo/feature',
             'REQSIGN_AZURE_PIPELINES_POLL_INTERVAL': '0',
         }
 
@@ -529,6 +563,245 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         self.assertEqual([c for c in self.curl_calls() if c['method'] == 'PATCH'], [])
         self.assertEqual(len(self.timeline_calls()), 1)
         self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+
+    def superseded(self):
+        return (self.root / 'outputs').read_text().strip()
+
+    def runs_api_urls(self):
+        path = self.state / 'curl-calls.jsonl'
+        if not path.exists():
+            return []
+        return [c['url'] for c in self.curl_calls()
+                if c['url'].startswith('https://api.github.com/')]
+
+    def check_probe(self):
+        return self.run_script('superseded-probe.sh', 'azure_storage.yml')
+
+    def newer_run(self, **fields):
+        run = {'id': 200, 'event': 'pull_request', 'head_branch': 'xuanwo/feature',
+               'status': 'queued'}
+        run.update(fields)
+        return json.dumps({'total_count': 1, 'workflow_runs': [run]})
+
+    def test_probe_skipped_when_a_newer_run_is_in_flight(self):
+        self.env['RUNS_API_BODY'] = self.newer_run()
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=true')
+        self.assertIn('Skipping the live probe: newer run 200', result.stdout)
+        self.assertNotIn(FIXTURE_GITHUB_TOKEN, result.stdout + result.stderr)
+        urls = self.runs_api_urls()
+        self.assertEqual(len(urls), 1)
+        self.assertIn('/repos/apache/reqsign/actions/workflows/azure_storage.yml/runs?', urls[0])
+        self.assertIn('event=pull_request', urls[0])
+        self.assertIn('branch=xuanwo%2Ffeature', urls[0])
+        self.assertIn('per_page=50', urls[0])
+
+    def test_probe_kept_when_no_newer_run_is_in_flight(self):
+        self.env['RUNS_API_BODY'] = json.dumps({'workflow_runs': [
+            {'id': 50, 'event': 'pull_request', 'head_branch': 'xuanwo/feature',
+             'status': 'queued'},
+            {'id': 123, 'event': 'pull_request', 'head_branch': 'xuanwo/feature',
+             'status': 'completed'}]})
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+        self.assertIn('Running the live probe', result.stdout)
+
+    def test_probe_kept_when_the_newer_run_already_completed(self):
+        # A finished newer run is not an in-flight replacement; an older probe
+        # that still runs is cheaper than a missing live validation.
+        self.env['RUNS_API_BODY'] = self.newer_run(status='completed',
+                                                  conclusion='cancelled')
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+
+    def test_probe_kept_when_the_newer_run_is_for_another_branch(self):
+        self.env['RUNS_API_BODY'] = self.newer_run(head_branch='xuanwo/other')
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+
+    def test_probe_skipped_for_a_newer_push_on_main(self):
+        del self.env['GITHUB_HEAD_REF']
+        self.env.update(GITHUB_EVENT_NAME='push', GITHUB_REF_NAME='main',
+                        RUNS_API_BODY=self.newer_run(event='push', head_branch='main',
+                                                    status='in_progress'))
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=true')
+        self.assertIn('event=push', self.runs_api_urls()[0])
+        self.assertIn('branch=main', self.runs_api_urls()[0])
+
+    def test_probe_kept_when_the_runs_api_fails(self):
+        self.env['RUNS_API_STATUS'] = '500'
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+        self.assertIn('HTTP 500', result.stderr)
+
+    def test_probe_kept_when_the_runs_api_is_unreadable(self):
+        self.env['RUNS_API_BROKEN'] = '1'
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+
+    def test_probe_kept_when_the_runs_api_is_unreachable(self):
+        self.env['RUNS_API_FAIL'] = '1'
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+        self.assertIn('Could not list workflow runs; running the probe', result.stderr)
+
+    def test_probe_kept_without_a_token(self):
+        del self.env['GITHUB_TOKEN']
+        result = self.check_probe()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.superseded(), 'superseded=false')
+        self.assertEqual(self.runs_api_urls(), [])
+
+
+ROOT = SCRIPTS.parent.parent
+
+
+def pipeline_checkout_script():
+    """Return the inline shell of the pipeline's checkout step."""
+    text = (ROOT / 'azure-pipelines.yml').read_text()
+    end = text.index('    displayName: Check out the GitHub Actions revision')
+    start = text.rindex('  - bash: |', 0, end)
+    lines = text[start:end].splitlines()[1:]
+    return '\n'.join(line[6:] if line.startswith('      ') else line for line in lines)
+
+
+class ProbeWiringTests(unittest.TestCase):
+    """The workflow has to skip every remote step for a superseded probe."""
+
+    def probe_job_text(self):
+        text = (ROOT / '.github/workflows/azure_storage.yml').read_text()
+        job = text[text.index('  test_azure_pipelines_provider:'):]
+        return job[:job.index('\n  signing_test:')]
+
+    def test_skip_check_runs_before_any_remote_step(self):
+        job = self.probe_job_text()
+        check = job.index('superseded-probe.sh')
+        for later in ('Configure 1Password Connect', 'Log in to Azure with GitHub OIDC',
+                      'with-probe.sh'):
+            self.assertLess(check, job.index(later), later)
+
+    def test_every_remote_step_waits_for_the_skip_result(self):
+        job = self.probe_job_text()
+        guard = "if: steps.current.outputs.superseded != 'true'"
+        self.assertEqual(job.count(guard), 4)
+        self.assertIn('id: current', job)
+        self.assertIn('superseded: ${{ steps.current.outputs.superseded }}', job)
+        self.assertIn('actions: read', job)
+        self.assertIn("group: ${{ github.workflow }}-azure-pipelines-probe", job)
+        self.assertIn('queue: max', job)
+        self.assertIn('cancel-in-progress: false', job)
+
+    def test_summary_reports_a_superseded_probe_instead_of_a_pass(self):
+        text = (ROOT / '.github/workflows/azure_storage.yml').read_text()
+        self.assertIn('AZURE_PIPELINES_SUPERSEDED', text)
+        self.assertIn('skipped (superseded by a newer run)', text)
+
+
+class ProbePipelineTests(unittest.TestCase):
+    """The pipeline must check out the revision that triggered the probe."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.remote = root / 'remote.git'
+        self.seed = root / 'seed'
+        self.checkout = root / 'checkout'
+        self.git_env = {**os.environ,
+                        'GIT_AUTHOR_NAME': 'fixture',
+                        'GIT_AUTHOR_EMAIL': 'fixture@example.test',
+                        'GIT_COMMITTER_NAME': 'fixture',
+                        'GIT_COMMITTER_EMAIL': 'fixture@example.test'}
+        self.git('init', '-q', '--bare', str(self.remote))
+        # GitHub served commit-by-SHA fetches for both branch commits and
+        # displaced pull request merge commits when this was checked read-only.
+        self.git('-C', str(self.remote), 'config',
+                 'uploadpack.allowReachableSHA1InWant', 'true')
+        self.git('-C', str(self.remote), 'config',
+                 'uploadpack.allowAnySHA1InWant', 'true')
+        self.git('init', '-q', '-b', 'main', str(self.seed))
+        self.queued = self.commit('main.txt', 'queued revision')
+        self.git('-C', str(self.seed), 'push', '-q', str(self.remote), 'main')
+        self.newer = self.commit('main.txt', 'docs-only successor')
+        self.git('-C', str(self.seed), 'push', '-q', str(self.remote), 'main')
+        self.git('init', '-q', '-b', 'main', str(self.checkout))
+
+    def git(self, *args):
+        return subprocess.run(['git', *args], check=True, capture_output=True,
+                              text=True, env=self.git_env)
+
+    def commit(self, name, message):
+        (self.seed / name).write_text(message)
+        self.git('-C', str(self.seed), 'add', name)
+        self.git('-C', str(self.seed), 'commit', '-q', '-m', message)
+        return self.git('-C', str(self.seed), 'rev-parse', 'HEAD').stdout.strip()
+
+    def head(self):
+        result = subprocess.run(['git', '-C', str(self.checkout), 'rev-parse', 'HEAD'],
+                                capture_output=True, text=True)
+        return result.stdout.strip() if result.returncode == 0 else ''
+
+    def run_checkout(self, sha, ref):
+        script = pipeline_checkout_script()
+        self.assertIn('https://github.com/apache/reqsign.git', script)
+        script = script.replace('https://github.com/apache/reqsign.git', str(self.remote))
+        env = {**os.environ, 'GITHUB_SHA': sha, 'GITHUB_REF': ref}
+        return subprocess.run(['bash', '-c', script], cwd=self.checkout, env=env,
+                              capture_output=True, text=True)
+
+    def test_checks_out_the_queued_commit_after_the_branch_advanced(self):
+        result = self.run_checkout(self.queued, 'refs/heads/main')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.head(), self.queued)
+        self.assertNotEqual(self.head(), self.newer)
+        self.assertEqual((self.checkout / 'main.txt').read_text(), 'queued revision')
+
+    def test_checks_out_the_queued_merge_commit_after_the_merge_ref_moved(self):
+        self.git('-C', str(self.seed), 'checkout', '-q', '-B', 'pr', self.queued)
+        self.commit('pr.txt', 'pull request head')
+        self.git('-C', str(self.seed), 'merge', '-q', '--no-ff', '-m', 'merge one', 'main')
+        first_merge = self.git('-C', str(self.seed), 'rev-parse', 'HEAD').stdout.strip()
+        self.git('-C', str(self.seed), 'push', '-q', str(self.remote),
+                 'HEAD:refs/pull/1/merge')
+        self.commit('pr.txt', 'pull request head again')
+        self.git('-C', str(self.seed), 'merge', '-q', '--no-ff', '-m', 'merge two', 'main')
+        second_merge = self.git('-C', str(self.seed), 'rev-parse', 'HEAD').stdout.strip()
+        self.git('-C', str(self.seed), 'push', '-q', '--force', str(self.remote),
+                 'HEAD:refs/pull/1/merge')
+
+        result = self.run_checkout(first_merge, 'refs/pull/1/merge')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.head(), first_merge)
+        self.assertNotEqual(self.head(), second_merge)
+
+    def test_refuses_to_check_out_a_ref_that_moved(self):
+        # The queued commit is gone, so only newer code is fetchable. The step
+        # has to stop instead of testing a revision that never triggered it.
+        result = self.run_checkout('0' * 40, 'refs/heads/main')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('instead of the triggering commit', result.stderr)
+        self.assertEqual(self.head(), '')
+
+    def test_rejects_a_ref_the_workflow_never_runs_on(self):
+        result = self.run_checkout(self.queued, 'refs/remotes/origin/main')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Unsupported GitHub ref', result.stderr)
+        self.assertEqual(self.head(), '')
+
+    def test_rejects_a_malformed_commit(self):
+        result = self.run_checkout('not-a-commit', 'refs/heads/main')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.head(), '')
 
 
 if __name__ == '__main__':
