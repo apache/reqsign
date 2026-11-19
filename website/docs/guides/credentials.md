@@ -37,7 +37,7 @@ SDKs consult, in a documented order. Each
 use reqsign::aws::DefaultCredentialProvider;
 
 // The documented default chain for AWS:
-// env → profiles → SSO → OIDC → process → ECS → IMDS
+// env → profiles (including assume-role chains) → SSO → OIDC → process → ECS → IMDS
 let provider = DefaultCredentialProvider::new();
 ```
 

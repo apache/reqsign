@@ -37,7 +37,7 @@ cargo add reqsign --features aws
 use reqsign::aws;
 
 // Credentials resolve through the default chain:
-// env → profiles → SSO → OIDC → process → ECS → IMDS.
+// env → profiles (including assume-role chains) → SSO → OIDC → process → ECS → IMDS.
 let signer = aws::default_signer("s3", "us-east-1");
 
 let mut req = http::Request::builder()

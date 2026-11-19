@@ -46,6 +46,11 @@ async fn main() -> anyhow::Result<()> {
 6. `ecs`
 7. `imds`
 
+The `profile` stage also resolves an assume-role profile through its
+`source_profile` chain. A named SSO source profile uses the `sso` slot; each
+role is assumed with the previous hop's credential. `.no_profile()` disables
+the graph and `.no_sso()` prevents an SSO source from participating.
+
 On `wasm32`, the non-portable `sso` and `process` slots are not available.
 
 ## S3 Express Authentication
