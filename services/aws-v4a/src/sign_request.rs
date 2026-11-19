@@ -26,7 +26,7 @@ use p256::ecdsa::{DerSignature, SigningKey};
 use reqsign_aws_core::Credential;
 use reqsign_aws_core::signing::{
     append_query_fragment, append_query_pairs, canonical_request_string_with_encoding,
-    canonicalize_headers, canonicalize_query,
+    canonicalize_headers_with_standard_session_token, canonicalize_query,
 };
 use reqsign_core::hash::{hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
@@ -137,7 +137,12 @@ impl SignRequest for RequestSigner {
 
         let original_uri = req.uri.clone();
         let mut signing_request = SigningRequest::build(req)?;
-        canonicalize_headers(&mut signing_request, credential, expires_in, now)?;
+        canonicalize_headers_with_standard_session_token(
+            &mut signing_request,
+            credential,
+            expires_in,
+            now,
+        )?;
 
         if expires_in.is_none() {
             let region_set = HeaderValue::from_str(self.region_set.as_str()).map_err(|e| {
