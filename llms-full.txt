@@ -1054,7 +1054,7 @@ use reqsign::aws::DefaultCredentialProvider;
 
 // The documented default chain for AWS:
 
-// env → profiles → SSO → OIDC → process → ECS → IMDS
+// env → profiles (including assume-role chains) → SSO → OIDC → process → ECS → IMDS
 
 let provider = DefaultCredentialProvider::new();
 
@@ -1818,7 +1818,7 @@ use reqsign::aws;
 
 // Credentials resolve through the default chain:
 
-// env → profiles → SSO → OIDC → process → ECS → IMDS.
+// env → profiles (including assume-role chains) → SSO → OIDC → process → ECS → IMDS.
 
 let signer = aws::default_signer("s3", "us-east-1");
 
