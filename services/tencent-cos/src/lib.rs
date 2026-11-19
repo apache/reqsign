@@ -24,6 +24,9 @@ mod constants;
 mod credential;
 pub use credential::Credential;
 
+mod get_federation_token;
+pub use get_federation_token::{GetFederationTokenGrant, GetFederationTokenGranter};
+
 mod sign_request;
 pub use sign_request::RequestSigner;
 
