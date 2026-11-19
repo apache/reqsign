@@ -24,6 +24,8 @@ set -euo pipefail
 : "${AZURE_STORAGE_CONTAINER:?Set the fixture container}"
 (( $# > 0 )) || { echo "Usage: with-probe.sh command [args...]" >&2; exit 2; }
 
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
 auth_mode=${AZURE_STORAGE_AUTH_MODE:-login}
 if [[ "$auth_mode" == key ]]; then
   export AZURE_STORAGE_KEY="${REQSIGN_AZURE_STORAGE_ACCOUNT_KEY:?Set the fixture account key}"
@@ -33,11 +35,22 @@ storage_args=(--auth-mode "$auth_mode" --account-name "$AZURE_STORAGE_ACCOUNT"
 blob_name="ci-probe-$(python3 -c 'import uuid; print(uuid.uuid4())').txt"
 probe_dir=$(mktemp -d)
 created=false
+delete_probe() {
+  az storage blob delete "${storage_args[@]}" --name "$blob_name" --output none && return 0
+  # The initial federated login can outlive its GitHub OIDC assertion. Renew
+  # through the same job permission, then retry this probe's delete once.
+  if [[ "$auth_mode" == login ]]; then
+    bash "$script_dir/azure-oidc-login.sh" &&
+      az storage blob delete "${storage_args[@]}" --name "$blob_name" --output none
+    return $?
+  fi
+  return 1
+}
 cleanup() {
   local result=$?
   trap - EXIT
   if [[ "$created" == true ]]; then
-    if ! az storage blob delete "${storage_args[@]}" --name "$blob_name" --output none; then
+    if ! delete_probe; then
       echo "Failed to delete the live-test probe" >&2
       if (( result == 0 )); then result=1; fi
     fi
