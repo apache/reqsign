@@ -6,6 +6,26 @@ This crate supports both header authentication and presigned query
 authentication. Its default credential provider reads credentials from the
 environment.
 
+## STS AssumeRole
+
+`AssumeRoleGrant` and `AssumeRoleGranter` consume an existing Volcengine
+credential and issue a temporary TOS credential with the exact STS
+`ExpiredTime`. Install the granter explicitly through `reqsign_core::Granter`;
+the default credential chain is unchanged.
+
+## Changelog
+
+- `Credential` now has an `expires_at` field for the absolute expiration
+  returned by STS. `Credential::new` and `Credential::with_session_token` keep
+  their previous behavior and leave expiration unset; use
+  `Credential::with_expires_at` for temporary credentials constructed by hand.
+- Adding `expires_at` breaks struct-literal construction. Callers that build
+  `Credential` with a struct literal must switch to the constructors. The
+  existing constructors remain available and keep their previous behavior.
+- `RequestSigner` now enforces the credential's absolute expiration through the
+  full presigned URL lifetime. Header signing continues to check the signing
+  time.
+
 ## Quick Start
 
 ```rust,no_run
