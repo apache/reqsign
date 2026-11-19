@@ -17,7 +17,7 @@
 
 use bytes::Bytes;
 use reqsign_azure_storage::{RequestSigner, StaticCredentialProvider};
-use reqsign_core::{Context, OsEnv, Signer};
+use reqsign_core::{OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 
@@ -45,7 +45,7 @@ async fn test_sas_token_signing() -> anyhow::Result<()> {
     let url = required_env("REQSIGN_AZURE_STORAGE_PROBE_URL");
     let sas_token = load_sas_token();
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -98,7 +98,7 @@ async fn test_sas_token_with_existing_query() {
     let base_url = required_env("REQSIGN_AZURE_STORAGE_PROBE_URL");
     let sas_token = load_sas_token();
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -138,7 +138,7 @@ async fn test_sas_token_preserves_headers() {
     let url = required_env("REQSIGN_AZURE_STORAGE_PROBE_URL");
     let sas_token = load_sas_token();
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);

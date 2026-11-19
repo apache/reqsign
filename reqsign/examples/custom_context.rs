@@ -22,9 +22,8 @@ use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 
 fn main() {
-    reqsign::RustCryptoProvider::install_default()
-        .expect("no CryptoProvider must be installed before this example");
     let ctx = Context::new()
+        .with_crypto(reqsign::RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv)

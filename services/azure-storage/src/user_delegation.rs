@@ -19,6 +19,7 @@ use bytes::Bytes;
 use http::header;
 use reqsign_core::Context;
 use reqsign_core::Result;
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash;
 use reqsign_core::time::Timestamp;
 use reqsign_core::utils::Redact;
@@ -412,7 +413,7 @@ impl UserDelegationSharedAccessSignature {
         self
     }
 
-    fn signature(&self) -> Result<String> {
+    fn signature(&self, provider: &dyn CryptoProvider) -> Result<String> {
         let canonicalized_resource = self.resource.canonicalized_resource(&self.account);
 
         if self.version.as_str() >= "2025-07-05" {
@@ -465,10 +466,10 @@ impl UserDelegationSharedAccessSignature {
         let string_to_sign = fields.join("\n");
 
         let decoded_key = hash::base64_decode(&self.key.value)?;
-        hash::base64_hmac_sha256(&decoded_key, string_to_sign.as_bytes())
+        hash::base64_hmac_sha256(provider, &decoded_key, string_to_sign.as_bytes())
     }
 
-    pub(crate) fn token(&self) -> Result<Vec<(String, String)>> {
+    pub(crate) fn token(&self, provider: &dyn CryptoProvider) -> Result<Vec<(String, String)>> {
         let mut elements: Vec<(String, String)> = vec![
             ("sv".to_string(), self.version.to_string()),
             ("se".to_string(), self.expiry.format_rfc3339_zulu()),
@@ -504,7 +505,7 @@ impl UserDelegationSharedAccessSignature {
             elements.push(("spr".to_string(), protocol.to_string()))
         }
 
-        let sig = self.signature()?;
+        let sig = self.signature(provider)?;
         elements.push(("sig".to_string(), sig));
 
         Ok(elements)

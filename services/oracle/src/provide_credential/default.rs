@@ -162,7 +162,7 @@ mod tests {
     use crate::constants::{
         ORACLE_CONFIG_FILE, ORACLE_FINGERPRINT, ORACLE_KEY_FILE, ORACLE_TENANCY, ORACLE_USER,
     };
-    use reqsign_core::{Context, StaticEnv};
+    use reqsign_core::StaticEnv;
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::HashMap;
@@ -171,7 +171,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_matches_new() {
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs: HashMap::from([
                 (ORACLE_USER.to_string(), "test_user".to_string()),
@@ -205,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_builder_no_env_removes_env_provider() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -248,7 +248,7 @@ mod tests {
         )
         .expect("write config file must succeed");
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {

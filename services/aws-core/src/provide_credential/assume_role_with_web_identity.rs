@@ -550,7 +550,7 @@ mod tests {
 </AssumeRoleWithWebIdentityResponse>"#;
         let http_send = CaptureHttpSend::new(http_body);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -620,7 +620,7 @@ mod tests {
 </AssumeRoleWithWebIdentityResponse>"#;
         let http_send = CaptureHttpSend::new(http_body);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -677,7 +677,7 @@ mod tests {
   </AssumeRoleWithWebIdentityResult>
 </AssumeRoleWithWebIdentityResponse>"#;
         let http_send = CaptureHttpSend::new(response);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
 
         let first = AssumeRoleWithWebIdentityCredentialProvider::new()
             .with_role_arn("arn:aws:iam::123456789012:role/test-role")
@@ -718,7 +718,7 @@ mod tests {
     #[tokio::test]
     async fn expired_subject_token_is_rejected_before_http() {
         let http_send = CaptureHttpSend::new("unused");
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let provider = AssumeRoleWithWebIdentityCredentialProvider::new()
             .with_role_arn("arn:aws:iam::123456789012:role/test-role")
             .with_subject_token_and_expiration(
@@ -741,7 +741,7 @@ mod tests {
             "<ErrorResponse><Error><Code>InvalidIdentityToken</Code><Message>{secret}</Message></Error></ErrorResponse>"
         );
         let http_send = CaptureHttpSend::with_status(http::StatusCode::BAD_REQUEST, response);
-        let ctx = Context::new().with_http_send(http_send);
+        let ctx = crate::test_context().with_http_send(http_send);
         let provider = AssumeRoleWithWebIdentityCredentialProvider::new()
             .with_role_arn("arn:aws:iam::123456789012:role/test-role")
             .with_subject_token(secret);

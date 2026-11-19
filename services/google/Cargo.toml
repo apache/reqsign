@@ -60,7 +60,6 @@ reqsign-core = { workspace = true, features = ["jwt"] }
 [dev-dependencies]
 aes-gcm = { workspace = true, features = ["zeroize"] }
 asyncband = { workspace = true, features = ["semaphore"] }
-ctor = "1"
 dotenvy = { workspace = true }
 env_logger = { workspace = true }
 reqsign-crypto-rustcrypto = { workspace = true }

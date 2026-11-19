@@ -530,7 +530,7 @@ mod tests {
             .with_time_after_request(response_time);
         let output = operation
             .grant_credential(
-                &Context::new().with_http_send(http.clone()),
+                &crate::test_context().with_http_send(http.clone()),
                 &source_token("source-token", Some(timestamp("2030-01-01T02:00:00Z"))),
                 None,
             )
@@ -584,7 +584,7 @@ mod tests {
 
         operation
             .grant_credential(
-                &Context::new().with_http_send(http.clone()),
+                &crate::test_context().with_http_send(http.clone()),
                 &source_token(source, Some(timestamp("2030-01-01T02:00:00Z"))),
                 None,
             )
@@ -608,7 +608,7 @@ mod tests {
     async fn rejects_invalid_policy_lifetime_and_source_before_io() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let http = MockHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let valid_source = source_token("source", Some(timestamp("2030-01-01T02:00:00Z")));
 
         let invalid_grant = CredentialAccessBoundaryGrant::for_object_prefix(
@@ -674,7 +674,7 @@ mod tests {
         let operation = ServerSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
             .with_time(request_time)
             .with_time_after_request(response_time);
-        let ctx = Context::new().with_http_send(http);
+        let ctx = crate::test_context().with_http_send(http);
         let source = source_token("source", Some(source_expiry));
 
         let anchored = operation
@@ -719,7 +719,7 @@ mod tests {
             .with_time(timestamp("2030-01-01T00:00:00Z"))
             .with_time_after_request(response_time)
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([success_response(
+                &crate::test_context().with_http_send(MockHttpSend::new([success_response(
                     "downscoped-token",
                     Some(MAX_ACCESS_TOKEN_LIFETIME.as_secs()),
                 )])),
@@ -762,7 +762,7 @@ mod tests {
         let http = MockHttpSend::new(responses);
         let operation =
             ServerSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant()).with_time(now);
-        let ctx = Context::new().with_http_send(http);
+        let ctx = crate::test_context().with_http_send(http);
         let source = source_token("source-secret", Some(timestamp("2030-01-01T13:00:00Z")));
 
         let expected = [
@@ -793,7 +793,7 @@ mod tests {
         let err = ServerSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
             .with_time(now)
             .grant_credential(
-                &Context::new().with_http_send(SecretTransportError),
+                &crate::test_context().with_http_send(SecretTransportError),
                 &source_token("source-secret", Some(timestamp("2030-01-01T01:00:00Z"))),
                 None,
             )
@@ -821,7 +821,7 @@ mod tests {
             ),
         ]);
         let granter = Granter::new(
-            Context::new().with_http_send(http.clone()),
+            crate::test_context().with_http_send(http.clone()),
             provider,
             ServerSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant()).with_time(now),
         );
@@ -860,7 +860,7 @@ mod tests {
         let operation =
             ServerSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant()).with_time(now);
         let granter = Granter::new(
-            Context::new().with_http_send(first_http.clone()),
+            crate::test_context().with_http_send(first_http.clone()),
             provider,
             operation.clone(),
         );
@@ -892,7 +892,7 @@ mod tests {
             .await
             .expect("replacement provider must succeed");
         let context_isolated = granter
-            .with_context(Context::new().with_http_send(second_http.clone()))
+            .with_context(crate::test_context().with_http_send(second_http.clone()))
             .grant(None)
             .await
             .expect("replacement context must reload the source");
@@ -928,7 +928,7 @@ mod tests {
         let output = ServerSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
             .with_time(now)
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([success_response(
+                &crate::test_context().with_http_send(MockHttpSend::new([success_response(
                     "downscoped-token",
                     Some(3600),
                 )])),
@@ -938,7 +938,11 @@ mod tests {
             .await
             .expect("grant must succeed");
         let (provider, _) = FixedCredentialProvider::new(output);
-        let signer = Signer::new(Context::new(), provider, RequestSigner::new("storage"));
+        let signer = Signer::new(
+            crate::test_context(),
+            provider,
+            RequestSigner::new("storage"),
+        );
         let mut parts =
             http::Request::get("https://storage.googleapis.com/example-bucket/customer/object")
                 .body(())

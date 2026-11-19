@@ -35,10 +35,7 @@ pub use reqsign_aws_core::{IMDSv2RegionProvider, Profile, SharedConfig};
 pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
 pub use sign_request::RequestSigner;
 
-// Unit tests exercise signing paths, so install the test provider before
-// any test in this binary runs.
 #[cfg(test)]
-#[ctor::ctor(unsafe)]
-fn install_test_crypto_provider() {
-    let _ = reqsign_crypto_rustcrypto::RustCryptoProvider::install_default();
+pub(crate) fn test_context() -> reqsign_core::Context {
+    reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
 }

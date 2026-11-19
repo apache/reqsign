@@ -15,10 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Every integration test binary installs the RustCrypto provider once before
-// its tests run. Installation is process-wide, so concurrent or repeated
-// initialization is intentionally ignored.
-#[ctor::ctor(unsafe)]
-fn install_test_crypto_provider() {
-    let _ = reqsign_crypto_rustcrypto::RustCryptoProvider::install_default();
+use reqsign_core::Context;
+
+pub fn test_context() -> Context {
+    Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
 }

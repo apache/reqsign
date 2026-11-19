@@ -43,11 +43,12 @@ impl SessionKey {
             .session_name
             .as_deref()
             .unwrap_or(&config.sso_start_url);
+        let provider = ctx.crypto_provider()?;
         let path = home
             .join(".aws")
             .join("sso")
             .join("cache")
-            .join(format!("{}.json", hex_sha1(name.as_bytes())?));
+            .join(format!("{}.json", hex_sha1(provider, name.as_bytes())?));
         Ok(SessionKey {
             path: path.to_string_lossy().into_owned(),
             config_path: config.config_path.clone(),

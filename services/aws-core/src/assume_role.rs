@@ -21,6 +21,7 @@ use std::fmt::{Debug, Formatter};
 use bytes::Bytes;
 use form_urlencoded::Serializer;
 use quick_xml::de;
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::hex_sha256;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, Result, Signer, SigningCredential};
@@ -197,7 +198,7 @@ impl AssumeRoleOperation {
         ctx: &Context,
         sts_signer: &Signer<Credential>,
     ) -> Result<Credential> {
-        let request = self.build_request()?;
+        let request = self.build_request(ctx.crypto_provider()?)?;
         let (mut parts, body) = request.into_parts();
         sts_signer.sign(&mut parts, None).await.map_err(|err| {
             Error::new(err.kind(), "failed to sign AWS STS AssumeRole request")
@@ -210,7 +211,7 @@ impl AssumeRoleOperation {
 
     /// Build the unsigned request shared by fixed and explicit-source flows.
     #[doc(hidden)]
-    pub fn build_request(&self) -> Result<http::Request<Bytes>> {
+    pub fn build_request(&self, provider: &dyn CryptoProvider) -> Result<http::Request<Bytes>> {
         let get_uri = format!("https://{}/?{}", self.endpoint, self.parameters);
         let (method, uri, body) = if get_uri.len() <= MAX_GET_URI_LENGTH {
             (http::Method::GET, get_uri, Bytes::new())
@@ -221,7 +222,7 @@ impl AssumeRoleOperation {
                 Bytes::from(self.parameters.clone()),
             )
         };
-        let payload_hash = hex_sha256(&body)?;
+        let payload_hash = hex_sha256(provider, &body)?;
 
         http::Request::builder()
             .method(method)
@@ -735,7 +736,10 @@ mod tests {
         let operation =
             AssumeRoleOperation::new("sts.us-east-1.amazonaws.com", &grant, Some(3_600))
                 .expect("large grant must be valid");
-        let request = operation.build_request().expect("large request must build");
+        let crypto = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        let request = operation
+            .build_request(&crypto)
+            .expect("large request must build");
 
         assert_eq!(request.method(), http::Method::POST);
         assert_eq!(request.uri(), "https://sts.us-east-1.amazonaws.com/");
@@ -746,7 +750,7 @@ mod tests {
                 .headers()
                 .get(X_AMZ_CONTENT_SHA_256)
                 .expect("payload hash must be present"),
-            &hex_sha256(request.body()).expect("SHA-256 must succeed")
+            &hex_sha256(&crypto, request.body()).expect("SHA-256 must succeed")
         );
     }
 

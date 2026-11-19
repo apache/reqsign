@@ -18,6 +18,7 @@
 //! Example of using ProvideCredentialChain with logging to see credential resolution
 use log::{debug, info};
 use reqsign_core::{Context, OsEnv, ProvideCredential, ProvideCredentialChain, Result};
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_google::{Credential, DefaultCredentialProvider};
 use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -75,6 +76,7 @@ async fn main() -> Result<()> {
 
     // Create context
     let ctx = Context::new()
+        .with_crypto(RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);

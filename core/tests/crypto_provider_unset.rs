@@ -18,35 +18,17 @@
 //! This test binary runs without a provider on purpose. Keep it as a separate
 //! test target so another test cannot install a provider into the same process.
 
+use reqsign_core::Context;
 use reqsign_core::ErrorKind;
 use reqsign_core::crypto::get_default;
-use reqsign_core::hash;
 
 #[test]
-fn unset_provider_returns_config_invalid_without_panicking() {
+fn bare_context_without_a_provider_returns_config_invalid() {
     assert!(get_default().is_none());
 
-    let err = hash::sha256(b"payload").expect_err("hashing without a provider must fail");
+    let err = Context::new()
+        .crypto_provider()
+        .expect_err("a bare context without a provider must fail");
     assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
     assert!(!err.is_retryable());
-
-    let err = hash::sha1(b"payload").expect_err("hashing without a provider must fail");
-    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
-
-    let err = hash::hmac_sha256(b"key", b"payload").expect_err("HMAC without a provider must fail");
-    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
-
-    let err =
-        hash::base64_hmac_sha1(b"key", b"payload").expect_err("HMAC without a provider must fail");
-    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
-}
-
-#[cfg(feature = "jwt")]
-#[test]
-fn jwt_signing_without_a_provider_returns_config_invalid() {
-    #[derive(serde::Serialize)]
-    struct Empty {}
-    let err = reqsign_core::jwt::encode_rs256_pem(&Empty {}, &Empty {}, b"not used")
-        .expect_err("JWT signing without a provider must fail");
-    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
 }

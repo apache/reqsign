@@ -78,8 +78,6 @@ impl ProvideCredential for StaticCredentialProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqsign_core::Context;
-
     #[tokio::test]
     async fn test_static_service_account() {
         let content = r#"{
@@ -89,7 +87,7 @@ mod tests {
         }"#;
 
         let provider = StaticCredentialProvider::new(content);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(reqsign_file_read_tokio::TokioFileRead)
             .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default());
 
@@ -117,7 +115,7 @@ mod tests {
 
         let provider =
             StaticCredentialProvider::from_base64(encoded).expect("should decode base64");
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(reqsign_file_read_tokio::TokioFileRead)
             .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default());
 

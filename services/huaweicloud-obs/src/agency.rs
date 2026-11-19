@@ -34,6 +34,7 @@ use std::fmt::{Debug, Formatter};
 use std::time::Duration;
 
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, GrantCredential, Result, SigningCredential};
@@ -312,6 +313,7 @@ impl AgencyGranter {
 
     fn build_request(
         &self,
+        provider: &dyn CryptoProvider,
         credential: &Credential,
         duration_seconds: Option<u64>,
         signing_time: Timestamp,
@@ -345,6 +347,7 @@ impl AgencyGranter {
             signed_headers.insert(X_SECURITY_TOKEN.to_string(), token.trim().to_string());
         }
         let authorization = authorization_header(
+            provider,
             http::Method::POST.as_str(),
             IAM_SECURITY_TOKENS_PATH,
             "",
@@ -459,7 +462,12 @@ impl GrantCredential for AgencyGranter {
         let required_until = self.required_valid_until(credential, expires_in);
         self.validate_source(credential, required_until)?;
 
-        let request = self.build_request(credential, duration_seconds, self.now())?;
+        let request = self.build_request(
+            ctx.crypto_provider()?,
+            credential,
+            duration_seconds,
+            self.now(),
+        )?;
         let response = ctx
             .http_send(request.map(Into::into))
             .await
@@ -476,7 +484,9 @@ struct ValidatedEndpoint {
     authority: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn authorization_header(
+    provider: &dyn CryptoProvider,
     method: &str,
     path: &str,
     query: &str,
@@ -507,16 +517,20 @@ fn authorization_header(
 
     let canonical_request = format!(
         "{method}\n{canonical_uri}\n{query}\n{canonical_headers}\n{signed_headers}\n{}",
-        hex_sha256(body)?
+        hex_sha256(provider, body)?
     );
     let signing_date = normalized_headers.get(X_SDK_DATE).ok_or_else(|| {
         Error::request_invalid("Huawei Cloud IAM request is missing the X-Sdk-Date header")
     })?;
     let string_to_sign = format!(
         "{SDK_HMAC_SHA256}\n{signing_date}\n{}",
-        hex_sha256(canonical_request.as_bytes())?
+        hex_sha256(provider, canonical_request.as_bytes())?
     );
-    let signature = hex_hmac_sha256(secret_access_key.as_bytes(), string_to_sign.as_bytes())?;
+    let signature = hex_hmac_sha256(
+        provider,
+        secret_access_key.as_bytes(),
+        string_to_sign.as_bytes(),
+    )?;
 
     Ok(format!(
         "{SDK_HMAC_SHA256} Access={access_key_id}, SignedHeaders={signed_headers}, Signature={signature}"
@@ -746,7 +760,7 @@ mod tests {
     #[tokio::test]
     async fn grants_exact_request_and_returns_issued_expiry() {
         let http = MockHttpSend::new([success_response()]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let (provider, provider_calls) =
             FixedCredentialProvider::new(source_credential(Some(SOURCE_SECURITY_TOKEN), None));
         let granter = Granter::new(
@@ -831,7 +845,7 @@ mod tests {
 
         let (issued_provider, _) = FixedCredentialProvider::new(credential.clone());
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             issued_provider,
             crate::RequestSigner::new("bucket").with_time(signing_time()),
         );
@@ -866,7 +880,7 @@ mod tests {
     #[tokio::test]
     async fn supports_permanent_source_and_domain_name() {
         let http = MockHttpSend::new([success_response()]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let (provider, _) = FixedCredentialProvider::new(source_credential(None, None));
         let granter = Granter::new(
             context,
@@ -898,7 +912,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_duration_before_io() {
         let http = MockHttpSend::new([]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let (provider, _) = FixedCredentialProvider::new(source_credential(None, None));
         let granter = Granter::new(
             context,
@@ -924,7 +938,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_expired_source_before_io() {
         let http = MockHttpSend::new([]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let (provider, _) = FixedCredentialProvider::new(source_credential(
             None,
             Some(signing_time() - Duration::from_secs(1)),
@@ -951,7 +965,7 @@ mod tests {
                 br#"{"error_msg":"source-secret-key granted-secret-key source-security-token"}"#,
             ))
             .expect("response must build")]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let (provider, _) =
             FixedCredentialProvider::new(source_credential(Some(SOURCE_SECURITY_TOKEN), None));
         let granter = Granter::new(
@@ -977,7 +991,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_response_expired_after_io() {
         let http = MockHttpSend::new([success_response_with_expiry("2026-11-19T08:00:00Z")]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let (provider, _) =
             FixedCredentialProvider::new(source_credential(Some(SOURCE_SECURITY_TOKEN), None));
         let granter = Granter::new(
@@ -1004,6 +1018,7 @@ mod tests {
         let headers = BTreeMap::from([("x-sdk-date".to_string(), "20060102T150405Z".to_string())]);
 
         let authorization = authorization_header(
+            &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
             "GET",
             "/path",
             "limit=1",

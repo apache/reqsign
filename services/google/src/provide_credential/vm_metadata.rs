@@ -158,7 +158,7 @@ mod tests {
     #[tokio::test]
     async fn test_vm_metadata_uses_default_service_account() -> Result<()> {
         let http = MockHttpSend::default();
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
 
         let provider = VmMetadataCredentialProvider::new().with_endpoint("127.0.0.1:8080");
         let cred = provider
@@ -183,7 +183,7 @@ mod tests {
     #[tokio::test]
     async fn test_vm_metadata_uses_configured_service_account() -> Result<()> {
         let http = MockHttpSend::default();
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
 
         let provider = VmMetadataCredentialProvider::new()
             .with_endpoint("127.0.0.1:8080")

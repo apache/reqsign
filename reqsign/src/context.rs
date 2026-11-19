@@ -17,6 +17,9 @@
 
 use reqsign_core::{Context, OsEnv};
 
+#[cfg(feature = "default-crypto")]
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
+
 #[cfg(not(target_arch = "wasm32"))]
 use reqsign_command_execute_tokio::TokioCommandExecute;
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,11 +33,14 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 /// - `TokioFileRead` for file reading (non-WASM only)
 /// - `ReqwestHttpSend` for HTTP requests
 /// - `OsEnv` for environment variable access
+/// - `RustCryptoProvider` as a context fallback when `default-crypto` is enabled
 ///
-/// This function does not install a crypto provider. Applications must call
-/// `reqsign::RustCryptoProvider::install_default()` once during startup (or
-/// install another provider) before hashing or signing. Integrating middleware
-/// must leave that choice to the application.
+/// The fallback makes `reqsign` examples and default signers usable without
+/// installation boilerplate. It does not touch the process-wide registration:
+/// a provider installed later with `RustCryptoProvider::install_default()` (or
+/// another global provider) takes precedence for this context, and an explicit
+/// `Context::with_crypto` binding still wins. Integrating middleware must leave
+/// provider installation to the application.
 ///
 /// # Example
 ///
@@ -71,18 +77,19 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 /// ```
 pub fn default_context() -> Context {
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        Context::new()
-            .with_command_execute(TokioCommandExecute)
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv)
-    }
+    let ctx = Context::new()
+        .with_command_execute(TokioCommandExecute)
+        .with_file_read(TokioFileRead)
+        .with_http_send(ReqwestHttpSend::default())
+        .with_env(OsEnv);
 
     #[cfg(target_arch = "wasm32")]
-    {
-        Context::new()
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv)
-    }
+    let ctx = Context::new()
+        .with_http_send(ReqwestHttpSend::default())
+        .with_env(OsEnv);
+
+    #[cfg(feature = "default-crypto")]
+    let ctx = ctx.with_crypto_fallback(RustCryptoProvider::new());
+
+    ctx
 }

@@ -50,3 +50,25 @@ impl CryptoProvider for TestProvider {
         Ok([4; 32])
     }
 }
+
+/// Provider whose digests identify the provider without using real crypto.
+#[derive(Debug)]
+pub struct ByteProvider(pub u8);
+
+impl CryptoProvider for ByteProvider {
+    fn sha1(&self, _input: &[u8]) -> Result<[u8; 20]> {
+        Ok([self.0; 20])
+    }
+
+    fn sha256(&self, _input: &[u8]) -> Result<[u8; 32]> {
+        Ok([self.0; 32])
+    }
+
+    fn hmac_sha1(&self, _key: &[u8], _input: &[u8]) -> Result<[u8; 20]> {
+        Ok([self.0; 20])
+    }
+
+    fn hmac_sha256(&self, _key: &[u8], _input: &[u8]) -> Result<[u8; 32]> {
+        Ok([self.0; 32])
+    }
+}

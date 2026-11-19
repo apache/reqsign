@@ -27,8 +27,8 @@ use std::sync::{Arc, Mutex as SyncMutex, Weak};
 use std::time::Duration;
 
 use reqsign_core::{
-    Context, Error as ReqsignError, Result, SignRequest, SigningCredential, SigningRequest, crypto,
-    hash::hex_sha256, time::*,
+    Context, Result, SignRequest, SigningCredential, SigningRequest, crypto, hash::hex_sha256,
+    time::*,
 };
 
 use crate::constants::{
@@ -297,7 +297,7 @@ impl RequestSigner {
         let scope = self.resolve_scope(ctx);
         let key = TokenCacheKey {
             client_email: sa.client_email.clone(),
-            private_key_hash: hex_sha256(sa.private_key.as_bytes())?,
+            private_key_hash: hex_sha256(ctx.crypto_provider()?, sa.private_key.as_bytes())?,
             scope: scope.clone(),
         };
 
@@ -338,8 +338,10 @@ impl RequestSigner {
         scope: &str,
     ) -> Result<Token> {
         debug!("exchanging service account for token with scope: {scope}");
+        let provider = ctx.crypto_provider()?;
 
         let jwt = reqsign_core::jwt::encode_rs256_pem(
+            provider,
             &JwtHeader::rs256(),
             &Claims::new(&sa.client_email, scope),
             sa.private_key.as_bytes(),
@@ -407,6 +409,7 @@ impl RequestSigner {
 
     fn build_string_to_sign(
         &self,
+        provider: &dyn crypto::CryptoProvider,
         req: &mut SigningRequest,
         client_email: &str,
         now: Timestamp,
@@ -425,7 +428,7 @@ impl RequestSigner {
         let canonical_query = canonicalize_query(req, &authentication_query);
 
         let creq = canonical_request_string(req, &canonical_query)?;
-        let encoded_req = hex_sha256(creq.as_bytes())?;
+        let encoded_req = hex_sha256(provider, creq.as_bytes())?;
 
         let scope = format!(
             "{}/{}/{}/goog4_request",
@@ -451,12 +454,11 @@ impl RequestSigner {
         Ok((string_to_sign, authentication_query))
     }
 
-    fn sign_with_service_account(private_key_pem: &str, string_to_sign: &str) -> Result<String> {
-        let provider = crypto::get_default().ok_or_else(|| {
-            ReqsignError::config_invalid(
-                "no CryptoProvider is installed; install one during application startup",
-            )
-        })?;
+    fn sign_with_service_account(
+        provider: &dyn crypto::CryptoProvider,
+        private_key_pem: &str,
+        string_to_sign: &str,
+    ) -> Result<String> {
         let signature = provider
             .rsa_pkcs1v15_sha256_sign(private_key_pem.as_bytes(), string_to_sign.as_bytes())?;
 
@@ -465,6 +467,7 @@ impl RequestSigner {
 
     fn build_signed_query_with_service_account(
         &self,
+        provider: &dyn crypto::CryptoProvider,
         parts: &mut http::request::Parts,
         service_account: &ServiceAccount,
         expires_in: Duration,
@@ -473,10 +476,18 @@ impl RequestSigner {
         let mut req = SigningRequest::build(parts)?;
         let now = Timestamp::now();
 
-        let (string_to_sign, authentication_query) =
-            self.build_string_to_sign(&mut req, &service_account.client_email, now, expires_in)?;
-        let signature =
-            Self::sign_with_service_account(&service_account.private_key, &string_to_sign)?;
+        let (string_to_sign, authentication_query) = self.build_string_to_sign(
+            provider,
+            &mut req,
+            &service_account.client_email,
+            now,
+            expires_in,
+        )?;
+        let signature = Self::sign_with_service_account(
+            provider,
+            &service_account.private_key,
+            &string_to_sign,
+        )?;
 
         let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
         let final_uri =
@@ -562,8 +573,13 @@ impl RequestSigner {
         let mut req = SigningRequest::build(parts)?;
         let now = Timestamp::now();
 
-        let (string_to_sign, authentication_query) =
-            self.build_string_to_sign(&mut req, signer_email, now, expires_in)?;
+        let (string_to_sign, authentication_query) = self.build_string_to_sign(
+            ctx.crypto_provider()?,
+            &mut req,
+            signer_email,
+            now,
+            expires_in,
+        )?;
         let signature = self
             .sign_via_iamcredentials(ctx, token, signer_email, string_to_sign.as_bytes())
             .await?;
@@ -620,8 +636,12 @@ impl SignRequest for RequestSigner {
                     .as_ref()
                     .filter(|service_account| service_account.is_valid())
                 {
-                    let (signing_req, uri) =
-                        self.build_signed_query_with_service_account(req, sa, expires)?;
+                    let (signing_req, uri) = self.build_signed_query_with_service_account(
+                        ctx.crypto_provider()?,
+                        req,
+                        sa,
+                        expires,
+                    )?;
                     (signing_req, Some(uri))
                 } else if let (Some(token), Some(signer_email)) = (
                     cred.token.as_ref(),
@@ -1001,7 +1021,7 @@ mod tests {
     #[tokio::test]
     async fn test_signed_url_via_iamcredentials_sign_blob() -> Result<()> {
         let mock_http = MockHttpSend::default();
-        let ctx = Context::new().with_http_send(mock_http.clone());
+        let ctx = crate::test_context().with_http_send(mock_http.clone());
 
         let signer = RequestSigner::new("storage").with_signer_email("test-signer@example.com");
 
@@ -1047,7 +1067,9 @@ mod tests {
         let (mut parts_for_rebuild, _body) = req.into_parts();
 
         let mut signing_req = SigningRequest::build(&mut parts_for_rebuild)?;
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
         let (string_to_sign, authentication_query) = signer.build_string_to_sign(
+            &provider,
             &mut signing_req,
             "test-signer@example.com",
             now,
@@ -1078,7 +1100,7 @@ mod tests {
     #[tokio::test]
     async fn query_signing_uses_credential_signer_email() -> Result<()> {
         let signer_email = "inferred-signer@example.com";
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_http_send(MockHttpSend::default().with_expected_signer_email(signer_email));
         let credential = Credential::with_token(Token {
             access_token: "test-access-token".to_string(),
@@ -1113,7 +1135,7 @@ mod tests {
     #[tokio::test]
     async fn explicit_signer_email_overrides_credential_identity() -> Result<()> {
         let explicit_email = "explicit-signer@example.com";
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_http_send(MockHttpSend::default().with_expected_signer_email(explicit_email));
         let credential = Credential::with_token(Token {
             access_token: "test-access-token".to_string(),
@@ -1150,7 +1172,7 @@ mod tests {
     async fn signer_refreshes_near_expiry_token_without_binding_it_to_signed_url_lifetime()
     -> Result<()> {
         let mock_http = MockHttpSend::default();
-        let ctx = Context::new().with_http_send(mock_http);
+        let ctx = crate::test_context().with_http_send(mock_http);
         let credential = Credential::with_token(Token {
             access_token: "test-access-token".to_string(),
             expires_at: Some(Timestamp::now() + Duration::from_secs(60)),
@@ -1206,7 +1228,7 @@ mod tests {
             .0;
 
         signer
-            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .sign_request(&crate::test_context(), &mut parts, Some(&credential), None)
             .await?;
 
         assert_eq!(parts.uri.to_string(), original_uri);
@@ -1233,7 +1255,7 @@ mod tests {
             .0;
 
         signer
-            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .sign_request(&crate::test_context(), &mut parts, Some(&credential), None)
             .await?;
 
         assert_eq!(
@@ -1261,7 +1283,7 @@ mod tests {
 
         RequestSigner::new("storage")
             .sign_request(
-                &Context::new().with_http_send(OAuthTokenHttpSend),
+                &crate::test_context().with_http_send(OAuthTokenHttpSend),
                 &mut parts,
                 Some(&credential),
                 None,
@@ -1285,7 +1307,11 @@ mod tests {
             credential,
             calls: calls.clone(),
         };
-        let signer = Signer::new(Context::new(), provider, RequestSigner::new("storage"));
+        let signer = Signer::new(
+            crate::test_context(),
+            provider,
+            RequestSigner::new("storage"),
+        );
 
         for _ in 0..2 {
             let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
@@ -1318,7 +1344,7 @@ mod tests {
         let original = parts.clone();
 
         let err = signer
-            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .sign_request(&crate::test_context(), &mut parts, Some(&credential), None)
             .await
             .expect_err("token must cover the operation headroom");
 
@@ -1385,7 +1411,7 @@ mod tests {
         let http = QueuedOAuthHttpSend::new([QueuedOAuthHttpSend::json_response(
             r#"{"access_token":"cached-sa-token","expires_in":3600}"#,
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential::with_service_account(test_service_account(
             "signer@example.iam.gserviceaccount.com",
         ));
@@ -1425,7 +1451,7 @@ mod tests {
                 r#"{"access_token":"fresh-token","expires_in":3600}"#,
             ),
         ]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential::with_service_account(test_service_account(
             "signer@example.iam.gserviceaccount.com",
         ));
@@ -1491,7 +1517,7 @@ mod tests {
             release: Arc::new(asyncband::semaphore::Semaphore::new(0)),
             calls: Arc::new(AtomicUsize::new(0)),
         };
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential::with_service_account(test_service_account(
             "signer@example.iam.gserviceaccount.com",
         ));
@@ -1543,7 +1569,7 @@ mod tests {
                 r#"{"access_token":"token-sa2-s1","expires_in":3600}"#,
             ),
         ]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let sa1 = Credential::with_service_account(test_service_account(
             "sa1@example.iam.gserviceaccount.com",
         ));
@@ -1593,7 +1619,7 @@ mod tests {
             QueuedOAuthHttpSend::json_response(r#"{"access_token":"ephemeral-1"}"#),
             QueuedOAuthHttpSend::json_response(r#"{"access_token":"ephemeral-2"}"#),
         ]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential::with_service_account(test_service_account(
             "signer@example.iam.gserviceaccount.com",
         ));
@@ -1620,7 +1646,7 @@ mod tests {
         let http = QueuedOAuthHttpSend::new([QueuedOAuthHttpSend::json_response(
             r#"{"access_token":"short-lived","expires_in":30}"#,
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential::with_service_account(test_service_account(
             "signer@example.iam.gserviceaccount.com",
         ));
@@ -1645,7 +1671,7 @@ mod tests {
         let http = QueuedOAuthHttpSend::new([QueuedOAuthHttpSend::json_response(
             r#"{"access_token":"too-short","expires_in":5}"#,
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential::with_service_account(test_service_account(
             "signer@example.iam.gserviceaccount.com",
         ));
@@ -1692,7 +1718,7 @@ mod tests {
             release: Arc::new(asyncband::semaphore::Semaphore::new(0)),
             calls: Arc::new(AtomicUsize::new(0)),
         };
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let signer = RequestSigner::new("storage");
         let sa_a = Credential::with_service_account(test_service_account(
             "sa-a@example.iam.gserviceaccount.com",
@@ -1759,7 +1785,7 @@ mod tests {
                 r#"{"access_token":"recovered-token","expires_in":3600}"#,
             ),
         ]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential::with_service_account(test_service_account(
             "signer@example.iam.gserviceaccount.com",
         ));
@@ -1817,7 +1843,7 @@ mod tests {
             release: Arc::new(asyncband::semaphore::Semaphore::new(0)),
             calls: Arc::new(AtomicUsize::new(0)),
         };
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential::with_service_account(test_service_account(
             "signer@example.iam.gserviceaccount.com",
         ));
@@ -1882,7 +1908,7 @@ mod tests {
                 r#"{"access_token":"env-scope-token","expires_in":3600}"#,
             ),
         ]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let email = "same-email@example.iam.gserviceaccount.com";
         let key_1 = Credential::with_service_account(test_service_account(email));
         let key_2 = Credential::with_service_account(test_service_account(email));
@@ -1903,7 +1929,7 @@ mod tests {
         assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer key-2-token");
 
         let env_ctx =
-            Context::new()
+            crate::test_context()
                 .with_http_send(http.clone())
                 .with_env(reqsign_core::StaticEnv {
                     home_dir: None,
@@ -1928,7 +1954,7 @@ mod tests {
         let http = QueuedOAuthHttpSend::new([QueuedOAuthHttpSend::json_response(
             r#"{"access_token":"exchanged-from-expired","expires_in":3600}"#,
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential {
             service_account: Some(test_service_account(
                 "signer@example.iam.gserviceaccount.com",
@@ -1964,7 +1990,7 @@ mod tests {
     async fn query_signing_with_service_account_stays_offline_and_bypasses_token_cache()
     -> Result<()> {
         let http = QueuedOAuthHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let credential = Credential::with_service_account(test_service_account(
             "signer@example.iam.gserviceaccount.com",
         ));

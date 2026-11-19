@@ -36,7 +36,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
-ctor = "1"
 reqsign-crypto-rustcrypto = { workspace = true }
 anyhow = { workspace = true }
 bytes = { workspace = true }

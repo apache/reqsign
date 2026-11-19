@@ -24,6 +24,7 @@ use crate::provide_credential::entra::{
 };
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, hash};
 use serde::Serialize;
@@ -142,13 +143,18 @@ impl ClientCertificateCredentialProvider {
 
     /// Calculate certificate thumbprint (x5t)
     /// Azure AD expects SHA1 thumbprint for x5t field
-    fn calculate_thumbprint(&self, cert_der: &[u8]) -> Result<String, reqsign_core::Error> {
-        Ok(URL_SAFE_NO_PAD.encode(hash::sha1(cert_der)?))
+    fn calculate_thumbprint(
+        &self,
+        provider: &dyn CryptoProvider,
+        cert_der: &[u8],
+    ) -> Result<String, reqsign_core::Error> {
+        Ok(URL_SAFE_NO_PAD.encode(hash::sha1(provider, cert_der)?))
     }
 
     /// Create JWT client assertion
     fn create_client_assertion(
         &self,
+        provider: &dyn CryptoProvider,
         tenant_id: &str,
         client_id: &str,
         cert_der: &[u8],
@@ -173,10 +179,10 @@ impl ClientCertificateCredentialProvider {
         let header = ClientAssertionHeader {
             alg: "RS256",
             typ: "JWT",
-            x5t: self.calculate_thumbprint(cert_der)?,
+            x5t: self.calculate_thumbprint(provider, cert_der)?,
         };
 
-        reqsign_core::jwt::encode_rs256_pem(&header, &claims, private_key_pem)
+        reqsign_core::jwt::encode_rs256_pem(provider, &header, &claims, private_key_pem)
     }
 
     /// Exchange client assertion for access token
@@ -277,12 +283,19 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
                 _ => return Ok(None),
             };
 
+        let provider = ctx.crypto_provider()?;
+
         // Load certificate and private key
         let (cert_der, private_key_pem) = self.load_certificate(ctx, &certificate_path).await?;
 
         // Create client assertion
-        let client_assertion =
-            self.create_client_assertion(&tenant_id, &client_id, &cert_der, &private_key_pem)?;
+        let client_assertion = self.create_client_assertion(
+            provider,
+            &tenant_id,
+            &client_id,
+            &cert_der,
+            &private_key_pem,
+        )?;
 
         // Exchange for access token
         let token_response = self
@@ -308,8 +321,9 @@ mod tests {
         // Test certificate DER (simplified example)
         let cert_der = b"test certificate";
         let provider = ClientCertificateCredentialProvider::new();
+        let crypto = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
         let thumbprint = provider
-            .calculate_thumbprint(cert_der)
+            .calculate_thumbprint(&crypto, cert_der)
             .expect("thumbprint calculation must succeed");
 
         // Should produce a valid base64url encoded hash

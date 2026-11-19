@@ -20,7 +20,7 @@ mod common;
 use std::env;
 
 use log::warn;
-use reqsign_core::{Context, Granter, Result, Signer};
+use reqsign_core::{Granter, Result, Signer};
 use reqsign_google::{
     CredentialAccessBoundaryGrant, CredentialAccessBoundaryPermissions, RequestSigner,
     ServerSideCredentialAccessBoundaryGranter, ServiceAccountTokenCredentialProvider,
@@ -54,7 +54,7 @@ async fn test_service_account_token_provider_with_server_side_cab_live_interoper
         CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
     );
     let downscoped = Granter::new(
-        Context::new().with_http_send(ReqwestHttpSend::default()),
+        crate::common::test_context().with_http_send(ReqwestHttpSend::default()),
         source,
         ServerSideCredentialAccessBoundaryGranter::new(grant),
     )
@@ -67,7 +67,7 @@ async fn test_service_account_token_provider_with_server_side_cab_live_interoper
         .expires_at
         .expect("server-side CAB output must have an expiration");
     let signer = Signer::new(
-        Context::new(),
+        crate::common::test_context(),
         TokenCredentialProvider::new(token.access_token).with_expires_at(expires_at),
         RequestSigner::new("storage"),
     );

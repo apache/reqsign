@@ -6,17 +6,19 @@ The default credential provider checks Tencent Cloud environment variables and
 then web identity configuration. It supports both header authentication and
 presigned query authentication.
 
-> Signing requires a process-wide `CryptoProvider`. Install one at startup
-> before constructing signers; see
+> Signing needs a `CryptoProvider` resolved through the `Context`: bind one with
+> `Context::with_crypto`, install a process-wide default, or use a facade
+> `default_context()` fallback. A bare `Context::new()` has no fallback. See
 > [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
 
 ## Quick Start
 
 ```rust,no_run
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_tencent_cos::{DefaultCredentialProvider, RequestSigner};
 
-let context = Context::new().with_env(OsEnv);
+let context = Context::new().with_crypto(RustCryptoProvider::new()).with_env(OsEnv);
 let signer = Signer::new(
     context,
     DefaultCredentialProvider::new(),

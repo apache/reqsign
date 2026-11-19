@@ -106,7 +106,7 @@ fn context(config: &str, profile: Option<&str>) -> (Context, Files) {
     if let Some(profile) = profile {
         envs.insert("OCI_PROFILE".into(), profile.into());
     }
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(files.clone())
         .with_env(StaticEnv {
             home_dir: Some("/synthetic/home".into()),
@@ -332,7 +332,7 @@ async fn malformed_config_remains_a_configuration_error() {
 async fn home_directory_is_only_required_for_tilde_paths() -> Result<()> {
     let files = Files::default();
     files.insert(CONFIG_PATH, defaults().into_bytes());
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(files.clone())
         .with_env(StaticEnv {
             home_dir: None,

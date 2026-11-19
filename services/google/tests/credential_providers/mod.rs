@@ -39,7 +39,7 @@ pub fn create_test_context() -> Context {
     let _ = env_logger::builder().is_test(true).try_init();
     let _ = dotenvy::dotenv();
 
-    Context::new()
+    crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv)
@@ -55,7 +55,7 @@ pub fn create_test_context_with_env(mut envs: HashMap<String, String>) -> Contex
             .or_insert_with(|| home.to_string_lossy().into_owned());
     }
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);

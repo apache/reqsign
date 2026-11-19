@@ -313,7 +313,7 @@ mod tests {
             );
 
         let err = provider
-            .provide_credential(&Context::new())
+            .provide_credential(&crate::test_context())
             .await
             .expect_err("expired token must fail");
         assert_eq!(err.kind(), ErrorKind::CredentialInvalid);

@@ -276,8 +276,9 @@ impl Drop for RefreshLockLease {
 ///     "customer-a/",
 ///     CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
 /// );
-/// // Supply a Context configured with an HttpSend implementation.
-/// let context = Context::new();
+/// // Supply a Context with an HttpSend implementation and a crypto provider.
+/// let context = Context::new()
+///     .with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new());
 /// let credential = Granter::new(
 ///     context,
 ///     source,
@@ -565,7 +566,11 @@ impl ClientSideCredentialAccessBoundaryGranter {
         })
     }
 
-    fn cache_key(&self, source: &Token) -> Result<IntermediaryCacheKey> {
+    fn cache_key(
+        &self,
+        provider: &dyn crypto::CryptoProvider,
+        source: &Token,
+    ) -> Result<IntermediaryCacheKey> {
         let source_expires_at = source.expires_at.ok_or_else(|| {
             Error::credential_invalid(
                 "client-side credential access boundary source token expiration is required",
@@ -573,7 +578,7 @@ impl ClientSideCredentialAccessBoundaryGranter {
         })?;
         Ok(IntermediaryCacheKey {
             endpoint: STS_ENDPOINT,
-            source_authority: hex_sha256(source.access_token.as_bytes())?,
+            source_authority: hex_sha256(provider, source.access_token.as_bytes())?,
             source_expires_at,
         })
     }
@@ -581,10 +586,11 @@ impl ClientSideCredentialAccessBoundaryGranter {
     async fn intermediary_credentials(
         &self,
         ctx: &Context,
+        provider: &dyn crypto::CryptoProvider,
         source: &Token,
         minimum_lifetime: Duration,
     ) -> Result<Arc<IntermediaryCredentials>> {
-        let cache_key = self.cache_key(source)?;
+        let cache_key = self.cache_key(provider, source)?;
         let now = self.now();
         if let Some(credentials) =
             self.intermediary_state
@@ -642,7 +648,10 @@ impl ClientSideCredentialAccessBoundaryGranter {
         Ok(credentials)
     }
 
-    fn next_nonce(&self) -> Result<[u8; AES_GCM_NONCE_BYTES]> {
+    fn next_nonce(
+        &self,
+        provider: &dyn crypto::CryptoProvider,
+    ) -> Result<[u8; AES_GCM_NONCE_BYTES]> {
         #[cfg(test)]
         if let Some(nonces) = &self.nonces {
             return nonces
@@ -652,11 +661,6 @@ impl ClientSideCredentialAccessBoundaryGranter {
                 .ok_or_else(|| Error::unexpected("test CAB nonce queue is empty"));
         }
 
-        let provider = crypto::get_default().ok_or_else(|| {
-            Error::config_invalid(
-                "no CryptoProvider is installed; install one during application startup",
-            )
-        })?;
         let mut nonce = [0u8; AES_GCM_NONCE_BYTES];
         provider.fill_random(&mut nonce)?;
         Ok(nonce)
@@ -699,13 +703,16 @@ impl GrantCredential for ClientSideCredentialAccessBoundaryGranter {
             self.now(),
             minimum_lifetime.saturating_add(TOKEN_EXCHANGE_HEADROOM),
         )?;
+        let provider = ctx.crypto_provider()?;
         let source = self.source_token(credential, required_until)?;
         let intermediary = self
-            .intermediary_credentials(ctx, source, minimum_lifetime)
+            .intermediary_credentials(ctx, provider, source, minimum_lifetime)
             .await?;
 
-        let nonce = self.next_nonce()?;
-        let encrypted = intermediary.aead_key.encrypt(&restrictions, &nonce)?;
+        let nonce = self.next_nonce(provider)?;
+        let encrypted = intermediary
+            .aead_key
+            .encrypt(provider, &restrictions, &nonce)?;
         let access_token = format!(
             "{}.{}",
             intermediary.access_token.as_str(),
@@ -833,12 +840,12 @@ impl TinkAesGcmKey {
         })
     }
 
-    fn encrypt(&self, restrictions: &[u8], nonce: &[u8; AES_GCM_NONCE_BYTES]) -> Result<Vec<u8>> {
-        let provider = crypto::get_default().ok_or_else(|| {
-            Error::config_invalid(
-                "no CryptoProvider is installed; install one during application startup",
-            )
-        })?;
+    fn encrypt(
+        &self,
+        provider: &dyn crypto::CryptoProvider,
+        restrictions: &[u8],
+        nonce: &[u8; AES_GCM_NONCE_BYTES],
+    ) -> Result<Vec<u8>> {
         let ciphertext = provider.aes_gcm_encrypt(&self.key_value, nonce, b"", restrictions)?;
 
         let mut encrypted =
@@ -1386,7 +1393,11 @@ mod tests {
 
         let nonce = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
         let encrypted = key
-            .encrypt(b"restriction", &nonce)
+            .encrypt(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+                b"restriction",
+                &nonce,
+            )
             .expect("vector must encrypt");
         assert_eq!(
             URL_SAFE_NO_PAD.encode(encrypted),
@@ -1421,7 +1432,11 @@ mod tests {
         let source = source_token("source+token/with=reserved", Some(source_expiry));
 
         operation
-            .grant_credential(&Context::new().with_http_send(http.clone()), &source, None)
+            .grant_credential(
+                &crate::test_context().with_http_send(http.clone()),
+                &source,
+                None,
+            )
             .await
             .expect("client-side grant must succeed");
 
@@ -1475,7 +1490,7 @@ mod tests {
         let http = MockHttpSend::new([success_response("intermediary", Some(3600))]);
         let output = operation
             .grant_credential(
-                &Context::new().with_http_send(http),
+                &crate::test_context().with_http_send(http),
                 &source_token("source", Some(now + Duration::from_secs(2 * 60 * 60))),
                 None,
             )
@@ -1590,7 +1605,7 @@ mod tests {
             .with_nonces([[9; AES_GCM_NONCE_BYTES]]);
         let output = operation
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([success_response(
+                &crate::test_context().with_http_send(MockHttpSend::new([success_response(
                     "intermediary",
                     Some(3600),
                 )])),
@@ -1636,7 +1651,7 @@ mod tests {
         .with_time(now);
         let err = operation
             .grant_credential(
-                &Context::new().with_http_send(http.clone()),
+                &crate::test_context().with_http_send(http.clone()),
                 &source_token("source", Some(now + Duration::from_secs(2 * 60 * 60))),
                 None,
             )
@@ -1651,7 +1666,7 @@ mod tests {
     async fn rejects_incompatible_sources_and_lifetimes_before_io() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let http = MockHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let operation =
             ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant()).with_time(now);
         let valid_token = Token {
@@ -1730,7 +1745,7 @@ mod tests {
             .with_nonces([[4; AES_GCM_NONCE_BYTES]]);
         let output = operation
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([success_response(
+                &crate::test_context().with_http_send(MockHttpSend::new([success_response(
                     "intermediary",
                     Some(MAX_ACCESS_TOKEN_LIFETIME.as_secs()),
                 )])),
@@ -1766,7 +1781,7 @@ mod tests {
 
         let explicit = operation
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([success_response(
+                &crate::test_context().with_http_send(MockHttpSend::new([success_response(
                     "explicit",
                     Some(3600),
                 )])),
@@ -1786,7 +1801,7 @@ mod tests {
                 .with_time_after_request(response_time);
         let err = missing_expiration_operation
             .grant_credential(
-                &Context::new()
+                &crate::test_context()
                     .with_http_send(MockHttpSend::new([success_response("inherited", None)])),
                 &source,
                 None,
@@ -1802,7 +1817,7 @@ mod tests {
                 .with_nonces([[3; AES_GCM_NONCE_BYTES]]);
         let clamped = clamped_operation
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([success_response(
+                &crate::test_context().with_http_send(MockHttpSend::new([success_response(
                     "clamped",
                     Some(3 * 60 * 60),
                 )])),
@@ -1838,7 +1853,7 @@ mod tests {
             let http = MockHttpSend::new([response]);
             let err = ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
                 .with_time(now)
-                .grant_credential(&Context::new().with_http_send(http), &source, None)
+                .grant_credential(&crate::test_context().with_http_send(http), &source, None)
                 .await
                 .expect_err("malformed response must fail");
             assert_eq!(err.kind(), ErrorKind::Unexpected);
@@ -1910,18 +1925,17 @@ mod tests {
         ];
 
         for key in keys {
-            let err =
-                ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
-                    .with_time(now)
-                    .grant_credential(
-                        &Context::new().with_http_send(MockHttpSend::new([
-                            success_response_with_key("intermediary", &key, Some(3600)),
-                        ])),
-                        &source,
-                        None,
-                    )
-                    .await
-                    .expect_err("invalid keyset must fail");
+            let err = ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
+                .with_time(now)
+                .grant_credential(
+                    &crate::test_context().with_http_send(MockHttpSend::new([
+                        success_response_with_key("intermediary", &key, Some(3600)),
+                    ])),
+                    &source,
+                    None,
+                )
+                .await
+                .expect_err("invalid keyset must fail");
             assert_eq!(err.kind(), ErrorKind::Unexpected);
             assert!(!format!("{err:?}").contains(&key));
         }
@@ -1937,7 +1951,7 @@ mod tests {
             .with_time_after_request(now + Duration::from_secs(31 * 60));
         let err = post_io
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([success_response(
+                &crate::test_context().with_http_send(MockHttpSend::new([success_response(
                     "intermediary",
                     Some(3600),
                 )])),
@@ -1954,7 +1968,7 @@ mod tests {
             .with_nonces([[4; AES_GCM_NONCE_BYTES]]);
         let err = post_generation
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([success_response(
+                &crate::test_context().with_http_send(MockHttpSend::new([success_response(
                     "intermediary",
                     Some(60 * 60),
                 )])),
@@ -1974,7 +1988,7 @@ mod tests {
             .with_time(now)
             .with_nonces([[1; AES_GCM_NONCE_BYTES], [2; AES_GCM_NONCE_BYTES]]);
         let source = source_token("source", Some(now + Duration::from_secs(2 * 60 * 60)));
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
 
         let first = operation
             .grant_credential(&ctx, &source, None)
@@ -2014,7 +2028,7 @@ mod tests {
                 [3; AES_GCM_NONCE_BYTES],
             ]);
         let source = source_token("source", Some(now + Duration::from_secs(3 * 60 * 60)));
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
 
         let first = operation
             .grant_credential(&ctx, &source, None)
@@ -2053,7 +2067,7 @@ mod tests {
             .with_time(now)
             .with_nonces([[1; AES_GCM_NONCE_BYTES]]);
         let source = source_token("source", Some(now + Duration::from_secs(3 * 60 * 60)));
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         operation
             .grant_credential(&ctx, &source, None)
             .await
@@ -2084,7 +2098,7 @@ mod tests {
                 (0..INTERMEDIARY_CACHE_CAPACITY + 2)
                     .map(|index| [index as u8; AES_GCM_NONCE_BYTES]),
             );
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source_expiry = now + Duration::from_secs(2 * 60 * 60);
 
         for index in 0..=INTERMEDIARY_CACHE_CAPACITY {
@@ -2140,7 +2154,7 @@ mod tests {
                 [2; AES_GCM_NONCE_BYTES],
                 [3; AES_GCM_NONCE_BYTES],
             ]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let expiry = now + Duration::from_secs(2 * 60 * 60);
         let source_a = source_token("source-a", Some(expiry));
         let source_b = source_token("source-b", Some(expiry));
@@ -2175,7 +2189,7 @@ mod tests {
         let operation = ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
             .with_time(now)
             .with_nonces([[1; AES_GCM_NONCE_BYTES], [2; AES_GCM_NONCE_BYTES]]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let expiry = now + Duration::from_secs(2 * 60 * 60);
 
         let first = tokio::spawn({
@@ -2227,7 +2241,7 @@ mod tests {
         let operation = ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
             .with_time(now)
             .with_nonces((0..8).map(|index| [index; AES_GCM_NONCE_BYTES]));
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source = source_token("source", Some(now + Duration::from_secs(2 * 60 * 60)));
         let mut tasks = Vec::new();
         for _ in 0..8 {
@@ -2273,7 +2287,7 @@ mod tests {
         let operation = ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
             .with_time(now)
             .with_nonces([[3; AES_GCM_NONCE_BYTES]]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source = source_token("source", Some(now + Duration::from_secs(2 * 60 * 60)));
 
         let leader = tokio::spawn({
@@ -2320,7 +2334,7 @@ mod tests {
         let operation = ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
             .with_time(now)
             .with_nonces([[5; AES_GCM_NONCE_BYTES]]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source = source_token("source", Some(now + Duration::from_secs(2 * 60 * 60)));
 
         let cancelled = {
@@ -2368,7 +2382,7 @@ mod tests {
                 "tenant/",
                 CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
             ));
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source = source_token("source", Some(now + Duration::from_secs(2 * 60 * 60)));
 
         let bucket_output = bucket
@@ -2399,7 +2413,7 @@ mod tests {
         let (provider, provider_calls) = FixedCredentialProvider::new(source);
         let http = MockHttpSend::new([success_response("intermediary", Some(3600))]);
         let granter = Granter::new(
-            Context::new().with_http_send(http.clone()),
+            crate::test_context().with_http_send(http.clone()),
             provider,
             ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant())
                 .with_nonces([[1; AES_GCM_NONCE_BYTES], [2; AES_GCM_NONCE_BYTES]]),
@@ -2425,7 +2439,7 @@ mod tests {
             .with_nonces([[8; AES_GCM_NONCE_BYTES]]);
         let output = operation
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([success_response(
+                &crate::test_context().with_http_send(MockHttpSend::new([success_response(
                     "intermediary",
                     Some(3600),
                 )])),
@@ -2436,7 +2450,11 @@ mod tests {
             .expect("client-side grant must succeed");
         let expected = format!("Bearer {}", output_token(&output).access_token);
         let (provider, _) = FixedCredentialProvider::new(output);
-        let signer = Signer::new(Context::new(), provider, RequestSigner::new("storage"));
+        let signer = Signer::new(
+            crate::test_context(),
+            provider,
+            RequestSigner::new("storage"),
+        );
         let mut parts =
             http::Request::get("https://storage.googleapis.com/example-bucket/customer/object")
                 .body(())
@@ -2463,7 +2481,7 @@ mod tests {
             ClientSideCredentialAccessBoundaryGranter::new(viewer_bucket_grant()).with_time(now);
         let err = operation
             .grant_credential(
-                &Context::new().with_http_send(MockHttpSend::new([response(
+                &crate::test_context().with_http_send(MockHttpSend::new([response(
                     http::StatusCode::BAD_REQUEST,
                     r#"{"error":"invalid_grant","error_description":"source-secret raw-response-secret"}"#,
                 )])),
@@ -2479,7 +2497,7 @@ mod tests {
 
         let err = operation
             .grant_credential(
-                &Context::new().with_http_send(SecretTransportError),
+                &crate::test_context().with_http_send(SecretTransportError),
                 &source,
                 None,
             )
@@ -2508,7 +2526,11 @@ mod tests {
         );
         let http = MockHttpSend::new([success_response("intermediary-secret", Some(3600))]);
         let output = operation
-            .grant_credential(&Context::new().with_http_send(http.clone()), &source, None)
+            .grant_credential(
+                &crate::test_context().with_http_send(http.clone()),
+                &source,
+                None,
+            )
             .await
             .expect("client-side grant must succeed");
         let request = http

@@ -315,12 +315,16 @@ impl SignRequest for RequestSigner {
                             }
                         }
 
+                        let provider = context.crypto_provider()?;
                         let account = infer_account_name(sctx.authority.as_str())?;
                         let version = cfg.version.as_deref().unwrap_or("2020-12-06");
                         let cache_key = UserDelegationPresignCacheKey {
                             account: account.clone(),
                             endpoint: format!("{}://{}", sctx.scheme, sctx.authority),
-                            source_authority: reqsign_core::hash::hex_sha256(token.as_bytes())?,
+                            source_authority: reqsign_core::hash::hex_sha256(
+                                provider,
+                                token.as_bytes(),
+                            )?,
                             version: version.to_string(),
                         };
 
@@ -404,7 +408,7 @@ impl SignRequest for RequestSigner {
                             signer = signer.with_version(version);
                         }
 
-                        let signer_token = signer.token().map_err(|e| {
+                        let signer_token = signer.token(provider).map_err(|e| {
                             reqsign_core::Error::new(
                                 e.kind(),
                                 "failed to generate user delegation SAS token",
@@ -449,6 +453,7 @@ impl SignRequest for RequestSigner {
                         };
 
                         let resource = service_sas_resource(&sctx.path)?;
+                        let provider = context.crypto_provider()?;
 
                         let mut signer = crate::service_sas::ServiceSharedAccessSignature::new(
                             account_name.clone(),
@@ -470,7 +475,7 @@ impl SignRequest for RequestSigner {
                             signer = signer.with_version(version);
                         }
 
-                        let signer_token = signer.token().map_err(|e| {
+                        let signer_token = signer.token(provider).map_err(|e| {
                             reqsign_core::Error::new(
                                 e.kind(),
                                 "failed to generate service SAS token",
@@ -480,13 +485,17 @@ impl SignRequest for RequestSigner {
                         final_uri = Some(append_query_pairs(&original_uri, &signer_token)?);
                     }
                     SigningMethod::Header => {
+                        let provider = context.crypto_provider()?;
                         let string_to_sign = string_to_sign(&mut sctx, account_name, signing_time)?;
                         let decode_content = base64_decode(account_key).map_err(|e| {
                             reqsign_core::Error::unexpected("failed to decode account key")
                                 .with_source(e)
                         })?;
-                        let signature =
-                            base64_hmac_sha256(&decode_content, string_to_sign.as_bytes())?;
+                        let signature = base64_hmac_sha256(
+                            provider,
+                            &decode_content,
+                            string_to_sign.as_bytes(),
+                        )?;
 
                         sctx.headers.insert(header::AUTHORIZATION, {
                             let mut value: HeaderValue =
@@ -805,7 +814,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use http::Request;
-    use reqsign_core::{Context, HttpSend, OsEnv};
+    use reqsign_core::{HttpSend, OsEnv};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::str::FromStr;
@@ -868,7 +877,7 @@ mod tests {
     async fn test_sas_token() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -901,7 +910,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bearer_token() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -946,7 +955,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shared_key_presign_service_sas() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -1092,7 +1101,7 @@ mod tests {
         let now = Timestamp::from_str("2022-03-01T08:12:34.500Z").unwrap();
 
         let http_send = MockUserDelegationHttpSend::default();
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
             .with_env(OsEnv);

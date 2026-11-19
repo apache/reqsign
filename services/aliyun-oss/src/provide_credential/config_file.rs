@@ -214,7 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_file_provider_uses_current_profile() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead::new(HashMap::from([(
                 "/mock/config.json".to_string(),
                 br#"{
@@ -259,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_file_provider_env_profile_overrides_current() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead::new(HashMap::from([(
                 "/mock/config.json".to_string(),
                 br#"{
@@ -305,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_file_provider_ignores_unsupported_mode() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead::new(HashMap::from([(
                 "/mock/config.json".to_string(),
                 br#"{

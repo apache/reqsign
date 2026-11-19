@@ -24,9 +24,6 @@ use reqwest::Client;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    reqsign_crypto_rustcrypto::RustCryptoProvider::install_default()
-        .expect("no CryptoProvider must be installed before this example");
-
     // Initialize logging for debugging
     let _ = env_logger::builder().is_test(true).try_init();
 
@@ -35,6 +32,7 @@ async fn main() -> Result<()> {
 
     // Create context with Tokio file reader and reqwest HTTP client
     let ctx = Context::new()
+        .with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::new(client.clone()))
         .with_env(OsEnv);

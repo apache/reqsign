@@ -43,9 +43,12 @@ reqsign = "0.20"
 ```
 
 By default, this includes `default-context` (a ready-to-use context using
-`reqwest` and `tokio`) and `default-crypto` (the RustCrypto provider). The
-provider is re-exported but not installed automatically; applications call
-`RustCryptoProvider::install_default()` once during startup.
+`reqwest` and `tokio`) and `default-crypto` (the RustCrypto provider).
+`default-crypto` makes `default_context()` use RustCrypto as a context
+fallback, so default signers work without startup boilerplate. The fallback is
+not a process-wide installation: an application can call
+`RustCryptoProvider::install_default()` to override it, and an explicit
+`Context::with_crypto` binding always wins.
 
 To use specific services only:
 
@@ -62,13 +65,11 @@ The easiest way to get started is using the default signers provided for each se
 
 ```rust,ignore
 use anyhow::Result;
-use reqsign::{RustCryptoProvider, aws};
+use reqsign::aws;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    RustCryptoProvider::install_default()
-        .map_err(|_| anyhow::anyhow!("a CryptoProvider is already installed"))?;
-
+    // The facade's default context carries the RustCrypto fallback.
     // Create a default signer for AWS S3 in us-east-1
     // This will automatically:
     // - Set up HTTP client and file reader
@@ -102,14 +103,14 @@ use reqsign::aws::{DefaultCredentialProvider, RequestSigner};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    RustCryptoProvider::install_default()
-        .map_err(|_| anyhow::anyhow!("a CryptoProvider is already installed"))?;
-
     // Create a context with default implementations
+    // (including the RustCrypto fallback when default-crypto is enabled).
     let ctx = default_context();
 
-    // Or build your own context with specific implementations
+    // Or build your own context with specific implementations.
+    // A bare Context has no fallback, so bind the provider explicitly.
     let ctx = Context::new()
+        .with_crypto(RustCryptoProvider::new())
         .with_file_read(reqsign_file_read_tokio::TokioFileRead)
         .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default())
         .with_env(reqsign::OsEnv);

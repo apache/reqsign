@@ -8,11 +8,12 @@ this document are legacy debt; new work and reviews must follow it.
 
 Reqsign no longer links a cryptographic implementation into `reqsign-core` or
 any `services/*` crate. Hashing, MACs, asymmetric signing, AES-GCM encryption,
-and secure random generation are provided by one process-wide
-`reqsign_core::crypto::CryptoProvider` installed by the application at startup.
+and secure random generation are provided by a
+`reqsign_core::crypto::CryptoProvider` resolved through the `Context` supplied
+to each signer, granter, or credential provider.
 
-The change is deliberately breaking: a missing provider, or a provider that
-does not implement a requested operation, returns
+The change is deliberately breaking: a context without a resolvable provider,
+or a provider that does not implement a requested operation, returns
 `ErrorKind::ConfigInvalid` instead of falling back to a bundled implementation.
 
 Two provider crates ship with this design:
@@ -80,7 +81,42 @@ Implementations must allow concurrent calls and must not share mutable
 per-call state between invocations. A provider may keep immutable configuration,
 but it must not be required to serialize signing operations for correctness.
 
-## Registration
+## Context Resolution
+
+`Context` owns crypto resolution for all work performed through it:
+
+```rust
+impl Context {
+    pub fn with_crypto(self, provider: impl CryptoProvider) -> Self;
+    pub fn with_crypto_fallback(self, provider: impl CryptoProvider) -> Self;
+    pub fn crypto_provider(&self) -> Result<&dyn CryptoProvider>;
+}
+```
+
+`crypto_provider()` resolves in this order at the point of use:
+
+1. the provider bound with `Context::with_crypto`;
+2. the process-wide provider installed with
+   `reqsign_core::crypto::install_default`;
+3. the context fallback set with `Context::with_crypto_fallback`;
+4. otherwise `ErrorKind::ConfigInvalid`.
+
+The order is fixed. Resolution does not fall through because a provider returns
+an error or reports an operation as unsupported.
+
+A context never installs or freezes the process-wide registration. Creating,
+using, or cloning a context does not change `get_default()`. Resolution reads
+the current global registration on every call, so a global provider installed
+after a context was created takes precedence over that context's fallback for
+later operations through the same context. An explicit `with_crypto` binding
+continues to win over a later global installation. Cloning a context preserves
+its explicit and fallback bindings.
+
+`Context::new()` sets no explicit provider and no fallback. Portable core code
+must either bind a provider on the context or install a global one. The facade's
+`default_context()` is the exception described below: it supplies a fallback.
+
+## Global Registration
 
 ```rust
 pub fn install_default(
@@ -90,8 +126,8 @@ pub fn install_default(
 pub fn get_default() -> Option<&'static Arc<dyn CryptoProvider>>;
 ```
 
-Installation is backed by `OnceLock<Arc<dyn CryptoProvider>>` and succeeds at
-most once per process.
+Global installation is optional and backed by
+`OnceLock<Arc<dyn CryptoProvider>>`. It succeeds at most once per process.
 
 - The first successful call installs the provider.
 - A later call leaves the first provider installed and returns the rejected
@@ -103,31 +139,30 @@ most once per process.
 - `get_default()` only reads the current value. Calling it before installation
   returns `None` and does not freeze the unset state; a later
   `install_default()` still succeeds.
-- Reqsign never installs a provider implicitly and never falls back to a
-  bundled implementation.
 
-Applications own the choice of provider. Top-level binaries and services call
-`install_default` once during startup. Integrating middleware, such as OpenDAL,
-must not install a provider on behalf of its users: doing so would take away the
+Applications own the process-wide choice. A top-level application may call
+`install_default()` once to override facade fallbacks and any other context that
+has no explicit provider. Integrating middleware, such as OpenDAL, must not
+install a global provider on behalf of its users: doing so would take away the
 application's choice and can race with the application's own initialization.
-Middleware should document the requirement and let the application fail with a
-clear `ConfigInvalid` error if it has not installed one.
+Middleware may set a fallback on a context it owns, but it must not write the
+process-wide slot.
 
 ## Failure Semantics
 
 | Condition | Error kind | Retryable |
 | --- | --- | --- |
-| No provider installed | `ConfigInvalid` | no |
+| No provider resolvable through the context | `ConfigInvalid` | no |
 | Installed provider does not support the operation | `ConfigInvalid` | no |
 | Unencrypted-key material is malformed, not RSA, out of range, or has an invalid AES key length | `CredentialInvalid` | no |
 | Backend, FFI, allocator, or random-source failure | `Unexpected` | no |
 
 `ConfigInvalid` is a configuration/ownership error, not a transient failure. A
-caller that retries it without installing or changing a provider cannot
-succeed. `CredentialInvalid` identifies key material supplied by the caller or
-loaded from a credential source.
+caller that retries it without binding, installing, or changing a provider
+cannot succeed. `CredentialInvalid` identifies key material supplied by the
+caller or loaded from a credential source.
 
-Reqsign must not panic when a provider is missing, an operation is unsupported,
+Reqsign must not panic when no provider resolves, an operation is unsupported,
 or key material is malformed. Backends must use their fallible APIs rather than
 unwrap backend errors.
 
@@ -140,28 +175,33 @@ pub fn base64_encode(content: &[u8]) -> String;
 pub fn base64_decode(content: &str) -> Result<Vec<u8>>;
 ```
 
-The digest, MAC, and encoded digest/MAC helpers now return `Result` and delegate
-to the installed provider:
+The digest, MAC, and encoded digest/MAC helpers require an explicitly supplied
+provider and return `Result`:
 
 ```rust
-pub fn sha1(content: &[u8]) -> Result<[u8; 20]>;
-pub fn sha256(content: &[u8]) -> Result<[u8; 32]>;
-pub fn hmac_sha1(key: &[u8], content: &[u8]) -> Result<[u8; 20]>;
-pub fn hmac_sha256(key: &[u8], content: &[u8]) -> Result<[u8; 32]>;
-pub fn hex_sha1(content: &[u8]) -> Result<String>;
-pub fn hex_sha256(content: &[u8]) -> Result<String>;
-pub fn hex_hmac_sha1(key: &[u8], content: &[u8]) -> Result<String>;
-pub fn hex_hmac_sha256(key: &[u8], content: &[u8]) -> Result<String>;
-pub fn base64_hmac_sha1(key: &[u8], content: &[u8]) -> Result<String>;
-pub fn base64_hmac_sha256(key: &[u8], content: &[u8]) -> Result<String>;
+pub fn sha1(provider: &dyn CryptoProvider, content: &[u8]) -> Result<[u8; 20]>;
+pub fn sha256(provider: &dyn CryptoProvider, content: &[u8]) -> Result<[u8; 32]>;
+pub fn hmac_sha1(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<[u8; 20]>;
+pub fn hmac_sha256(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<[u8; 32]>;
+pub fn hex_sha1(provider: &dyn CryptoProvider, content: &[u8]) -> Result<String>;
+pub fn hex_sha256(provider: &dyn CryptoProvider, content: &[u8]) -> Result<String>;
+pub fn hex_hmac_sha1(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<String>;
+pub fn hex_hmac_sha256(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<String>;
+pub fn base64_hmac_sha1(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<String>;
+pub fn base64_hmac_sha256(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<String>;
 ```
+
+Callers with a `Context` pass `ctx.crypto_provider()?`. These helpers never
+perform a context or global lookup themselves, so they cannot silently bypass
+the caller's selected provider.
 
 `reqsign_core::jwt` no longer exposes an `rsa` type. The typed
 `encode_rs256(&H, &C, &RsaPrivateKey)` entry point is removed. The byte-based
-entry point remains and delegates RSA signing to the provider:
+entry point remains and requires the selected provider:
 
 ```rust
 pub fn encode_rs256_pem<H, C>(
+    provider: &dyn CryptoProvider,
     header: &H,
     claims: &C,
     private_key_pem: &[u8],
@@ -170,6 +210,10 @@ pub fn encode_rs256_pem<H, C>(
 
 Enabling the `jwt` feature adds `serde` and `serde_json`; it does not add `rsa`
 or any other cryptographic implementation.
+
+Standalone public crypto entry points follow the same rule. For example,
+Azure Storage's `ServiceSharedAccessSignature::token` takes
+`&dyn CryptoProvider`; callers resolve it from their context.
 
 ## Official Providers
 
@@ -218,9 +262,19 @@ default = ["default-context", "default-crypto"]
 default-crypto = ["dep:reqsign-crypto-rustcrypto"]
 ```
 
-`default-crypto` re-exports `RustCryptoProvider`. It does not install it.
-`default_context()` remains limited to runtime components (`FileRead`,
-`HttpSend`, `Env`, `CommandExecute`) and never registers a crypto provider.
+`default-crypto` re-exports `RustCryptoProvider`. When it is enabled,
+`default_context()` sets that provider as a **context fallback** and never
+as the process-wide provider. `default_context()` therefore works without
+startup boilerplate, while a global installation performed later still takes
+precedence and an explicit `with_crypto` binding still wins.
+
+Without `default-crypto`, `default_context()` has no fallback and resolves a
+provider only from an explicit binding or a process-wide installation.
+`Context::new()` never has a fallback.
+
+The facade's per-service `default_signer(...)` helpers use `default_context()`,
+so they inherit the same behavior: usable with the default feature set, and
+still governed by explicit and global overrides.
 
 Applications that select a different backend disable `default-crypto` and take
 the backend crate directly. Applications that use only hashing can provide
@@ -228,14 +282,12 @@ their own minimal `CryptoProvider`.
 
 ## Migration
 
-### Applications
+### Applications and bare core users
 
-Install one provider once during startup, before constructing signers and before
-any credential loading that may use cryptography. For example, AWS SSO computes
-its cache key with SHA-1, Google service-account exchange signs a JWT, and Azure
-client certificate authentication signs a client assertion while loading a
-credential. Installing later can change a configuration error into credential
-absence.
+Facade users can keep using `default_context()` or a per-service
+`default_signer(...)` without installing anything. To select one provider for
+the whole application, install it once at startup; this overrides facade
+fallbacks:
 
 ```rust
 use reqsign::RustCryptoProvider;
@@ -250,17 +302,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 A failure from `install_default` means another component already installed a
-provider. Applications that intentionally compose several libraries should
-install their chosen provider before any of them are initialized.
+global provider. To keep a provider local, bind it with
+`Context::new().with_crypto(provider)` instead. Applications that intentionally
+compose several libraries should settle the global choice before any of them
+loads credentials.
+
+Bare `reqsign-core` users must provide a provider through the context or install
+a global one before signing. Hash and JWT helpers take the provider directly;
+there is no implicit lookup.
 
 The generic credential chain continues past provider errors and returns
 `Ok(None)` when every source is exhausted; services that select an identity
 before loading, such as AWS SSO, propagate that identity's errors instead. A
-missing provider found through the generic chain can therefore surface as
-credential absence, and `Signer::sign` reports `CredentialInvalid` ("failed to
-load signing credential") with the request unchanged. This preserves the
-existing chain and `Ok(None)` contract; installing before credential loading is
-what makes the missing-provider `ConfigInvalid` visible.
+context without a provider found through the generic chain can therefore surface
+as credential absence, and `Signer::sign` reports `CredentialInvalid` ("failed
+to load signing credential") with the request unchanged. This preserves the
+existing chain and `Ok(None)` contract; providing a provider before credential
+loading is what makes the missing-provider `ConfigInvalid` visible.
 
 ### Core and Service Crates
 
@@ -269,12 +327,14 @@ what makes the missing-provider `ConfigInvalid` visible.
 permitted as `dev-dependencies` for verification. Encoding (`base64`, `hex`) and
 secret zeroization (`zeroize`) remain ordinary dependencies where needed.
 
-All former hash and MAC call sites propagate `?`. Public signing, granting, and
-credential entry points already return `Result`, so this changes error
-propagation but not their success contracts. On-wire formats are unchanged:
-AWS SigV4/SigV4a, Azure Storage SAS/shared key/client certificate, Google
-signed URLs and CAB tokens, Oracle, Aliyun OSS, Huawei Cloud OBS, Tencent COS,
-and Volcengine TOS keep their existing canonicalization and encodings.
+All former hash and MAC call sites propagate `?` and resolve the provider from
+the `Context` supplied to the signing, granting, or credential-loading entry
+point. Public signing, granting, and credential entry points already return
+`Result`, so this changes error propagation but not their success contracts.
+On-wire formats are unchanged: AWS SigV4/SigV4a, Azure Storage SAS/shared
+key/client certificate, Google signed URLs and CAB tokens, Oracle, Aliyun OSS,
+Huawei Cloud OBS, Tencent COS, and Volcengine TOS keep their existing
+canonicalization and encodings.
 
 Notable service-specific details:
 
@@ -284,6 +344,7 @@ Notable service-specific details:
 - Azure client certificate authentication keeps the certificate/key PEM
   splitting in `azure-storage`; the thumbprint uses the provider's SHA-1 and the
   client assertion uses `jwt::encode_rs256_pem`.
+- Azure `ServiceSharedAccessSignature::token` takes the resolved provider.
 - Google service-account signing encodes the provider's RSA signature as hex;
   client-side credential access boundary encryption uses AES-GCM through the
   provider and gets its nonce from `fill_random`. Malformed service-account key
@@ -292,28 +353,38 @@ Notable service-specific details:
 ### Removed APIs
 
 - `reqsign_core::jwt::encode_rs256(&H, &C, &RsaPrivateKey)` is removed.
-  Use `encode_rs256_pem` with PEM bytes.
-- Hash and MAC helpers return `Result`.
-- `reqsign-core` no longer provides crypto implementations, so a process that
-  signs or hashes without installing a provider fails with `ConfigInvalid`.
+  Use `encode_rs256_pem(provider, ...)` with PEM bytes.
+- Hash and MAC helpers take `&dyn CryptoProvider` and return `Result`.
+- `reqsign-core` no longer provides crypto implementations, so a context with no
+  provider binding, global provider, or fallback fails with `ConfigInvalid` at
+  the point of use.
 
 ## Verification
 
 The repository verifies this contract with:
 
-- Separate `reqsign-core` integration test binaries for the unset provider,
-  early lookup, rejected second installation, and concurrent installation.
+- Separate `reqsign-core` integration test binaries for the bare missing
+  context, early global lookup, rejected second installation, concurrent
+  installation, and context resolution priority. The priority test covers a
+  context used before global installation, the global override of its fallback,
+  explicit priority over global, and independent providers on distinct
+  contexts.
+- Facade tests with and without `default-crypto`, including a default signer
+  that signs through the fallback and a signer whose explicitly selected
+  provider is used.
 - RustCrypto provider tests for published hash/HMAC vectors, block-size key
   boundaries, both RSA PEM formats, AES-128/256-GCM with and without AAD,
   ECDSA verification, invalid scalars, invalid AES key lengths, random output,
   and unsupported-operation defaults.
 - BoringSSL parity tests against `reqsign-crypto-rustcrypto` for byte-identical
   hashes, HMACs, RSA signatures, and AES-GCM output; cross-backend ECDSA
-  verification; error-kind checks; and an AWS SigV4 end-to-end signing test.
+  verification; error-kind checks; and an AWS SigV4 end-to-end signing test with
+  an explicit BoringSSL context.
 - A per-root `cargo tree --all-features --target all --edges normal` check
   confirms that no core or service production graph contains a cryptographic
   implementation crate, without workspace feature unification hiding optional
   paths.
 - `cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown`,
   the workspace test suite, doc tests, formatting, clippy with `-D warnings`,
-  license headers, and the standalone BoringSSL workflow.
+  license headers, the standalone BoringSSL workflow, and the website provider
+  catalog validator.

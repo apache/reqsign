@@ -42,7 +42,7 @@ async fn init_signer() -> Option<(Context, Signer<Credential>)> {
         .with_scope(&scope);
     let builder = RequestSigner::new("storage").with_scope(&scope);
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);

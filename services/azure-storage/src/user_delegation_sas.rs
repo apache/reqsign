@@ -24,6 +24,7 @@ use crate::user_delegation::{
 };
 use asyncband::singleflight::Group;
 use percent_encoding::percent_encode;
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::hex_sha256;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, GrantCredential, Result, SigningCredential};
@@ -670,13 +671,14 @@ impl UserDelegationSasGranter {
 
     fn cache_key(
         &self,
+        provider: &dyn CryptoProvider,
         endpoint: &ParsedEndpoint,
         bearer_token: &str,
     ) -> Result<UserDelegationKeyCacheKey> {
         Ok(UserDelegationKeyCacheKey {
             account: self.account.clone(),
             endpoint: endpoint.identity.clone(),
-            source_authority: hex_sha256(bearer_token.as_bytes())?,
+            source_authority: hex_sha256(provider, bearer_token.as_bytes())?,
             service_version: USER_DELEGATION_SERVICE_VERSION,
         })
     }
@@ -720,20 +722,11 @@ impl GrantCredential for UserDelegationSasGranter {
         let Credential::BearerToken { token, .. } = credential else {
             return now + BEARER_TOKEN_OPERATION_HEADROOM;
         };
-        let Ok(endpoint) = self.parse_endpoint() else {
-            return now + BEARER_TOKEN_OPERATION_HEADROOM;
-        };
-        let Ok(times) = self.operation_times(expires_in) else {
-            return now + BEARER_TOKEN_OPERATION_HEADROOM;
-        };
-        let Ok(cache_key) = self.cache_key(&endpoint, token) else {
-            return now + BEARER_TOKEN_OPERATION_HEADROOM;
-        };
-        if self.cached_key(&cache_key, &times).is_some() {
-            now
-        } else {
-            now + BEARER_TOKEN_OPERATION_HEADROOM
-        }
+        // This trait method has no Context, so the source-authority key cannot
+        // be computed here. Require I/O headroom conservatively; grant_credential
+        // resolves the provider and reuses the key cache when possible.
+        let _ = (token, expires_in);
+        now + BEARER_TOKEN_OPERATION_HEADROOM
     }
 
     async fn grant_credential(
@@ -748,6 +741,7 @@ impl GrantCredential for UserDelegationSasGranter {
             ));
         };
 
+        let provider = ctx.crypto_provider()?;
         let endpoint = self.parse_endpoint()?;
         let grant = self.grant.validate()?;
         self.validate_ip()?;
@@ -759,7 +753,7 @@ impl GrantCredential for UserDelegationSasGranter {
             ));
         }
 
-        let cache_key = self.cache_key(&endpoint, token)?;
+        let cache_key = self.cache_key(provider, &endpoint, token)?;
         let cached = self.cached_key(&cache_key, &times);
         let (key, fetched) = if let Some(key) = cached {
             (key, false)
@@ -830,7 +824,7 @@ impl GrantCredential for UserDelegationSasGranter {
             signer = signer.with_ip(ip);
         }
 
-        let pairs = signer.token().map_err(|e| {
+        let pairs = signer.token(provider).map_err(|e| {
             Error::new(e.kind(), "failed to generate Azure user delegation SAS").with_source(e)
         })?;
         let token = encode_query_pairs(&pairs);
@@ -1093,7 +1087,7 @@ mod tests {
         let http = MockUserDelegationHttpSend::new([delegation_key_response(
             now, key_expiry, "oid", "tid", "a2V5",
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let operation = UserDelegationSasGranter::new(
             "account",
             blob_grant(
@@ -1161,7 +1155,7 @@ mod tests {
         let http = MockUserDelegationHttpSend::new([delegation_key_response(
             key_start, key_expiry, "oid", "tid", "a2V5",
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let operation = UserDelegationSasGranter::new(
             "account",
             blob_grant("blob", UserDelegationSasPermissions::READ),
@@ -1219,7 +1213,7 @@ mod tests {
             "tid",
             "a2V5",
         )]);
-        let ctx = Context::new().with_http_send(http);
+        let ctx = crate::test_context().with_http_send(http);
         let operation = UserDelegationSasGranter::new(
             "account",
             blob_grant("path/to/blob.txt", UserDelegationSasPermissions::READ),
@@ -1238,7 +1232,7 @@ mod tests {
         let token = token.to_string();
 
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             FixedCredentialProvider(output),
             RequestSigner::new(),
         );
@@ -1267,7 +1261,7 @@ mod tests {
     async fn rejects_non_bearer_source_variants_before_io() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let http = MockUserDelegationHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let operation = UserDelegationSasGranter::new(
             "account",
             blob_grant("blob", UserDelegationSasPermissions::READ),
@@ -1294,7 +1288,7 @@ mod tests {
         let http = MockUserDelegationHttpSend::new([delegation_key_response(
             now, key_expiry, "oid", "tid", "a2V5",
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let base = UserDelegationSasGranter::new(
             "account",
             blob_grant("blob", UserDelegationSasPermissions::READ),
@@ -1349,7 +1343,7 @@ mod tests {
         let key_expiry = now + MAX_USER_DELEGATION_LIFETIME;
         let response = || delegation_key_response(now, key_expiry, "oid", "tid", "a2V5");
         let http = MockUserDelegationHttpSend::new([response(), response(), response()]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let first = UserDelegationSasGranter::new(
             "account",
             blob_grant("first", UserDelegationSasPermissions::READ),
@@ -1399,7 +1393,7 @@ mod tests {
             "a2V5",
         )])
         .with_response_gate(gate.clone());
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source = bearer("source");
         let first = UserDelegationSasGranter::new(
             "account",
@@ -1469,7 +1463,7 @@ mod tests {
             };
             let http = MockUserDelegationHttpSend::new([response(), response()])
                 .with_response_gate(gate.clone());
-            let ctx = Context::new().with_http_send(http.clone());
+            let ctx = crate::test_context().with_http_send(http.clone());
             let source = bearer("source");
             let first = UserDelegationSasGranter::new(
                 "account",
@@ -1536,7 +1530,7 @@ mod tests {
                         Error::rate_limited("retry later").with_context("delegation key request")
                     ));
             }
-            let ctx = Context::new().with_http_send(http.clone());
+            let ctx = crate::test_context().with_http_send(http.clone());
             let source = bearer("source");
             let operation = UserDelegationSasGranter::new(
                 "account",
@@ -1590,7 +1584,7 @@ mod tests {
                 "a2V5",
             )])
             .with_response_gate(gate.clone());
-            let ctx = Context::new().with_http_send(http.clone());
+            let ctx = crate::test_context().with_http_send(http.clone());
             let source = bearer("source");
             let first = UserDelegationSasGranter::new(
                 "account",
@@ -1645,7 +1639,7 @@ mod tests {
                 "a2V5",
             ),
         ]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let operation = UserDelegationSasGranter::new(
             "account",
             blob_grant("blob", UserDelegationSasPermissions::READ),
@@ -1672,7 +1666,7 @@ mod tests {
         let key_expiry = now + MAX_USER_DELEGATION_LIFETIME;
         let response = || delegation_key_response(now, key_expiry, "oid", "tid", "a2V5");
         let http = MockUserDelegationHttpSend::new([response(), response(), response()]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source = bearer("source");
 
         let container = UserDelegationSasGranter::new(
@@ -1741,7 +1735,7 @@ mod tests {
     async fn rejects_scope_widening_and_invalid_permissions_before_io() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let http = MockUserDelegationHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source = bearer("source");
 
         for prefix in ["", "/", "///", "/prefix", "prefix/", "a//b", ".", ".."] {
@@ -1818,7 +1812,7 @@ mod tests {
     async fn validates_account_endpoint_and_ip_before_io() {
         let now = timestamp("2030-01-01T00:00:00Z");
         let http = MockUserDelegationHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source = bearer("source");
         let grant = blob_grant("blob", UserDelegationSasPermissions::READ);
 

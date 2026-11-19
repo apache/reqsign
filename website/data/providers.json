@@ -3,7 +3,11 @@
   "internal_crates": [
     {
       "name": "reqsign-core",
-      "role": "Core traits (ProvideCredential, SignRequest, GrantCredential) and the runtime-agnostic Context, Signer, and Granter types."
+      "role": "Core traits (ProvideCredential, SignRequest, GrantCredential), context crypto resolution, and the runtime-agnostic Context, Signer, and Granter types."
+    },
+    {
+      "name": "reqsign-crypto-rustcrypto",
+      "role": "Pure-Rust CryptoProvider backend, re-exported by the reqsign facade's default-crypto feature and used as the facade default context fallback."
     },
     {
       "name": "reqsign-aws-core",

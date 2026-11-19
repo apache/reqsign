@@ -44,7 +44,6 @@ pem = { workspace = true }
 reqsign-core = { workspace = true, features = ["jwt"] }
 
 [dev-dependencies]
-ctor = "1"
 reqsign-crypto-rustcrypto = { workspace = true }
 asyncband = { workspace = true, features = ["semaphore"] }
 env_logger = { workspace = true }

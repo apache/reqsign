@@ -25,17 +25,17 @@ use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    reqsign_crypto_rustcrypto::RustCryptoProvider::install_default()
-        .expect("no CryptoProvider must be installed before this example");
-
     // Initialize logging
     let _ = env_logger::builder().is_test(true).try_init();
 
     // Create HTTP client
     let client = Client::new();
 
+    let crypto = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+
     // Create context
     let ctx = Context::new()
+        .with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::new(client.clone()))
         .with_env(OsEnv);
@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
         .header("x-amz-target", "DynamoDB_20120810.ListTables")
         .header(
             "x-amz-content-sha256",
-            &reqsign_core::hash::hex_sha256(&body_bytes)?,
+            &reqsign_core::hash::hex_sha256(&crypto, &body_bytes)?,
         )
         .body(reqwest::Body::from(body_bytes))
         .unwrap();
@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
         .header("x-amz-target", "DynamoDB_20120810.DescribeTable")
         .header(
             "x-amz-content-sha256",
-            &reqsign_core::hash::hex_sha256(&body_bytes)?,
+            &reqsign_core::hash::hex_sha256(&crypto, &body_bytes)?,
         )
         .body(reqwest::Body::from(body_bytes))
         .unwrap();
@@ -143,7 +143,7 @@ async fn main() -> Result<()> {
         .header("x-amz-target", "DynamoDB_20120810.PutItem")
         .header(
             "x-amz-content-sha256",
-            &reqsign_core::hash::hex_sha256(&body_bytes)?,
+            &reqsign_core::hash::hex_sha256(&crypto, &body_bytes)?,
         )
         .body(reqwest::Body::from(body_bytes))
         .unwrap();

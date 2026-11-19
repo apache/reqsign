@@ -53,10 +53,11 @@ impl Files {
     }
 
     fn token(&self, home: &str, name: &str, value: Value) {
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
         self.put(
             &format!(
                 "{home}/.aws/sso/cache/{}.json",
-                hex_sha1(name.as_bytes()).expect("SSO cache key hashing must succeed")
+                hex_sha1(&provider, name.as_bytes()).expect("SSO cache key hashing must succeed")
             ),
             value.to_string(),
         );
@@ -137,7 +138,7 @@ fn timestamp() -> Timestamp {
 }
 
 fn context(files: &Arc<Files>, http: &Arc<Http>, home: &str, config_path: &str) -> Context {
-    Context::new()
+    crate::test_context()
         .with_file_read(files.clone())
         .with_http_send(http.clone())
         .with_env(StaticEnv {

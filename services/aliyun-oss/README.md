@@ -6,13 +6,15 @@ Aliyun OSS signing implementation for reqsign.
 
 This crate provides signing support for Alibaba Cloud Object Storage Service (OSS), enabling secure authentication for all OSS operations.
 
-> Signing requires a process-wide `CryptoProvider`. Install one at startup
-> before constructing signers; see
+> Signing needs a `CryptoProvider` resolved through the `Context`: bind one with
+> `Context::with_crypto`, install a process-wide default, or use a facade
+> `default_context()` fallback. A bare `Context::new()` has no fallback. See
 > [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
 
 ## Quick Start
 
 ```rust
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use reqsign_aliyun_oss::{
     AssumeRoleCredentialProvider, AssumeRoleWithOidcCredentialProvider,
     ConfigFileCredentialProvider, CredentialsFileCredentialProvider,
@@ -26,7 +28,7 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ctx = Context::new()
+    let ctx = Context::new().with_crypto(RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default());
 

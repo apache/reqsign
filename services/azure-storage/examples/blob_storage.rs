@@ -18,6 +18,7 @@
 use anyhow::Result;
 use reqsign_azure_storage::{DefaultCredentialProvider, EnvCredentialProvider, RequestSigner};
 use reqsign_core::{Context, OsEnv, Signer};
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 use reqwest::Client;
@@ -32,6 +33,7 @@ async fn main() -> Result<()> {
 
     // Create context
     let ctx = Context::new()
+        .with_crypto(RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::new(client.clone()))
         .with_env(OsEnv);

@@ -17,14 +17,17 @@
 
 //! Process-wide cryptographic provider.
 //!
-//! Reqsign does not bundle a cryptographic implementation. Applications install
-//! one [`CryptoProvider`] at startup with [`install_default`]. All hashing,
-//! signing, encryption and random generation performed by reqsign goes through
-//! the installed provider.
+//! Reqsign does not bundle a cryptographic implementation. A [`Context`](crate::Context)
+//! resolves crypto operations with this priority: an explicit
+//! [`Context::with_crypto`](crate::Context::with_crypto) binding, then the
+//! process-wide provider installed with [`install_default`], then the context
+//! fallback set with
+//! [`Context::with_crypto_fallback`](crate::Context::with_crypto_fallback).
 //!
-//! A process can install at most one provider. Installation is not
+//! A process can install at most one global provider. Installation is not
 //! idempotent: later attempts return the provider they tried to install and
-//! leave the first provider in place.
+//! leave the first provider in place. Contexts never install or freeze the
+//! global slot; [`get_default`] only reads the current global registration.
 
 use std::fmt::Debug;
 use std::sync::{Arc, OnceLock};
@@ -130,12 +133,4 @@ pub fn install_default(
 /// not prevent a later [`install_default`] call from succeeding.
 pub fn get_default() -> Option<&'static Arc<dyn CryptoProvider>> {
     DEFAULT_PROVIDER.get()
-}
-
-pub(crate) fn require_default() -> Result<&'static Arc<dyn CryptoProvider>> {
-    get_default().ok_or_else(|| {
-        Error::config_invalid(
-            "no CryptoProvider is installed; install one during application startup",
-        )
-    })
 }

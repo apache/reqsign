@@ -22,9 +22,7 @@ use http::request::Parts;
 use http::{HeaderMap, HeaderName, Method};
 use log::debug;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{
-    Context, Error, Result, SignRequest, SigningCredential, SigningRequest, crypto,
-};
+use reqsign_core::{Context, Error, Result, SignRequest, SigningCredential, SigningRequest};
 use std::fmt::Write;
 use std::time::Duration;
 
@@ -104,11 +102,7 @@ impl SignRequest for RequestSigner {
         // Read private key from file. Both unencrypted PKCS#8 and PKCS#1 PEM
         // keys are accepted by the configured CryptoProvider.
         let private_key_content = ctx.file_read_as_string(&cred.key_file).await?;
-        let provider = crypto::get_default().ok_or_else(|| {
-            Error::config_invalid(
-                "no CryptoProvider is installed; install one during application startup",
-            )
-        })?;
+        let provider = ctx.crypto_provider()?;
         let signature = provider
             .rsa_pkcs1v15_sha256_sign(private_key_content.as_bytes(), string_to_sign.as_bytes())?;
         let encoded_signature = general_purpose::STANDARD.encode(signature);
@@ -249,7 +243,7 @@ mod tests {
             .expect("private key must encode")
             .as_bytes()
             .to_vec();
-        let ctx = Context::new().with_file_read(StaticFileRead(private_key));
+        let ctx = crate::test_context().with_file_read(StaticFileRead(private_key));
         let mut parts = http::Request::get(&original_uri).body(())?.into_parts().0;
 
         RequestSigner::new()
@@ -264,7 +258,7 @@ mod tests {
     #[tokio::test]
     async fn invalid_private_key_leaves_request_unchanged() -> Result<()> {
         let original_uri = format!("https://example.com/object?{RAW_QUERY}");
-        let ctx = Context::new().with_file_read(StaticFileRead(b"invalid".to_vec()));
+        let ctx = crate::test_context().with_file_read(StaticFileRead(b"invalid".to_vec()));
         let mut parts = http::Request::get(&original_uri)
             .header("x-original", "value")
             .body(())?

@@ -54,7 +54,7 @@ impl reqsign_core::CommandExecute for NoIo {
 }
 
 fn context(files: &[(&str, &str)], env: &[(&str, &str)]) -> Context {
-    Context::new()
+    crate::common::test_context()
         .with_file_read(Files(
             files
                 .iter()

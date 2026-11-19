@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::crypto::{self, CryptoProvider};
 use crate::{BoxedFuture, Error, MaybeSend, Result};
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -31,6 +32,15 @@ use std::sync::Arc;
 /// reqsign provides NO default implementations. Users MAY configure components they need.
 /// Any unconfigured component will use a no-op implementation that returns errors or empty values when called.
 ///
+/// ## Cryptographic provider
+///
+/// Crypto operations resolve through the context. Resolution prefers a provider
+/// bound with [`Context::with_crypto`], then the process-wide provider installed
+/// with [`crate::crypto::install_default`], then a fallback set with
+/// [`Context::with_crypto_fallback`]. A bare `Context::new()` has none of these
+/// and returns [`crate::ErrorKind::ConfigInvalid`] when crypto is first needed.
+/// Creating or cloning a context never installs or freezes a global provider.
+///
 /// ## Example
 ///
 /// ```
@@ -46,6 +56,8 @@ pub struct Context {
     http: Arc<dyn HttpSendDyn>,
     env: Arc<dyn Env>,
     cmd: Arc<dyn CommandExecuteDyn>,
+    crypto: Option<Arc<dyn CryptoProvider>>,
+    crypto_fallback: Option<Arc<dyn CryptoProvider>>,
 }
 
 impl Debug for Context {
@@ -55,6 +67,8 @@ impl Debug for Context {
             .field("http", &self.http)
             .field("env", &self.env)
             .field("cmd", &self.cmd)
+            .field("crypto", &self.crypto)
+            .field("crypto_fallback", &self.crypto_fallback)
             .finish()
     }
 }
@@ -87,6 +101,8 @@ impl Context {
             http: Arc::new(NoopHttpSend),
             env: Arc::new(NoopEnv),
             cmd: Arc::new(NoopCommandExecute),
+            crypto: None,
+            crypto_fallback: None,
         }
     }
 
@@ -112,6 +128,57 @@ impl Context {
     pub fn with_command_execute(mut self, cmd: impl CommandExecute) -> Self {
         self.cmd = Arc::new(cmd);
         self
+    }
+
+    /// Bind a cryptographic provider to this context.
+    ///
+    /// An explicitly bound provider has the highest priority for every crypto
+    /// operation performed through this context. It does not affect the
+    /// process-wide provider or other contexts.
+    pub fn with_crypto(mut self, provider: impl CryptoProvider) -> Self {
+        self.crypto = Some(Arc::new(provider));
+        self
+    }
+
+    /// Set a fallback cryptographic provider for this context.
+    ///
+    /// The fallback is used only when no provider is bound explicitly with
+    /// [`Context::with_crypto`] and no process-wide provider has been installed
+    /// with [`crate::crypto::install_default`]. It does not install a
+    /// process-wide provider. Facades use this to make their default context
+    /// usable without taking away an application's later provider choice.
+    pub fn with_crypto_fallback(mut self, provider: impl CryptoProvider) -> Self {
+        self.crypto_fallback = Some(Arc::new(provider));
+        self
+    }
+
+    /// Resolve the cryptographic provider for this context.
+    ///
+    /// Resolution order is:
+    ///
+    /// 1. the provider bound with [`Context::with_crypto`];
+    /// 2. the process-wide provider installed with
+    ///    [`crate::crypto::install_default`];
+    /// 3. the context fallback set with [`Context::with_crypto_fallback`].
+    ///
+    /// If none is available this returns [`crate::ErrorKind::ConfigInvalid`] at
+    /// the point of use. Resolution never installs or freezes a provider, so a
+    /// process-wide installation performed after this context was created is
+    /// observed by later operations through the same context.
+    pub fn crypto_provider(&self) -> Result<&dyn CryptoProvider> {
+        if let Some(provider) = &self.crypto {
+            return Ok(provider.as_ref());
+        }
+        if let Some(provider) = crypto::get_default() {
+            return Ok(provider.as_ref());
+        }
+        if let Some(provider) = &self.crypto_fallback {
+            return Ok(provider.as_ref());
+        }
+
+        Err(Error::config_invalid(
+            "no CryptoProvider is available; bind one with Context::with_crypto or install a process-wide default",
+        ))
     }
 
     /// Read the file content entirely in `Vec<u8>`.

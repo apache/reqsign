@@ -38,10 +38,6 @@ fn rustcrypto() -> RustCryptoProvider {
     RustCryptoProvider::new()
 }
 
-fn install_boring() {
-    let _ = BoringCryptoProvider::install_default();
-}
-
 #[test]
 fn hashes_and_hmacs_match_rustcrypto() {
     let boring = boring();
@@ -229,8 +225,7 @@ fn fill_random_produces_distinct_nonzero_bytes() {
 
 #[tokio::test]
 async fn aws_sigv4_end_to_end_matches_an_independent_hmac_implementation() {
-    install_boring();
-
+    let context = Context::new().with_crypto(BoringCryptoProvider::new());
     let credential = Credential {
         access_key_id: "AKIDEXAMPLE".to_string(),
         secret_access_key: "test-secret-key".to_string(),
@@ -244,7 +239,7 @@ async fn aws_sigv4_end_to_end_matches_an_independent_hmac_implementation() {
         .0;
 
     RequestSigner::new("s3", "test-region")
-        .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+        .sign_request(&context, &mut parts, Some(&credential), None)
         .await
         .expect("AWS SigV4 signing must succeed");
 

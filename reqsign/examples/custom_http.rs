@@ -29,8 +29,8 @@ impl HttpSend for MyHttpSend {
 }
 
 fn main() {
-    reqsign::RustCryptoProvider::install_default()
-        .expect("no CryptoProvider must be installed before this example");
     // This example only assembles the context; implement http_send before use.
-    let _ctx = Context::new().with_http_send(MyHttpSend);
+    let _ctx = Context::new()
+        .with_crypto(reqsign::RustCryptoProvider::new())
+        .with_http_send(MyHttpSend);
 }

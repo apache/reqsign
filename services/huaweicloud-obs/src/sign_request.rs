@@ -97,7 +97,7 @@ impl SignRequest for RequestSigner {
 
     async fn sign_request(
         &self,
-        _ctx: &reqsign_core::Context,
+        ctx: &reqsign_core::Context,
         parts: &mut http::request::Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
@@ -105,6 +105,7 @@ impl SignRequest for RequestSigner {
         let Some(cred) = credential else {
             return Ok(());
         };
+        let provider = ctx.crypto_provider()?;
 
         let now = self.get_time();
         let required_until = self.required_valid_until_at(now, expires_in);
@@ -124,8 +125,11 @@ impl SignRequest for RequestSigner {
         let mut ctx = SigningRequest::build(parts)?;
 
         let string_to_sign = string_to_sign(&mut ctx, cred, now, method, &self.bucket)?;
-        let signature =
-            base64_hmac_sha1(cred.secret_access_key.as_bytes(), string_to_sign.as_bytes())?;
+        let signature = base64_hmac_sha1(
+            provider,
+            cred.secret_access_key.as_bytes(),
+            string_to_sign.as_bytes(),
+        )?;
 
         let final_uri = match method {
             SigningMethod::Header => {
@@ -360,7 +364,7 @@ mod tests {
     use http::Uri;
     use http::header::HeaderName;
     use reqsign_core::Result;
-    use reqsign_core::{Context, OsEnv, Signer};
+    use reqsign_core::{OsEnv, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
 
@@ -442,7 +446,7 @@ mod tests {
 
         start_log_capture();
         signer
-            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .sign_request(&crate::test_context(), &mut parts, Some(&credential), None)
             .await?;
 
         assert!(!captured_logs().contains(TOKEN));
@@ -459,7 +463,7 @@ mod tests {
         let builder = RequestSigner::new("bucket")
             .with_time(Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -498,7 +502,7 @@ mod tests {
         let builder = RequestSigner::new("bucket")
             .with_time(Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -539,7 +543,7 @@ mod tests {
         let builder = RequestSigner::new("bucket")
             .with_time(Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -594,14 +598,19 @@ mod tests {
 
         let mut header_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
         signer
-            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut header_parts,
+                Some(&credential),
+                None,
+            )
             .await?;
         assert_eq!(header_parts.uri.to_string(), original_uri);
 
         let mut query_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
         signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut query_parts,
                 Some(&credential),
                 Some(Duration::from_secs(60)),

@@ -17,12 +17,15 @@
 
 //! Hash related utils.
 //!
-//! Encoding helpers are pure functions. Digest and MAC helpers use the
-//! process-wide [`crate::crypto::CryptoProvider`] and return an error when no
-//! provider is installed or the installed provider cannot serve the operation.
+//! Encoding helpers are pure functions. Digest and MAC helpers require a
+//! [`CryptoProvider`] selected by the caller. Callers with a
+//! [`Context`](crate::Context) resolve it with
+//! [`Context::crypto_provider`](crate::Context::crypto_provider); helpers never
+//! fall back to the process-wide registration on their own.
 
-use crate::crypto;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
+use crate::crypto::CryptoProvider;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 
@@ -39,51 +42,63 @@ pub fn base64_decode(content: &str) -> crate::Result<Vec<u8>> {
 }
 
 /// SHA1 digest.
-pub fn sha1(content: &[u8]) -> Result<[u8; 20]> {
-    crypto::require_default()?.sha1(content)
+pub fn sha1(provider: &dyn CryptoProvider, content: &[u8]) -> Result<[u8; 20]> {
+    provider.sha1(content)
 }
 
 /// SHA256 digest.
-pub fn sha256(content: &[u8]) -> Result<[u8; 32]> {
-    crypto::require_default()?.sha256(content)
+pub fn sha256(provider: &dyn CryptoProvider, content: &[u8]) -> Result<[u8; 32]> {
+    provider.sha256(content)
 }
 
 /// HMAC with SHA1 hash.
-pub fn hmac_sha1(key: &[u8], content: &[u8]) -> Result<[u8; 20]> {
-    crypto::require_default()?.hmac_sha1(key, content)
+pub fn hmac_sha1(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<[u8; 20]> {
+    provider.hmac_sha1(key, content)
 }
 
 /// HMAC with SHA256 hash.
-pub fn hmac_sha256(key: &[u8], content: &[u8]) -> Result<[u8; 32]> {
-    crypto::require_default()?.hmac_sha256(key, content)
+pub fn hmac_sha256(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<[u8; 32]> {
+    provider.hmac_sha256(key, content)
 }
 
 /// Hex encoded SHA1 hash.
-pub fn hex_sha1(content: &[u8]) -> Result<String> {
-    Ok(hex::encode(sha1(content)?))
+pub fn hex_sha1(provider: &dyn CryptoProvider, content: &[u8]) -> Result<String> {
+    Ok(hex::encode(sha1(provider, content)?))
 }
 
 /// Hex encoded SHA256 hash.
-pub fn hex_sha256(content: &[u8]) -> Result<String> {
-    Ok(hex::encode(sha256(content)?))
+pub fn hex_sha256(provider: &dyn CryptoProvider, content: &[u8]) -> Result<String> {
+    Ok(hex::encode(sha256(provider, content)?))
 }
 
 /// Base64 encoded HMAC with SHA256 hash.
-pub fn base64_hmac_sha256(key: &[u8], content: &[u8]) -> Result<String> {
-    Ok(base64_encode(&hmac_sha256(key, content)?))
+pub fn base64_hmac_sha256(
+    provider: &dyn CryptoProvider,
+    key: &[u8],
+    content: &[u8],
+) -> Result<String> {
+    Ok(base64_encode(&hmac_sha256(provider, key, content)?))
 }
 
 /// Hex encoded HMAC with SHA1 hash.
-pub fn hex_hmac_sha1(key: &[u8], content: &[u8]) -> Result<String> {
-    Ok(hex::encode(hmac_sha1(key, content)?))
+pub fn hex_hmac_sha1(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<String> {
+    Ok(hex::encode(hmac_sha1(provider, key, content)?))
 }
 
 /// Hex encoded HMAC with SHA256 hash.
-pub fn hex_hmac_sha256(key: &[u8], content: &[u8]) -> Result<String> {
-    Ok(hex::encode(hmac_sha256(key, content)?))
+pub fn hex_hmac_sha256(
+    provider: &dyn CryptoProvider,
+    key: &[u8],
+    content: &[u8],
+) -> Result<String> {
+    Ok(hex::encode(hmac_sha256(provider, key, content)?))
 }
 
 /// Base64 encoded HMAC with SHA1 hash.
-pub fn base64_hmac_sha1(key: &[u8], content: &[u8]) -> Result<String> {
-    Ok(base64_encode(&hmac_sha1(key, content)?))
+pub fn base64_hmac_sha1(
+    provider: &dyn CryptoProvider,
+    key: &[u8],
+    content: &[u8],
+) -> Result<String> {
+    Ok(base64_encode(&hmac_sha1(provider, key, content)?))
 }

@@ -67,7 +67,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_credential_provider() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);

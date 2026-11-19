@@ -90,7 +90,7 @@ mod tests {
             ),
         ]);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv)
@@ -127,7 +127,7 @@ mod tests {
             ),
         ]);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv)
@@ -161,7 +161,7 @@ mod tests {
             ),
         ]);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv)
@@ -207,7 +207,7 @@ mod tests {
             ),
         ]);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv)
@@ -232,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_env_credential_provider_missing_credentials() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -252,7 +252,7 @@ mod tests {
             "test_access_key".to_string(),
         )]);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv)

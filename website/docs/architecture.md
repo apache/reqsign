@@ -105,24 +105,32 @@ browser-backed implementations. See
 
 ## Crypto provider
 
-Cryptography is not a `Context` capability. Reqsign resolves every hash, MAC,
-asymmetric signature, AES-GCM operation, and random draw through one
-process-wide `CryptoProvider` installed by the application at startup:
+Cryptography is resolved through `Context`. Every hash, MAC, asymmetric
+signature, AES-GCM operation, and random draw calls
+`ctx.crypto_provider()`, which prefers an explicit
+`Context::with_crypto` binding, then the process-wide provider installed with
+`RustCryptoProvider::install_default()`, then the context fallback:
 
 ```rust
-use reqsign::RustCryptoProvider;
+use reqsign::{Context, RustCryptoProvider, Signer};
 
+// Explicit provider for this context.
+let ctx = Context::new().with_crypto(RustCryptoProvider::new());
+
+// Or let an application select one provider for every fallback context.
 RustCryptoProvider::install_default()
     .map_err(|_| "a CryptoProvider is already installed")?;
 ```
 
-`reqsign-core` and the service crates contain no cryptographic implementation,
-so signing without an installed provider returns `ConfigInvalid`. The facade's
-`default-crypto` feature supplies the RustCrypto provider but does not install
-it; `default_context()` does not install it either. Applications choose the
-provider, and integrating middleware such as OpenDAL must leave that choice to
-the application. See [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md) for the full
-contract and error semantics.
+`reqsign-core` and the service crates contain no cryptographic implementation.
+A bare `Context::new()` has no provider or fallback and returns `ConfigInvalid`
+when signing needs crypto. The facade's `default-crypto` feature sets RustCrypto
+as a fallback on `default_context()` without touching the process-wide slot, so
+default signers work out of the box and a later global installation still wins.
+Applications choose the provider, and integrating middleware such as OpenDAL
+must not install a global default. See
+[CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md)
+for the full contract and error semantics.
 
 ## ProvideCredential
 

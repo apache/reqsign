@@ -19,8 +19,6 @@ use anyhow::Result;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    reqsign::RustCryptoProvider::install_default()
-        .expect("no CryptoProvider must be installed before this example");
     // ANCHOR: quickstart
     use reqsign::aws;
     // Create a default signer for S3 in us-east-1

@@ -673,7 +673,7 @@ mod tests {
 
         let credential = granter
             .grant_credential(
-                &Context::new().with_http_send(http.clone()),
+                &crate::test_context().with_http_send(http.clone()),
                 &source("2026-09-02T02:00:00Z"),
                 Some(Duration::from_millis(3_600_500)),
             )
@@ -745,7 +745,7 @@ mod tests {
     async fn rejects_invalid_input_before_iam_io() {
         let now = timestamp("2026-09-02T00:00:00Z");
         let http = MockHttpSend::new([]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
 
         let invalid_cases = [
             (
@@ -835,7 +835,7 @@ mod tests {
             iam_success_response("impersonated-token", "2026-09-02T01:00:00Z"),
             iam_success_response("impersonated-token", "2026-09-02T00:00:25Z"),
         ]);
-        let context = Context::new().with_http_send(http);
+        let context = crate::test_context().with_http_send(http);
 
         let source_expired = ServiceAccountImpersonationGranter::new(grant())
             .with_time(now)
@@ -877,7 +877,7 @@ mod tests {
         let error = ServiceAccountImpersonationGranter::new(grant)
             .with_time(timestamp("2026-09-02T00:00:00Z"))
             .grant_credential(
-                &Context::new().with_http_send(http),
+                &crate::test_context().with_http_send(http),
                 &source("2026-09-02T02:00:00Z"),
                 None,
             )
@@ -901,7 +901,7 @@ mod tests {
             iam_success_response("first-token", "2100-01-01T00:00:00Z"),
             iam_success_response("second-token", "2100-01-01T00:00:00Z"),
         ]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let granter = Granter::new(
             context,
             provider,
@@ -933,7 +933,7 @@ mod tests {
             grant(),
         );
         let credential = wrapper
-            .provide_credential(&Context::new().with_http_send(wrapper_http.clone()))
+            .provide_credential(&crate::test_context().with_http_send(wrapper_http.clone()))
             .await?
             .expect("provider must return an impersonated credential");
         assert_eq!(
@@ -958,7 +958,7 @@ mod tests {
         );
         assert!(
             empty_provider
-                .provide_credential(&Context::new())
+                .provide_credential(&crate::test_context())
                 .await?
                 .is_none()
         );
@@ -978,7 +978,7 @@ mod tests {
             let error = ServiceAccountImpersonationGranter::new(grant())
                 .with_time(timestamp("2026-09-02T00:00:00Z"))
                 .grant_credential(
-                    &Context::new().with_http_send(http),
+                    &crate::test_context().with_http_send(http),
                     &source("2026-09-02T02:00:00Z"),
                     None,
                 )

@@ -19,6 +19,7 @@ use http::header::AUTHORIZATION;
 use http::{HeaderName, HeaderValue, header};
 use log::debug;
 use percent_encoding::percent_decode_str;
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::utils::Redact;
@@ -106,7 +107,7 @@ impl SignRequest for RequestSigner {
 
     async fn sign_request(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         req: &mut http::request::Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
@@ -114,6 +115,7 @@ impl SignRequest for RequestSigner {
         let Some(cred) = credential else {
             return Ok(());
         };
+        let provider = ctx.crypto_provider()?;
 
         let now = self.get_time();
         let required_until = self.required_valid_until_at(now, expires_in);
@@ -156,6 +158,7 @@ impl SignRequest for RequestSigner {
             EMPTY_PAYLOAD_SHA256
         };
         let (canonical_request_hash, _) = canonical_request_hash(
+            provider,
             &signing_req,
             &canonical_query,
             &signed_headers,
@@ -179,8 +182,9 @@ impl SignRequest for RequestSigner {
 
         debug!("string to sign: {}", string_to_sign);
 
-        let signing_key = generate_signing_key(&cred.secret_access_key, &date_only, &self.region)?;
-        let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes())?;
+        let signing_key =
+            generate_signing_key(provider, &cred.secret_access_key, &date_only, &self.region)?;
+        let signature = hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())?;
 
         let final_uri = if expires_in.is_some() {
             let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
@@ -352,6 +356,7 @@ fn signed_header_names(ctx: &SigningRequest, is_presign: bool) -> Vec<&str> {
 }
 
 fn canonical_request_hash(
+    provider: &dyn CryptoProvider,
     ctx: &SigningRequest,
     canonical_query: &[(String, String)],
     signed_headers: &[&str],
@@ -417,20 +422,25 @@ fn canonical_request_hash(
 
     canonical_request.push_str(payload_hash);
 
-    let hash = hex_sha256(canonical_request.as_bytes())?;
+    let hash = hex_sha256(provider, canonical_request.as_bytes())?;
 
     Ok((hash, canonical_request))
 }
 
-fn generate_signing_key(secret: &str, date: &str, region: &str) -> Result<Vec<u8>> {
+fn generate_signing_key(
+    provider: &dyn CryptoProvider,
+    secret: &str,
+    date: &str,
+    region: &str,
+) -> Result<Vec<u8>> {
     // Sign date
-    let sign_date = hmac_sha256(secret.as_bytes(), date.as_bytes())?;
+    let sign_date = hmac_sha256(provider, secret.as_bytes(), date.as_bytes())?;
     // Sign region
-    let sign_region = hmac_sha256(sign_date.as_slice(), region.as_bytes())?;
+    let sign_region = hmac_sha256(provider, sign_date.as_slice(), region.as_bytes())?;
     // Sign service
-    let sign_service = hmac_sha256(sign_region.as_slice(), "tos".as_bytes())?;
+    let sign_service = hmac_sha256(provider, sign_region.as_slice(), "tos".as_bytes())?;
     // Sign request
-    Ok(hmac_sha256(sign_service.as_slice(), "request".as_bytes())?.to_vec())
+    Ok(hmac_sha256(provider, sign_service.as_slice(), "request".as_bytes())?.to_vec())
 }
 
 #[cfg(test)]
@@ -442,7 +452,7 @@ mod tests {
 
     use super::*;
     use crate::provide_credential::StaticCredentialProvider;
-    use reqsign_core::{Context, OsEnv, Signer};
+    use reqsign_core::{OsEnv, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
 
@@ -456,7 +466,12 @@ mod tests {
             .with_time(Timestamp::parse_rfc2822("Sat, 1 Jan 2022 00:00:00 GMT")?);
         let (mut parts, _) = req.into_parts();
         signer
-            .sign_request(&Context::new(), &mut parts, Some(credential), Some(expires))
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(credential),
+                Some(expires),
+            )
             .await?;
         Ok(parts)
     }
@@ -469,7 +484,7 @@ mod tests {
         let signer = RequestSigner::new("cn-beijing")
             .with_time(Timestamp::parse_rfc2822("Sat, 1 Jan 2022 00:00:00 GMT")?);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -511,7 +526,7 @@ mod tests {
 
         let signer = RequestSigner::new("cn-beijing").with_time("2026-02-03T12:24:12Z".parse()?);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -643,6 +658,7 @@ mod tests {
         );
         let canonical_query = canonicalize_query(&signing_req, &authentication_query);
         let (_, canonical_request) = canonical_request_hash(
+            &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
             &signing_req,
             &canonical_query,
             &signed_headers,
@@ -664,7 +680,12 @@ mod tests {
             .unwrap()
             .set_sensitive(true);
         signer
-            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut header_parts,
+                Some(&credential),
+                None,
+            )
             .await?;
         assert_eq!(header_parts.uri.to_string(), original_uri);
         assert_eq!(header_parts.headers["x-custom"], "alpha   beta");
@@ -673,7 +694,7 @@ mod tests {
         let mut query_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
         signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut query_parts,
                 Some(&credential),
                 Some(Duration::from_secs(60)),
@@ -716,7 +737,7 @@ mod tests {
 
         signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut query_parts,
                 Some(&credential),
                 Some(Duration::from_secs(60)),
@@ -735,7 +756,12 @@ mod tests {
         let original_header_parts = header_parts.clone();
 
         signer
-            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut header_parts,
+                Some(&credential),
+                None,
+            )
             .await
             .expect_err("an existing authorization header must be rejected");
         assert_request_head_unchanged(&header_parts, &original_header_parts);

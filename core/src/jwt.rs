@@ -21,16 +21,24 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Serialize;
 
-use crate::crypto;
-use crate::{Error, Result};
+use crate::Error;
+use crate::Result;
+use crate::crypto::CryptoProvider;
 
 /// Encode a JWS compact JWT using an RSA private key in PKCS#8 or PKCS#1 PEM
 /// format.
 ///
 /// RS256 is RSA PKCS#1 v1.5 with SHA-256. The caller owns the JWT header and
 /// claims shape so service-specific fields such as `x5t` stay service-local.
-/// Signing is performed by the installed [`crypto::CryptoProvider`].
-pub fn encode_rs256_pem<H, C>(header: &H, claims: &C, private_key_pem: &[u8]) -> Result<String>
+/// Signing is performed by `provider`, which callers with a
+/// [`Context`](crate::Context) resolve with
+/// [`Context::crypto_provider`](crate::Context::crypto_provider).
+pub fn encode_rs256_pem<H, C>(
+    provider: &dyn CryptoProvider,
+    header: &H,
+    claims: &C,
+    private_key_pem: &[u8],
+) -> Result<String>
 where
     H: Serialize,
     C: Serialize,
@@ -39,8 +47,7 @@ where
     let encoded_claims = encode_json(claims)?;
     let signing_input = format!("{encoded_header}.{encoded_claims}");
 
-    let signature = crypto::require_default()?
-        .rsa_pkcs1v15_sha256_sign(private_key_pem, signing_input.as_bytes())?;
+    let signature = provider.rsa_pkcs1v15_sha256_sign(private_key_pem, signing_input.as_bytes())?;
 
     Ok(format!(
         "{signing_input}.{}",
@@ -60,7 +67,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::install_default;
+    use crate::Context;
     use crate::test_support::TestCryptoProvider;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use rsa::RsaPrivateKey;
@@ -137,7 +144,8 @@ mod tests {
 
     #[test]
     fn encode_rs256_pem_keeps_jws_shape_and_verifiable_signature() {
-        let _ = install_default(TestCryptoProvider);
+        let ctx = Context::new().with_crypto(TestCryptoProvider);
+        let provider = ctx.crypto_provider().expect("test provider must resolve");
         let private_key = private_key();
         let header = Header {
             alg: "RS256",
@@ -159,7 +167,7 @@ mod tests {
                 .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
                 .expect("test key must encode as PKCS#1"),
         ] {
-            let jwt = encode_rs256_pem(&header, &claims, pem.as_bytes())
+            let jwt = encode_rs256_pem(provider, &header, &claims, pem.as_bytes())
                 .expect("JWT encoding must succeed");
             verify(&header, &claims, &jwt, pem.as_bytes());
         }
@@ -167,8 +175,10 @@ mod tests {
 
     #[test]
     fn encode_rs256_pem_rejects_malformed_key_material() {
-        let _ = install_default(TestCryptoProvider);
+        let ctx = Context::new().with_crypto(TestCryptoProvider);
+        let provider = ctx.crypto_provider().expect("test provider must resolve");
         let err = encode_rs256_pem(
+            provider,
             &Header {
                 alg: "RS256",
                 typ: "JWT",

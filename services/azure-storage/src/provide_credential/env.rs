@@ -72,7 +72,7 @@ impl ProvideCredential for EnvCredentialProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqsign_core::{Context, StaticEnv};
+    use reqsign_core::StaticEnv;
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::HashMap;
@@ -84,7 +84,7 @@ mod tests {
             ("AZBLOB_ACCOUNT_KEY".to_string(), "mykey".to_string()),
         ]);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -114,7 +114,7 @@ mod tests {
             "mysastoken".to_string(),
         )]);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -135,7 +135,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_env_credential_provider_none() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
 

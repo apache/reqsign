@@ -6,18 +6,20 @@ The default credential provider checks OCI environment variables and then the
 OCI configuration file at `~/.oci/config`. The config path and profile can be
 selected with `OCI_CONFIG_FILE` and `OCI_PROFILE`.
 
-> Signing requires a process-wide `CryptoProvider`. Install one at startup
-> before constructing signers; see
+> Signing needs a `CryptoProvider` resolved through the `Context`: bind one with
+> `Context::with_crypto`, install a process-wide default, or use a facade
+> `default_context()` fallback. A bare `Context::new()` has no fallback. See
 > [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
 
 ## Quick Start
 
 ```rust,no_run
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_oracle::{DefaultCredentialProvider, RequestSigner};
 
-let context = Context::new()
+let context = Context::new().with_crypto(RustCryptoProvider::new())
     .with_file_read(TokioFileRead)
     .with_env(OsEnv);
 

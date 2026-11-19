@@ -43,7 +43,6 @@ serde_json = { workspace = true }
 serde_urlencoded = "0.7"
 
 [dev-dependencies]
-ctor = "1"
 reqsign-crypto-rustcrypto = { workspace = true }
 anyhow = { workspace = true }
 dotenvy = { workspace = true }

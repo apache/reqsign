@@ -265,7 +265,7 @@ mod tests {
             }"#,
         );
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead {
                 expected_path: token_path.to_string(),
                 content: token.as_bytes().to_vec(),

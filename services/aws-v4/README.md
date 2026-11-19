@@ -2,13 +2,15 @@
 
 AWS SigV4 signing implementation for `reqsign`.
 
-> Signing requires a process-wide `CryptoProvider`. Install one at startup
-> before constructing signers; see
+> Signing needs a `CryptoProvider` resolved through the `Context`: bind one with
+> `Context::with_crypto`, install a process-wide default, or use a facade
+> `default_context()` fallback. A bare `Context::new()` has no fallback. See
 > [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
 
 ## Quick Start
 
 ```rust,no_run
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use reqsign_aws_v4::{DefaultCredentialProvider, EMPTY_STRING_SHA256, RequestSigner};
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -16,7 +18,7 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let ctx = Context::new()
+    let ctx = Context::new().with_crypto(RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -184,6 +186,7 @@ an existing AWS credential and return the temporary credential issued by S3
 Access Grants. The result can be passed directly to the existing AWS signer.
 
 ```rust,no_run
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use std::time::Duration;
 
 use reqsign_aws_v4::{
@@ -201,7 +204,7 @@ let grant = S3AccessGrantsGrant::new(
     S3AccessGrantsPrivilege::Minimal,
 );
 let granter = Granter::new(
-    Context::new().with_http_send(ReqwestHttpSend::default()),
+    Context::new().with_crypto(RustCryptoProvider::new()).with_http_send(ReqwestHttpSend::default()),
     DefaultCredentialProvider::new(),
     S3AccessGrantsGranter::new(
         S3AccessGrantsConfig::new("111122223333", "us-east-2"),
