@@ -31,9 +31,25 @@ args = sys.argv[1:]
 root = pathlib.Path(os.environ['FAKE_AZ_STATE'])
 def option(name, default=''):
     return args[args.index(name)+1] if name in args else default
+def calls_with(prefix):
+    return [json.loads(line) for line in (root / 'calls.jsonl').read_text().splitlines()
+            if json.loads(line)[:len(prefix)] == prefix]
+def logged_in():
+    return bool(calls_with(['login']))
 with (root / 'calls.jsonl').open('a') as f:
     f.write(json.dumps(args) + '\n')
-if args[:2] == ['account', 'get-access-token']:
+if args[:1] == ['login']:
+    assert '--service-principal' in args
+    assert option('--username') == 'fake-client'
+    assert option('--tenant') == 'fake-tenant'
+    assert option('--federated-token') == 'fake-federated-token'
+elif args[:2] == ['account', 'get-access-token']:
+    expire_after = int(os.getenv('EXPIRE_DEVOPS_AUTH_AFTER', '0'))
+    expired = (expire_after and
+               len(calls_with(['account', 'get-access-token'])) > expire_after)
+    if expired and not logged_in():
+        print('AADSTS700... assertion expired', file=sys.stderr)
+        sys.exit(1)
     print('fake-devops-token')
 elif args[:3] == ['storage', 'blob', 'upload']:
     if os.getenv('FAIL_UPLOAD'): sys.exit(1)
@@ -46,6 +62,9 @@ elif args[:3] == ['storage', 'blob', 'generate-sas']:
     print('fake-read-only-token')
 elif args[:3] == ['storage', 'blob', 'delete']:
     if os.getenv('FAIL_DELETE'): sys.exit(1)
+    if os.getenv('EXPIRE_BLOB_AUTH') and not logged_in():
+        print('AADSTS700... assertion expired', file=sys.stderr)
+        sys.exit(1)
     (root / option('--name')).unlink()
 elif args[:2] == ['vm', 'create']:
     name = option('--name')
@@ -79,6 +98,13 @@ root = pathlib.Path(os.environ['FAKE_AZ_STATE'])
 def option(name, default=''):
     return args[args.index(name)+1] if name in args else default
 method = option('--request', 'GET')
+url = args[-1]
+if url.startswith('https://oidc.example.test/token'):
+    if os.getenv('FAIL_OIDC'): sys.exit(35)
+    assert 'audience=api%3A%2F%2FAzureADTokenExchange' in url
+    assert option('--header') == 'Authorization: bearer fake-oidc-request-token'
+    print(json.dumps({'value': 'fake-federated-token'}))
+    sys.exit(0)
 # Both waiting and cancellation must finish before fixture cleanup.
 assert list(root.glob('ci-probe-*'))
 with (root / 'curl-calls.jsonl').open('a') as f:
@@ -143,6 +169,10 @@ class LiveScriptTests(unittest.TestCase):
             'AZURE_DEVOPS_ORGANIZATION': 'fixture',
             'AZURE_DEVOPS_PROJECT': 'tests',
             'AZURE_DEVOPS_PIPELINE_ID': '1',
+            'AZURE_CLIENT_ID': 'fake-client',
+            'AZURE_TENANT_ID': 'fake-tenant',
+            'ACTIONS_ID_TOKEN_REQUEST_URL': 'https://oidc.example.test/token?api-version=2.0',
+            'ACTIONS_ID_TOKEN_REQUEST_TOKEN': 'fake-oidc-request-token',
             'AZURE_RUNTIME_RESOURCE_GROUP': 'fixture-rg',
             'AZURE_IMDS_IDENTITY_ID': '/fake/identity',
             'RUNNER_TEMP': str(self.root),
@@ -241,6 +271,7 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.state / 'queued.json').exists())
         self.assertFalse((self.state / 'cancelled').exists())
+        self.assertEqual([c for c in self.calls() if c[:1] == ['login']], [])
         self.assertEqual(list(self.state.glob('ci-probe-*')), [])
 
     def test_failed_pipeline_fails_job_and_cleans_probe(self):
@@ -294,6 +325,36 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         patches = [c for c in calls if c['method'] == 'PATCH']
         self.assertEqual(len(patches), 1)
         self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
+
+    def test_pipeline_cleanup_reauthenticates_after_assertion_expiry(self):
+        self.env.update(EXPIRE_DEVOPS_AUTH_AFTER='2',
+                        FAIL_PIPELINE_POLL='1')
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 22, result.stderr)
+        logins = [c for c in self.calls() if c[:1] == ['login']]
+        self.assertEqual(len(logins), 1)
+        self.assertEqual(logins[0][logins[0].index('--username') + 1], 'fake-client')
+        self.assertTrue((self.state / 'cancelled').exists())
+        self.assertNotIn('fake-federated-token', result.stdout + result.stderr)
+        self.assertNotIn('fake-devops-token', result.stdout + result.stderr)
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_blob_cleanup_reauthenticates_after_assertion_expiry(self):
+        self.env['EXPIRE_BLOB_AUTH'] = '1'
+        result = self.run_script('with-probe.sh', 'true')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len([c for c in self.calls() if c[:1] == ['login']]), 1)
+        self.assertEqual(self.resources(), [])
+        self.assertNotIn('fake-federated-token', result.stdout + result.stderr)
+
+    def test_failed_reauth_keeps_original_exit_and_cleans_probe(self):
+        self.env.update(EXPIRE_DEVOPS_AUTH_AFTER='2',
+                        FAIL_PIPELINE_POLL='1', FAIL_OIDC='1')
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 22, result.stderr)
+        self.assertFalse((self.state / 'cancelled').exists())
+        self.assertEqual([c for c in self.calls() if c[:1] == ['login']], [])
+        self.assertIn('Failed to cancel', result.stderr)
         self.assertEqual(list(self.state.glob('ci-probe-*')), [])
 
 
