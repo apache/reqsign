@@ -32,8 +32,11 @@ http = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
 reqsign-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
+bytes = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
