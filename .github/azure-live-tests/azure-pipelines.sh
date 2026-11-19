@@ -21,17 +21,41 @@ set -euo pipefail
 run_id=""
 completed=false
 
+# A status read is idempotent. Retry the observed TLS send reset (curl 35)
+# within a poll so one transient reset does not fail the job.
+status_read_attempts=3
+status_read_retry_delay=1
+
+# Called by the EXIT handler and the polling loop.
+read_run_status() {
+  local access_token=$1
+  local attempt status response
+  for (( attempt = 1; attempt <= status_read_attempts; attempt++ )); do
+    if response=$(curl --fail --silent --show-error \
+      --header "Authorization: Bearer $access_token" \
+      "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs/${run_id}?api-version=7.1"); then
+      printf '%s\n' "$response"
+      return 0
+    else
+      status=$?
+    fi
+    if (( status != 35 || attempt == status_read_attempts )); then
+      return "$status"
+    fi
+    sleep "$status_read_retry_delay"
+  done
+}
+
 # Called by the EXIT handler.
 # shellcheck disable=SC2329
 cancel_unfinished_run() {
+  local response
   access_token=$(az account get-access-token \
     --resource https://app.vssps.visualstudio.com/ \
     --query accessToken \
     --output tsv) || return
-  state=$(curl --fail-with-body --silent --show-error \
-    --header "Authorization: Bearer $access_token" \
-    "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs/${run_id}?api-version=7.1" |
-    jq --raw-output '.state') || return
+  response=$(read_run_status "$access_token") || return $?
+  state=$(jq --raw-output '.state' <<< "$response") || return
   if [[ "$state" != "completed" ]]; then
     curl --fail-with-body --silent --show-error \
       --request PATCH \
@@ -107,9 +131,7 @@ while (( SECONDS < deadline )); do
     --resource https://app.vssps.visualstudio.com/ \
     --query accessToken \
     --output tsv)
-  response=$(curl --fail-with-body --silent --show-error \
-    --header "Authorization: Bearer $access_token" \
-    "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs/${run_id}?api-version=7.1")
+  response=$(read_run_status "$access_token") || exit $?
   state=$(jq --raw-output '.state' <<< "$response")
   result=$(jq --raw-output '.result // empty' <<< "$response")
   if [[ "$state" == "completed" ]]; then

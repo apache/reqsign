@@ -81,6 +81,8 @@ def option(name, default=''):
 method = option('--request', 'GET')
 # Both waiting and cancellation must finish before fixture cleanup.
 assert list(root.glob('ci-probe-*'))
+with (root / 'curl-calls.jsonl').open('a') as f:
+    f.write(json.dumps({'method': method, 'url': args[-1]}) + '\n')
 if method == 'POST':
     request = json.loads(option('--data'))
     params = request['templateParameters']
@@ -95,14 +97,23 @@ if method == 'POST':
 elif method == 'PATCH':
     assert json.loads(option('--data')) == {'status': 'cancelling'}
     (root / 'cancelled').touch()
-elif os.getenv('FAIL_PIPELINE_POLL'):
-    if not (root / 'poll-failed').exists():
-        (root / 'poll-failed').touch()
-        sys.exit(22)
-    print(json.dumps({'state': 'inProgress'}))
 else:
-    print(json.dumps({'state': 'completed',
-                      'result': os.getenv('PIPELINE_RESULT', 'succeeded')}))
+    counter = root / 'get-count'
+    count = int(counter.read_text()) + 1 if counter.exists() else 1
+    counter.write_text(str(count))
+    if os.getenv('RESET_PIPELINE_POLL'):
+        sys.exit(35)
+    if os.getenv('RESET_PIPELINE_POLL_ONCE') and count == 1:
+        sys.exit(35)
+    if os.getenv('RESET_CLEANUP_ONCE') and count == 2:
+        sys.exit(35)
+    if os.getenv('FAIL_PIPELINE_POLL'):
+        if count == 1:
+            sys.exit(22)
+        print(json.dumps({'state': 'inProgress'}))
+    else:
+        print(json.dumps({'state': 'completed',
+                          'result': os.getenv('PIPELINE_RESULT', 'succeeded')}))
 """
 
 
@@ -148,8 +159,13 @@ class LiveScriptTests(unittest.TestCase):
         return [json.loads(line) for line in
                 (self.state / 'calls.jsonl').read_text().splitlines()]
 
+    def curl_calls(self):
+        return [json.loads(line) for line in
+                (self.state / 'curl-calls.jsonl').read_text().splitlines()]
+
     def resources(self):
-        return [p.name for p in self.state.iterdir() if p.name != 'calls.jsonl']
+        return [p.name for p in self.state.iterdir()
+                if p.name not in {'calls.jsonl', 'curl-calls.jsonl', 'get-count'}]
 
     def test_probe_body_sas_and_cleanup(self):
         self.env.update(AZURE_STORAGE_AUTH_MODE='key',
@@ -239,6 +255,45 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
         self.assertEqual(result.returncode, 22, result.stderr)
         self.assertTrue((self.state / 'cancelled').exists())
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_pipeline_status_reset_is_retried(self):
+        self.env['RESET_PIPELINE_POLL_ONCE'] = '1'
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.curl_calls()
+        gets = [c for c in calls if c['method'] == 'GET']
+        self.assertEqual(len(gets), 2)
+        self.assertEqual(len([c for c in calls if c['method'] == 'POST']), 1)
+        self.assertEqual([c for c in calls if c['method'] == 'PATCH'], [])
+        self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
+        self.assertNotIn('fake-devops-token', result.stdout + result.stderr)
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_pipeline_status_reset_exhausts_retries(self):
+        self.env['RESET_PIPELINE_POLL'] = '1'
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 35, result.stderr)
+        calls = self.curl_calls()
+        gets = [c for c in calls if c['method'] == 'GET']
+        self.assertEqual(len(gets), 6)
+        self.assertEqual(len([c for c in calls if c['method'] == 'POST']), 1)
+        self.assertEqual([c for c in calls if c['method'] == 'PATCH'], [])
+        self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
+        self.assertNotIn('fake-devops-token', result.stdout + result.stderr)
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_cleanup_status_reset_is_retried_and_cancels_once(self):
+        self.env.update(FAIL_PIPELINE_POLL='1', RESET_CLEANUP_ONCE='1')
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 22, result.stderr)
+        calls = self.curl_calls()
+        gets = [c for c in calls if c['method'] == 'GET']
+        self.assertEqual(len(gets), 3)
+        self.assertEqual(len([c for c in calls if c['method'] == 'POST']), 1)
+        patches = [c for c in calls if c['method'] == 'PATCH']
+        self.assertEqual(len(patches), 1)
+        self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
         self.assertEqual(list(self.state.glob('ci-probe-*')), [])
 
 
