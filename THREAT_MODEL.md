@@ -280,6 +280,12 @@ select a different identity. This policy belongs to the AWS default provider;
 caller-constructed `ProvideCredentialChain` values retain their own error
 policy. Disabling the SSO slot prevents it from participating.
 
+A selected AWS role profile resolves only its `source_profile` graph and the
+static or SSO credentials configured for that graph. Missing source profiles,
+cycles, conflicting `credential_source`, and an SSO source whose slot was
+removed fail without selecting a later provider. The STS requests use only the
+regional endpoint implied by the selected signing region.
+
 AWS shared configuration and region discovery are separate from credential
 acquisition. Loading `SharedConfig` does not execute credential processes or
 contact the network. IMDSv2 region fallback requires explicit opt-in and applies

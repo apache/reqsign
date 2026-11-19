@@ -44,11 +44,21 @@ steps:
           ;;
       esac
 
-      git fetch --no-tags --depth=1 \
-        https://github.com/apache/reqsign.git \
-        "$GITHUB_REF"
+      # Fetch the commit the GitHub workflow ran instead of the ref it named.
+      # A ref can advance while the run waits for this agent, and a merge ref
+      # is replaced by the next push, so fetching the ref alone would fail on
+      # the mismatch or check out code that never triggered the probe.
+      repository=https://github.com/apache/reqsign.git
+      if ! git fetch --no-tags --depth=1 "$repository" "$GITHUB_SHA"; then
+        # Keep fetching the ref as a fallback; the check below still requires
+        # the commit to be the one that triggered this run.
+        git fetch --no-tags --depth=1 "$repository" "$GITHUB_REF"
+      fi
       fetched_sha=$(git rev-parse 'FETCH_HEAD^{commit}')
-      test "$fetched_sha" = "$GITHUB_SHA"
+      if [[ "$fetched_sha" != "$GITHUB_SHA" ]]; then
+        echo "Fetched $fetched_sha instead of the triggering commit $GITHUB_SHA" >&2
+        exit 1
+      fi
       git checkout --detach "$fetched_sha"
     displayName: Check out the GitHub Actions revision
     env:

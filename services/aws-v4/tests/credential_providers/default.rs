@@ -36,3 +36,105 @@ async fn test_default_credential_provider_live() {
         .expect("DefaultCredentialProvider should return credentials");
     assert_credentials_work(&ctx, &credential).await;
 }
+
+#[tokio::test]
+async fn test_default_provider_role_chain_is_consumed_by_signer() {
+    use bytes::Bytes;
+    use http::{Request, Response, StatusCode, header};
+    use reqsign_aws_v4::RequestSigner;
+    use reqsign_core::{FileRead, HttpSend, Signer, StaticEnv};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    #[derive(Debug, Default)]
+    struct Files(Mutex<HashMap<String, Vec<u8>>>);
+
+    impl FileRead for Files {
+        async fn file_read(&self, path: &str) -> reqsign_core::Result<Vec<u8>> {
+            self.0
+                .lock()
+                .expect("lock poisoned")
+                .get(path)
+                .cloned()
+                .ok_or_else(|| reqsign_core::Error::unexpected("file not found"))
+        }
+    }
+
+    #[derive(Debug)]
+    struct Http {
+        request: Mutex<Option<Request<Bytes>>>,
+    }
+
+    impl HttpSend for Http {
+        async fn http_send(
+            &self,
+            request: Request<Bytes>,
+        ) -> reqsign_core::Result<Response<Bytes>> {
+            *self.request.lock().expect("lock poisoned") = Some(request);
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(Bytes::from_static(
+                    b"<AssumeRoleResponse><AssumeRoleResult><Credentials>\
+                      <AccessKeyId>ASIAOPERATOR0000001</AccessKeyId>\
+                      <SecretAccessKey>operator-secret</SecretAccessKey>\
+                      <SessionToken>operator-token</SessionToken>\
+                      <Expiration>2099-11-09T13:34:41Z</Expiration>\
+                      </Credentials></AssumeRoleResult></AssumeRoleResponse>",
+                ))
+                .expect("response must build"))
+        }
+    }
+
+    let files = Files::default();
+    files.0.lock().expect("lock poisoned").insert(
+        "/config".to_owned(),
+        b"[profile operator]\n\
+          role_arn = arn:aws:iam::111122223333:role/Operator\n\
+          source_profile = static-source\n\
+          role_session_name = operator-session\n\
+          region = us-east-1\n\
+          \n\
+          [profile static-source]\n\
+          aws_access_key_id = ASIASOURCE0000000001\n\
+          aws_secret_access_key = source-secret\n"
+            .to_vec(),
+    );
+    let http = Http {
+        request: Mutex::new(None),
+    };
+    let ctx = crate::common::test_context()
+        .with_file_read(files)
+        .with_http_send(http)
+        .with_env(StaticEnv {
+            home_dir: Some("/home".into()),
+            envs: HashMap::from([
+                ("AWS_CONFIG_FILE".to_owned(), "/config".to_owned()),
+                (
+                    "AWS_SHARED_CREDENTIALS_FILE".to_owned(),
+                    "/credentials".to_owned(),
+                ),
+                ("AWS_PROFILE".to_owned(), "operator".to_owned()),
+            ]),
+        });
+    let signer = Signer::new(
+        ctx,
+        DefaultCredentialProvider::new(),
+        RequestSigner::new("s3", "us-east-1"),
+    );
+    let mut request = http::Request::get("https://bucket.s3.us-east-1.amazonaws.com/object")
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+    signer
+        .sign(&mut request, None)
+        .await
+        .expect("signer must consume the role-chain credential");
+
+    let authorization = request.headers[header::AUTHORIZATION]
+        .to_str()
+        .expect("authorization must be text");
+    assert!(authorization.contains("Credential=ASIAOPERATOR0000001/"));
+    assert_eq!(request.headers["x-amz-security-token"], "operator-token");
+}
