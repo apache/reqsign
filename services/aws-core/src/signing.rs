@@ -26,7 +26,7 @@ use reqsign_core::{Result, SigningRequest};
 use crate::Credential;
 use crate::constants::{
     AWS_QUERY_ENCODE_SET, AWS_URI_ENCODE_SET, X_AMZ_CONTENT_SHA_256, X_AMZ_DATE,
-    X_AMZ_S3_SESSION_TOKEN, X_AMZ_SECURITY_TOKEN,
+    X_AMZ_SECURITY_TOKEN,
 };
 
 /// Build the canonical request shared by AWS SigV4-family algorithms.
@@ -95,20 +95,25 @@ pub fn canonical_request_string(
 }
 
 /// Add headers shared by AWS SigV4-family algorithms.
+///
+/// Session tokens always use the standard AWS `x-amz-security-token` header.
+/// Service-specific representations, such as the S3 Express CreateSession
+/// token, are selected by the signing service configuration rather than
+/// inferred from the request authority.
 pub fn canonicalize_headers(
     request: &mut SigningRequest,
     credential: &Credential,
     expires_in: Option<Duration>,
     now: Timestamp,
 ) -> Result<()> {
-    canonicalize_headers_inner(request, credential, expires_in, now, false)
+    canonicalize_headers_inner(request, credential, expires_in, now, X_AMZ_SECURITY_TOKEN)
 }
 
 /// Add SigV4 headers while always using the standard AWS session-token header.
 ///
-/// S3 Express is the only supported AWS flow that uses
-/// `x-amz-s3session-token`. Operations whose endpoint is configurable must not
-/// infer that service semantic from an arbitrary hostname.
+/// This is the explicit standard-token entry point for shared callers. S3
+/// Express callers that need the CreateSession representation select it from
+/// their signing service configuration.
 #[doc(hidden)]
 pub fn canonicalize_headers_with_standard_session_token(
     request: &mut SigningRequest,
@@ -116,7 +121,7 @@ pub fn canonicalize_headers_with_standard_session_token(
     expires_in: Option<Duration>,
     now: Timestamp,
 ) -> Result<()> {
-    canonicalize_headers_inner(request, credential, expires_in, now, true)
+    canonicalize_headers_inner(request, credential, expires_in, now, X_AMZ_SECURITY_TOKEN)
 }
 
 fn canonicalize_headers_inner(
@@ -124,7 +129,7 @@ fn canonicalize_headers_inner(
     credential: &Credential,
     expires_in: Option<Duration>,
     now: Timestamp,
-    force_standard_session_token: bool,
+    session_token_header: &'static str,
 ) -> Result<()> {
     if request.headers.get(header::HOST).is_none() {
         request.headers.insert(
@@ -161,14 +166,7 @@ fn canonicalize_headers_inner(
         })?;
         value.set_sensitive(true);
 
-        let is_s3_express = !force_standard_session_token
-            && (request.authority.as_str().contains("s3express")
-                || request.authority.as_str().contains("--x-s3"));
-        if is_s3_express {
-            request.headers.insert(X_AMZ_S3_SESSION_TOKEN, value);
-        } else {
-            request.headers.insert(X_AMZ_SECURITY_TOKEN, value);
-        }
+        request.headers.insert(session_token_header, value);
     }
 
     Ok(())
