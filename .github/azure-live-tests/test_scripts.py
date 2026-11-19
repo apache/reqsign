@@ -78,6 +78,16 @@ args = sys.argv[1:]
 root = pathlib.Path(os.environ['FAKE_AZ_STATE'])
 def option(name, default=''):
     return args[args.index(name)+1] if name in args else default
+def respond(body, code='200'):
+    output = option('--output')
+    if output:
+        pathlib.Path(output).write_text(body)
+    write_out = option('--write-out')
+    if write_out:
+        assert write_out == '%{http_code}', write_out
+        print(code)
+    else:
+        print(body)
 method = option('--request', 'GET')
 # Both waiting and cancellation must finish before fixture cleanup.
 assert list(root.glob('ci-probe-*'))
@@ -107,13 +117,22 @@ else:
         sys.exit(35)
     if os.getenv('RESET_CLEANUP_ONCE') and count == 2:
         sys.exit(35)
+    if os.getenv('HTTP_503_PIPELINE_POLL'):
+        respond('sensitive-503-response-body', '503')
+        sys.exit(22)
+    if os.getenv('HTTP_503_PIPELINE_POLL_ONCE') and count == 1:
+        respond('sensitive-503-response-body', '503')
+        sys.exit(22)
+    if os.getenv('HTTP_403_PIPELINE_POLL'):
+        respond('sensitive-403-response-body', '403')
+        sys.exit(22)
     if os.getenv('FAIL_PIPELINE_POLL'):
         if count == 1:
             sys.exit(22)
-        print(json.dumps({'state': 'inProgress'}))
+        respond(json.dumps({'state': 'inProgress'}))
     else:
-        print(json.dumps({'state': 'completed',
-                          'result': os.getenv('PIPELINE_RESULT', 'succeeded')}))
+        respond(json.dumps({'state': 'completed',
+                            'result': os.getenv('PIPELINE_RESULT', 'succeeded')}))
 """
 
 
@@ -294,6 +313,48 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         patches = [c for c in calls if c['method'] == 'PATCH']
         self.assertEqual(len(patches), 1)
         self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_pipeline_status_503_is_retried(self):
+        self.env['HTTP_503_PIPELINE_POLL_ONCE'] = '1'
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.curl_calls()
+        gets = [c for c in calls if c['method'] == 'GET']
+        self.assertEqual(len(gets), 2)
+        self.assertEqual(len([c for c in calls if c['method'] == 'POST']), 1)
+        self.assertEqual([c for c in calls if c['method'] == 'PATCH'], [])
+        self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
+        self.assertNotIn('sensitive-503-response-body', result.stdout + result.stderr)
+        self.assertNotIn('fake-devops-token', result.stdout + result.stderr)
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_pipeline_status_503_exhausts_retries(self):
+        self.env['HTTP_503_PIPELINE_POLL'] = '1'
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 22, result.stderr)
+        calls = self.curl_calls()
+        gets = [c for c in calls if c['method'] == 'GET']
+        self.assertEqual(len(gets), 6)
+        self.assertEqual(len([c for c in calls if c['method'] == 'POST']), 1)
+        self.assertEqual([c for c in calls if c['method'] == 'PATCH'], [])
+        self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
+        self.assertNotIn('sensitive-503-response-body', result.stdout + result.stderr)
+        self.assertNotIn('fake-devops-token', result.stdout + result.stderr)
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_permanent_pipeline_status_error_is_not_retried(self):
+        self.env['HTTP_403_PIPELINE_POLL'] = '1'
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 22, result.stderr)
+        calls = self.curl_calls()
+        gets = [c for c in calls if c['method'] == 'GET']
+        self.assertEqual(len(gets), 2)
+        self.assertEqual(len([c for c in calls if c['method'] == 'POST']), 1)
+        self.assertEqual([c for c in calls if c['method'] == 'PATCH'], [])
+        self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
+        self.assertNotIn('sensitive-403-response-body', result.stdout + result.stderr)
+        self.assertNotIn('fake-devops-token', result.stdout + result.stderr)
         self.assertEqual(list(self.state.glob('ci-probe-*')), [])
 
 

@@ -21,26 +21,39 @@ set -euo pipefail
 run_id=""
 completed=false
 
-# A status read is idempotent. Retry the observed TLS send reset (curl 35)
-# within a poll so one transient reset does not fail the job.
+# A status read is idempotent. Retry the observed TLS send reset (curl 35) and
+# HTTP 503 (curl 22) within a poll so one transient failure does not fail the
+# job. Other HTTP failures are permanent for this job.
 status_read_attempts=3
 status_read_retry_delay=1
+status_response_file="$RUNNER_TEMP/azure-pipelines-status-response.json"
 
 # Called by the EXIT handler and the polling loop.
 read_run_status() {
   local access_token=$1
-  local attempt status response
+  local attempt curl_status http_status response retryable
   for (( attempt = 1; attempt <= status_read_attempts; attempt++ )); do
-    if response=$(curl --fail --silent --show-error \
+    if http_status=$(curl --fail --silent --show-error \
+      --output "$status_response_file" \
+      --write-out '%{http_code}' \
       --header "Authorization: Bearer $access_token" \
       "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs/${run_id}?api-version=7.1"); then
+      response=$(<"$status_response_file")
+      rm -f "$status_response_file"
       printf '%s\n' "$response"
       return 0
     else
-      status=$?
+      curl_status=$?
     fi
-    if (( status != 35 || attempt == status_read_attempts )); then
-      return "$status"
+    rm -f "$status_response_file"
+    retryable=false
+    if (( curl_status == 35 )); then
+      retryable=true
+    elif (( curl_status == 22 )) && [[ "$http_status" == "503" ]]; then
+      retryable=true
+    fi
+    if [[ "$retryable" != true ]] || (( attempt == status_read_attempts )); then
+      return "$curl_status"
     fi
     sleep "$status_read_retry_delay"
   done
