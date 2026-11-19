@@ -70,25 +70,24 @@ impl SigningCredential for Credential {
 impl Credential {
     /// Look up an endpoint URL from the service catalog.
     ///
-    /// Searches for a service matching `service_type` and returns the URL
-    /// of the first endpoint matching `interface` (e.g. "public", "internal", "admin").
+    /// Searches all services matching `service_type` and returns the URL of the
+    /// first endpoint matching `interface` (e.g. "public", "internal", "admin").
+    /// Service and endpoint order are preserved. Entries without a matching
+    /// endpoint are skipped, including entries with an empty endpoint list.
     pub fn endpoint(&self, service_type: &str, interface: &str) -> Option<&str> {
         self.service_catalog
             .iter()
-            .find(|entry| entry.service_type == service_type)
-            .and_then(|entry| {
-                entry
-                    .endpoints
-                    .iter()
-                    .find(|ep| ep.interface == interface)
-                    .map(|ep| ep.url.as_str())
-            })
+            .filter(|entry| entry.service_type == service_type)
+            .flat_map(|entry| &entry.endpoints)
+            .find(|ep| ep.interface == interface)
+            .map(|ep| ep.url.as_str())
     }
 
     /// Look up an endpoint URL from the service catalog, filtered by region.
     ///
     /// Like [`endpoint()`](Self::endpoint), but only matches endpoints in the
-    /// specified region.
+    /// specified region. All matching service entries are searched in catalog
+    /// order until an endpoint matches both the interface and region.
     ///
     /// Endpoints are matched by [`Endpoint::region_name`], the same region
     /// resolution that keystoneauth1 applies to a service catalog.
@@ -100,14 +99,10 @@ impl Credential {
     ) -> Option<&str> {
         self.service_catalog
             .iter()
-            .find(|entry| entry.service_type == service_type)
-            .and_then(|entry| {
-                entry
-                    .endpoints
-                    .iter()
-                    .find(|ep| ep.interface == interface && ep.region_name() == Some(region))
-                    .map(|ep| ep.url.as_str())
-            })
+            .filter(|entry| entry.service_type == service_type)
+            .flat_map(|entry| &entry.endpoints)
+            .find(|ep| ep.interface == interface && ep.region_name() == Some(region))
+            .map(|ep| ep.url.as_str())
     }
 }
 

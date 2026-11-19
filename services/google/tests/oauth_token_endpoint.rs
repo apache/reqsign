@@ -27,11 +27,10 @@ use reqsign_google::{
     ServerSideCredentialAccessBoundaryGranter, ServiceAccount,
     ServiceAccountTokenCredentialProvider, StaticCredentialProvider,
 };
-use rsa::RsaPrivateKey;
-use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-use rsa::rand_core::OsRng;
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+const RSA_PKCS8_PEM: &str = include_str!("fixtures/rsa-2048-pkcs8.pem");
 
 const DEFAULT_URI: &str = "https://oauth2.googleapis.com/token";
 const CUSTOM_URI: &str = "https://trusted.example/token?tenant=uri-secret";
@@ -63,15 +62,7 @@ impl HttpSend for MockHttp {
 fn service_account() -> ServiceAccount {
     static KEY: OnceLock<String> = OnceLock::new();
     ServiceAccount {
-        private_key: KEY
-            .get_or_init(|| {
-                RsaPrivateKey::new(&mut OsRng, 1024)
-                    .unwrap()
-                    .to_pkcs8_pem(LineEnding::LF)
-                    .unwrap()
-                    .to_string()
-            })
-            .clone(),
+        private_key: KEY.get_or_init(|| RSA_PKCS8_PEM.to_string()).clone(),
         client_email: "test@example.iam.gserviceaccount.com".into(),
     }
 }

@@ -31,9 +31,54 @@ use std::time::Duration;
 
 const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 
-/// RequestSigner that implement AWS SigV4.
+/// RequestSigner that implements AWS SigV4.
 ///
 /// - [Signature Version 4 signing process](https://docs.aws.amazon.com/general/latest/gr/signature-version-4.html)
+///
+/// # Payload signing
+///
+/// The signer receives an `http::request::Parts` and does not read the body.
+/// If `x-amz-content-sha256` is present, its value is preserved and used as the
+/// SigV4 payload hash. Otherwise, header signing adds
+/// `x-amz-content-sha256: UNSIGNED-PAYLOAD`, including for an empty body.
+/// Presigning does not add the header, but canonicalizes the missing header as
+/// `UNSIGNED-PAYLOAD`.
+///
+/// `UNSIGNED-PAYLOAD` is an Amazon S3 payload mode, and the signer uses the
+/// same default for every service name. Other AWS services define their own
+/// payload requirements, so check the [AWS SigV4 documentation] when an
+/// endpoint requires a signed payload.
+///
+/// To sign the actual payload, hash the exact bytes that will be sent and set
+/// the header before signing. Use [`EMPTY_STRING_SHA256`] for an empty body and
+/// [`reqsign_core::hash::hex_sha256`] for non-empty bytes:
+///
+/// ```
+/// use reqsign_aws_v4::EMPTY_STRING_SHA256;
+/// use reqsign_core::hash::hex_sha256;
+///
+/// let body: &[u8] = b"Hello, World!";
+/// let payload_hash = if body.is_empty() {
+///     EMPTY_STRING_SHA256.to_string()
+/// } else {
+///     hex_sha256(body)
+/// };
+///
+/// let request = http::Request::put("https://s3.amazonaws.com/mybucket/hello.txt")
+///     .header("x-amz-content-sha256", payload_hash)
+///     .body(body)
+///     .expect("request must be valid");
+/// # let _ = request;
+/// ```
+///
+/// If the header is set before presigning, it is included in
+/// `X-Amz-SignedHeaders`, and the caller must send the same header with the
+/// presigned request. Hash the bytes after any content encoding or compression,
+/// and do not change the payload after signing. Chunked or streaming payload
+/// signing is not implemented.
+///
+/// [AWS SigV4 documentation]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html
+/// [`EMPTY_STRING_SHA256`]: crate::EMPTY_STRING_SHA256
 #[derive(Debug)]
 pub struct RequestSigner {
     service: String,

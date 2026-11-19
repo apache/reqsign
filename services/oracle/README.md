@@ -28,6 +28,38 @@ The environment provider reads `OCI_USER`, `OCI_TENANCY`, `OCI_KEY_FILE`, and
 `OCI_FINGERPRINT`. Use `StaticCredentialProvider` or
 `DefaultCredentialProvider::builder()` for explicit configuration.
 
+## Configuration Profiles
+
+Select a named profile with `OCI_PROFILE`. Missing credential fields in an existing
+profile inherit from `[DEFAULT]`, following the OCI
+[profiles and inheritance](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/sdkconfig.htm)
+convention:
+
+```ini
+[DEFAULT]
+tenancy=ocid1.tenancy.oc1..example
+user=ocid1.user.oc1..default
+fingerprint=default-fingerprint
+key_file=~/.oci/default.pem
+
+[ADMIN]
+user=ocid1.user.oc1..admin
+fingerprint=admin-fingerprint
+key_file=~/.oci/admin.pem
+```
+
+With `OCI_PROFILE=ADMIN`, the provider uses the admin user and key and inherits
+the default tenancy. Explicit values, including empty values, override defaults.
+A missing profile or a profile still missing required fields yields no credential;
+the provider does not substitute another named profile.
+
+Configuration values are literal. Write Windows paths such as
+`C:\Users\example\.oci\api_key.pem` directly, without doubling backslashes or
+adding surrounding quotes. If a config previously relied on INI escape processing,
+replace the escaped value with the literal path. Home expansion of `~/` happens
+after resolving the selected profile. Config files are reread when the provider
+is invoked, so inherited values participate in credential refresh as well.
+
 ## Private Key Formats
 
 The file selected by `OCI_KEY_FILE` or the OCI configuration's `key_file` entry

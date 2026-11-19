@@ -26,7 +26,7 @@ use reqsign_core::{Context, SignRequest, SigningCredential, SigningRequest};
 use rsa::pkcs1v15::SigningKey;
 use rsa::sha2::Sha256;
 use rsa::signature::{SignatureEncoding, Signer};
-use rsa::{RsaPrivateKey, pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey};
+use rsa::{PrivateKey, pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey};
 use std::fmt::Write;
 use std::time::Duration;
 
@@ -95,8 +95,8 @@ impl SignRequest for RequestSigner {
         // Read private key from file
         let private_key_content = ctx.file_read_as_string(&cred.key_file).await?;
         // Older OpenSSL versions produce PKCS#1 PEM keys with `openssl genrsa`.
-        let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_content)
-            .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&private_key_content))
+        let private_key = PrivateKey::from_pkcs8_pem(&private_key_content)
+            .or_else(|_| PrivateKey::from_pkcs1_pem(&private_key_content))
             .map_err(|e| {
                 reqsign_core::Error::credential_invalid(format!("Failed to read private key: {e}"))
             })?;
@@ -154,8 +154,8 @@ fn build_string_to_sign(
 mod tests {
     use super::*;
     use reqsign_core::FileRead;
-    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-    use rsa::rand_core::OsRng;
+
+    const RSA_PKCS8_PEM: &str = include_str!("../tests/fixtures/rsa-2048-pkcs8.pem");
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -193,13 +193,7 @@ mod tests {
             string_to_sign.contains(&format!("(request-target): get /object%2Fname?{RAW_QUERY}"))
         );
 
-        let private_key = RsaPrivateKey::new(&mut OsRng, 1024).expect("key generation must work");
-        let private_key = private_key
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("private key must encode")
-            .as_bytes()
-            .to_vec();
-        let ctx = Context::new().with_file_read(StaticFileRead(private_key));
+        let ctx = Context::new().with_file_read(StaticFileRead(RSA_PKCS8_PEM.as_bytes().to_vec()));
         let mut parts = http::Request::get(&original_uri).body(())?.into_parts().0;
 
         RequestSigner::new()

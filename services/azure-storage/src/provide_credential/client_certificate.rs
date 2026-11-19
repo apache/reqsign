@@ -26,8 +26,6 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
-use rsa::RsaPrivateKey;
-use rsa::pkcs8::DecodePrivateKey;
 use serde::Serialize;
 use sha1::{Digest, Sha1};
 
@@ -99,7 +97,7 @@ impl ClientCertificateCredentialProvider {
         &self,
         ctx: &Context,
         path: &str,
-    ) -> Result<(Vec<u8>, RsaPrivateKey), reqsign_core::Error> {
+    ) -> Result<(Vec<u8>, Vec<u8>), reqsign_core::Error> {
         let cert_data = ctx.file_read(path).await.map_err(|e| {
             reqsign_core::Error::credential_invalid(format!("Failed to read certificate file: {e}"))
         })?;
@@ -140,14 +138,7 @@ impl ClientCertificateCredentialProvider {
             reqsign_core::Error::credential_invalid("PEM does not contain a private key")
         })?;
 
-        // Parse private key
-        let private_key = RsaPrivateKey::from_pkcs8_pem(&private_key_pem).map_err(|e| {
-            reqsign_core::Error::credential_invalid(format!(
-                "Failed to parse private key from PEM: {e}"
-            ))
-        })?;
-
-        Ok((cert_der, private_key))
+        Ok((cert_der, private_key_pem.into_bytes()))
     }
 
     /// Calculate certificate thumbprint (x5t)
@@ -163,7 +154,7 @@ impl ClientCertificateCredentialProvider {
         tenant_id: &str,
         client_id: &str,
         cert_der: &[u8],
-        private_key: &RsaPrivateKey,
+        private_key_pem: &[u8],
     ) -> Result<String, reqsign_core::Error> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -172,11 +163,30 @@ impl ClientCertificateCredentialProvider {
             })?
             .as_secs();
 
+        self.create_client_assertion_at(
+            tenant_id,
+            client_id,
+            cert_der,
+            private_key_pem,
+            now,
+            generate_jti(now),
+        )
+    }
+
+    fn create_client_assertion_at(
+        &self,
+        tenant_id: &str,
+        client_id: &str,
+        cert_der: &[u8],
+        private_key_pem: &[u8],
+        now: u64,
+        jti: String,
+    ) -> Result<String, reqsign_core::Error> {
         let claims = ClientAssertionClaims {
             aud: format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"),
             exp: now + 600, // 10 minutes
             iss: client_id.to_string(),
-            jti: generate_jti(now),
+            jti,
             nbf: now,
             sub: client_id.to_string(),
         };
@@ -187,7 +197,7 @@ impl ClientCertificateCredentialProvider {
             x5t: self.calculate_thumbprint(cert_der),
         };
 
-        reqsign_core::jwt::encode_rs256(&header, &claims, private_key)
+        reqsign_core::jwt::encode_rs256_pem(&header, &claims, private_key_pem)
     }
 
     /// Exchange client assertion for access token
@@ -289,11 +299,11 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
             };
 
         // Load certificate and private key
-        let (cert_der, private_key) = self.load_certificate(ctx, &certificate_path).await?;
+        let (cert_der, private_key_pem) = self.load_certificate(ctx, &certificate_path).await?;
 
         // Create client assertion
         let client_assertion =
-            self.create_client_assertion(&tenant_id, &client_id, &cert_der, &private_key)?;
+            self.create_client_assertion(&tenant_id, &client_id, &cert_der, &private_key_pem)?;
 
         // Exchange for access token
         let token_response = self
@@ -313,6 +323,44 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqsign_core::FileRead;
+
+    const CLIENT_CERTIFICATE_PEM: &str =
+        include_str!("../../tests/fixtures/client-certificate.pem");
+    // Fixed RS256 output for the synthetic fixture and fixed timestamp/JTI below.
+    // This protects the certificate x5t, claims shape and PKCS#1 v1.5 signature.
+    const EXPECTED_CLIENT_ASSERTION: &str = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsIng1dCI6IjlsNlFzcGRYRVZ5WXI5VXI1Z1F5RkhoRnBKTSJ9.eyJhdWQiOiJodHRwczovL2xvZ2luLm1pY3Jvc29mdG9ubGluZS5jb20vdGVuYW50L29hdXRoMi92Mi4wL3Rva2VuIiwiZXhwIjoxNzAwMDAwNjAwLCJpc3MiOiJjbGllbnQiLCJqdGkiOiJmaXhlZC1qdGkiLCJuYmYiOjE3MDAwMDAwMDAsInN1YiI6ImNsaWVudCJ9.VovaDD9_dOI8PyYGC3HwefKgk9LhnZkVCkv8OegzWcuvhcm2oFUP2IipkS691hmjrtNTTORu8e8ow0M3iD1_73-ilJKvbwjNGf64EDY33b0aUG1xEVDqgeqdVa9rqltGeiuSAIBjRg01N_cRiezf6LMMWNtpbymKFxZWg0icqn08FYkhb1fvKCNaQW_fxSzfwNJv0wdM6OT9no12nuoIL8S0iCf-a7Piv14U75ECIADUvC3ssySlDxIs53tBtCOOc1sv6A59QEaR4z6MczFmVFFg8Kh1D8H51K5S9wWCCKbzZn1c_1Q-iRfnr5ZFlHIRDTYsAEI24E4aK-cLUQlF7Q";
+
+    #[derive(Debug)]
+    struct FixtureFileRead;
+
+    impl FileRead for FixtureFileRead {
+        async fn file_read(&self, path: &str) -> reqsign_core::Result<Vec<u8>> {
+            assert_eq!(path, "client-certificate.pem");
+            Ok(CLIENT_CERTIFICATE_PEM.as_bytes().to_vec())
+        }
+    }
+
+    #[tokio::test]
+    async fn client_assertion_matches_the_certificate_fixture() -> anyhow::Result<()> {
+        let provider = ClientCertificateCredentialProvider::new();
+        let ctx = Context::new().with_file_read(FixtureFileRead);
+        let (cert_der, private_key_pem) = provider
+            .load_certificate(&ctx, "client-certificate.pem")
+            .await?;
+        assert!(private_key_pem.starts_with(b"-----BEGIN PRIVATE KEY-----"));
+
+        let jwt = provider.create_client_assertion_at(
+            "tenant",
+            "client",
+            &cert_der,
+            &private_key_pem,
+            1_700_000_000,
+            "fixed-jti".to_string(),
+        )?;
+        assert_eq!(jwt, EXPECTED_CLIENT_ASSERTION);
+        Ok(())
+    }
 
     #[test]
     fn test_calculate_thumbprint() {
