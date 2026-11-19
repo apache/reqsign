@@ -16,12 +16,14 @@
 // under the License.
 
 use crate::Credential;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::provide_credential::{
+    AssumeRoleChainCredentialProvider, ProcessCredentialProvider, SSOCredentialProvider,
+};
 use crate::provide_credential::{
     AssumeRoleWithWebIdentityCredentialProvider, ECSCredentialProvider, EnvCredentialProvider,
     IMDSv2CredentialProvider, ProfileCredentialProvider,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use crate::provide_credential::{ProcessCredentialProvider, SSOCredentialProvider};
 use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
 /// DefaultCredentialProvider is a loader that will try to load credential via default chains.
@@ -29,18 +31,24 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// Resolution order:
 ///
 /// 1. Environment variables
-/// 2. Shared config (`~/.aws/config`, `~/.aws/credentials`)
+/// 2. Shared config (`~/.aws/config`, `~/.aws/credentials`), including
+///    assume-role profile chains backed by static credentials or SSO
 /// 3. SSO credentials
 /// 4. Web Identity Tokens
 /// 5. Process credentials
 /// 6. ECS (IAM Roles for Tasks) & Container credentials
 /// 7. EC2 IMDSv2
 ///
-/// Once SSO configuration is selected, SSO errors stop resolution to avoid
-/// silently switching identities. An absent SSO configuration continues the chain.
+/// A selected profile with `role_arn` is resolved through `source_profile`
+/// until a supported source is reached, then each role is assumed in order.
+/// Role-chain and SSO errors stop resolution to avoid silently switching
+/// identities. An absent SSO configuration continues the chain.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
-    chain: ProvideCredentialChain<Credential>,
+    env_chain: ProvideCredentialChain<Credential>,
+    profile_chain: ProvideCredentialChain<Credential>,
+    #[cfg(not(target_arch = "wasm32"))]
+    role_chain: Option<AssumeRoleChainCredentialProvider>,
     #[cfg(not(target_arch = "wasm32"))]
     sso: Option<SSOCredentialProvider>,
     fallback: ProvideCredentialChain<Credential>,
@@ -66,7 +74,10 @@ impl DefaultCredentialProvider {
     /// Create with a custom credential chain.
     pub fn with_chain(chain: ProvideCredentialChain<Credential>) -> Self {
         Self {
-            chain,
+            env_chain: chain,
+            profile_chain: ProvideCredentialChain::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            role_chain: None,
             #[cfg(not(target_arch = "wasm32"))]
             sso: None,
             fallback: ProvideCredentialChain::new(),
@@ -90,7 +101,7 @@ impl DefaultCredentialProvider {
         mut self,
         provider: impl ProvideCredential<Credential = Credential> + 'static,
     ) -> Self {
-        self.chain = self.chain.push_front(provider);
+        self.env_chain = self.env_chain.push_front(provider);
         self
     }
 }
@@ -251,14 +262,19 @@ impl DefaultCredentialProviderBuilder {
 
     /// Build the `DefaultCredentialProvider` with the configured options.
     pub fn build(self) -> DefaultCredentialProvider {
-        let mut chain = ProvideCredentialChain::new();
+        #[cfg(not(target_arch = "wasm32"))]
+        let role_chain = self.profile.as_ref().map(|profile| {
+            AssumeRoleChainCredentialProvider::new(profile.clone(), self.sso.clone())
+        });
 
+        let mut env_chain = ProvideCredentialChain::new();
         if let Some(p) = self.env {
-            chain = chain.push(p);
+            env_chain = env_chain.push(p);
         }
 
+        let mut profile_chain = ProvideCredentialChain::new();
         if let Some(p) = self.profile {
-            chain = chain.push(p);
+            profile_chain = profile_chain.push(p);
         }
 
         let mut fallback = ProvideCredentialChain::new();
@@ -283,7 +299,10 @@ impl DefaultCredentialProviderBuilder {
         }
 
         DefaultCredentialProvider {
-            chain,
+            env_chain,
+            profile_chain,
+            #[cfg(not(target_arch = "wasm32"))]
+            role_chain,
             #[cfg(not(target_arch = "wasm32"))]
             sso: self.sso,
             fallback,
@@ -294,7 +313,18 @@ impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        if let Some(credential) = self.chain.provide_credential(ctx).await? {
+        if let Some(credential) = self.env_chain.provide_credential(ctx).await? {
+            return Ok(Some(credential));
+        }
+        // A selected role profile owns its identity. Resolve its graph before
+        // static profile or independent SSO providers can select another identity.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(role_chain) = &self.role_chain {
+            if let Some(credential) = role_chain.provide_credential(ctx).await? {
+                return Ok(Some(credential));
+            }
+        }
+        if let Some(credential) = self.profile_chain.provide_credential(ctx).await? {
             return Ok(Some(credential));
         }
         // SSO selects an identity. Its failure must not switch to a later source.

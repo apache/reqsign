@@ -159,6 +159,15 @@ impl SharedConfig {
         })
     }
 
+    /// Read another profile with the same explicit and environment file selection.
+    ///
+    /// This keeps the region and endpoint overrides of the caller. It does not
+    /// execute role chains or credential sources.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) async fn load_profile(&self, ctx: &Context, name: &str) -> Result<Profile> {
+        self.clone().with_profile(name).load(ctx).await
+    }
+
     /// Resolve region independently of credentials, optionally falling back to IMDSv2.
     ///
     /// Explicit/environment regions skip file reads. A profile region skips metadata.
@@ -213,6 +222,11 @@ impl Profile {
     /// Global endpoint after explicit and environment overrides. No service rules are applied.
     pub fn endpoint_url(&self) -> Option<&str> {
         self.endpoint_url.as_deref()
+    }
+    /// Return whether the selected profile section exists in either shared file.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.properties.is_empty()
     }
 }
 
