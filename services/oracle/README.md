@@ -28,6 +28,38 @@ The environment provider reads `OCI_USER`, `OCI_TENANCY`, `OCI_KEY_FILE`, and
 `OCI_FINGERPRINT`. Use `StaticCredentialProvider` or
 `DefaultCredentialProvider::builder()` for explicit configuration.
 
+## Request Body Headers
+
+OCI requires additional signed headers for requests that carry a body:
+
+- `POST`, `PUT`, and `PATCH` requests must include `content-length`,
+  `content-type`, and `x-content-sha256`.
+- Object Storage `PutObject` and `UploadPart` `PUT` requests may omit these
+  headers. If the request already contains any of them, reqsign includes it in
+  the signature.
+
+Reqsign signs the header values already present on the request. It does not
+read the body, compute `x-content-sha256`, or infer the endpoint from the
+request authority. Prepare the headers before calling `sign`:
+
+- `content-length`: decimal number of body bytes. OCI requires `0` for an empty
+  body on `POST` and `PUT` requests outside the Object Storage exception.
+- `content-type`: the body media type.
+- `x-content-sha256`: the base64-encoded SHA-256 digest of the body. For an
+  empty body, this is `47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=`.
+
+Set these headers on the request before calling `sign`. If the HTTP client adds
+or replaces `content-length` or `content-type` after signing, the wire headers
+no longer match the signed fields and the provider may reject the request.
+
+`GET`, `HEAD`, and `DELETE` requests keep the bodyless contract and sign only
+`date`, `(request-target)`, and `host`. Each signed body header must have exactly
+one value; duplicate signed headers are rejected without changing the request.
+
+Reqsign cannot compute the digest without access to the request body. A
+body-aware signing API remains future work; callers must supply
+`x-content-sha256` today.
+
 ## Private Key Formats
 
 The file selected by `OCI_KEY_FILE` or the OCI configuration's `key_file` entry
