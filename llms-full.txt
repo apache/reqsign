@@ -2338,6 +2338,12 @@ signer.sign(&mut req, None).await?;
 
 ```
 
+## Request body headers[​](#request-body-headers "Direct link to Request body headers")
+
+For `POST`, `PUT`, and `PATCH` requests, OCI requires `content-length`,`content-type`, and `x-content-sha256` in the signature. Set these headers on the request before calling `sign`; reqsign signs the supplied values and does not read the body. `x-content-sha256` is the base64-encoded SHA-256 digest of the body; for an empty body it is`47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=`. Set the headers before signing; headers added or replaced by the HTTP client afterwards are not covered by the signature.
+
+Object Storage `PutObject` and `UploadPart` PUT requests may omit the body headers. If they are present, reqsign signs them. `GET`, `HEAD`, and `DELETE`requests keep signing only `date`, `(request-target)`, and `host`.
+
 ## Credentials
 
 ### Default credential chain
