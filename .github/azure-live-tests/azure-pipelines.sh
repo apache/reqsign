@@ -22,42 +22,85 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 run_id=""
 completed=false
 
-# A status read is idempotent. Retry the observed TLS send reset (curl 35) and
+# A run that is still waiting for the pool agent has not exercised the probe,
+# so one shared deadline cannot tell a queue stall from a slow probe. Bound the
+# wait for an agent and the execution after it starts separately; the defaults
+# keep the worst case plus cleanup inside the GitHub job's 60-minute timeout
+# and inside the lifetime of an access token, which cleanup can renew.
+queue_wait_limit=${REQSIGN_AZURE_PIPELINES_QUEUE_LIMIT:-1200}
+execution_limit=${REQSIGN_AZURE_PIPELINES_EXECUTION_LIMIT:-900}
+# Local fixtures shorten these so the bounds are testable without waiting.
+poll_interval=${REQSIGN_AZURE_PIPELINES_POLL_INTERVAL:-15}
+
+# A DevOps read is idempotent. Retry the observed TLS send reset (curl 35) and
 # HTTP 503 (curl 22) within a poll so one transient failure does not fail the
 # job. Other HTTP failures are permanent for this job.
-status_read_attempts=3
-status_read_retry_delay=1
+devops_read_attempts=3
+devops_read_retry_delay=1
 status_response_file="$RUNNER_TEMP/azure-pipelines-status-response.json"
+timeline_response_file="$RUNNER_TEMP/azure-pipelines-timeline-response.json"
 
-# Called by the EXIT handler and the polling loop.
-read_run_status() {
-  local access_token=$1
+read_devops_json() {
+  local access_token=$1 path=$2 response_file=$3 allow_missing=${4:-false}
   local attempt curl_status http_status response retryable
-  for (( attempt = 1; attempt <= status_read_attempts; attempt++ )); do
+  for (( attempt = 1; attempt <= devops_read_attempts; attempt++ )); do
     if http_status=$(curl --fail --silent --show-error \
-      --output "$status_response_file" \
+      --output "$response_file" \
       --write-out '%{http_code}' \
       --header "Authorization: Bearer $access_token" \
-      "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs/${run_id}?api-version=7.1"); then
-      response=$(<"$status_response_file")
-      rm -f "$status_response_file"
+      "https://dev.azure.com/${AZURE_DEVOPS_ORGANIZATION}/${AZURE_DEVOPS_PROJECT}${path}"); then
+      response=$(<"$response_file")
+      rm -f "$response_file"
       printf '%s\n' "$response"
       return 0
     else
       curl_status=$?
     fi
-    rm -f "$status_response_file"
+    rm -f "$response_file"
+    # A build that is still queued may not have a timeline yet. That is a
+    # missing record, not a failed read.
+    if [[ "$allow_missing" == true ]] && (( curl_status == 22 )) && [[ "$http_status" == "404" ]]; then
+      return 0
+    fi
     retryable=false
     if (( curl_status == 35 )); then
       retryable=true
     elif (( curl_status == 22 )) && [[ "$http_status" == "503" ]]; then
       retryable=true
     fi
-    if [[ "$retryable" != true ]] || (( attempt == status_read_attempts )); then
+    if [[ "$retryable" != true ]] || (( attempt == devops_read_attempts )); then
       return "$curl_status"
     fi
-    sleep "$status_read_retry_delay"
+    sleep "$devops_read_retry_delay"
   done
+}
+
+# Called by the EXIT handler and the polling loop.
+read_run_status() {
+  read_devops_json "$1" \
+    "/_apis/pipelines/${AZURE_DEVOPS_PIPELINE_ID}/runs/${run_id}?api-version=7.1" \
+    "$status_response_file"
+}
+
+# Azure DevOps reports the agent that runs a job on the build timeline. A Job
+# record carries workerName once an agent picked it up, and startTime is when it
+# started there. Stage records also start before any agent is assigned, and a
+# build's own startTime comes from the orchestration, so only Job records are
+# evidence that execution began on an agent.
+read_agent_started_at() {
+  local access_token=$1 timeline job_start allow_missing=true
+  timeline=$(read_devops_json "$access_token" \
+    "/_apis/build/builds/${run_id}/timeline?api-version=7.1" \
+    "$timeline_response_file" "$allow_missing") || return
+  [[ -n "$timeline" ]] || return 0
+  # The timeline may be one timeline object or a list of them.
+  job_start=$(jq --raw-output '
+    (if type == "array" then map(.records // []) | add // [] else .records // [] end)
+    | [ .[] | select(.type == "Job")
+        | select((.workerName // "") != "" and (.startTime // "") != "")
+        | .startTime ]
+    | sort | .[0] // empty' <<< "$timeline") || return
+  printf '%s\n' "$job_start"
 }
 
 # A delayed cleanup can outlive the GitHub OIDC assertion used by the initial
@@ -154,9 +197,12 @@ run_url=$(jq --raw-output '._links.web.href // empty' <<< "$response")
 test -n "$run_id"
 test -n "$run_url"
 echo "Queued Azure Pipelines run: $run_url"
+echo "Azure Pipelines probe limits: ${queue_wait_limit}s queue wait, ${execution_limit}s execution after agent start: $run_url"
 
-deadline=$((SECONDS + 3300))
-while (( SECONDS < deadline )); do
+queue_deadline=$(( $(date +%s) + queue_wait_limit ))
+agent_started_at=""
+agent_started_epoch=""
+while true; do
   load_devops_access_token || exit $?
   response=$(read_run_status "$access_token") || exit $?
   state=$(jq --raw-output '.state' <<< "$response")
@@ -167,7 +213,24 @@ while (( SECONDS < deadline )); do
     test "$result" = "succeeded"
     exit
   fi
-  sleep 15
+
+  now=$(date +%s)
+  if [[ -z "$agent_started_epoch" ]]; then
+    agent_started_at=$(read_agent_started_at "$access_token") || exit $?
+    if [[ -n "$agent_started_at" ]]; then
+      if ! agent_started_epoch=$(date --date="$agent_started_at" +%s); then
+        echo "Failed to parse the Azure Pipelines job start time '$agent_started_at': $run_url" >&2
+        exit 1
+      fi
+      echo "Azure Pipelines job started on an agent at $agent_started_at (execution limit ${execution_limit}s): $run_url"
+    elif (( now >= queue_deadline )); then
+      echo "Azure Pipelines run did not start on an agent within ${queue_wait_limit}s of queueing: $run_url" >&2
+      exit 1
+    fi
+  fi
+  if [[ -n "$agent_started_epoch" ]] && (( now >= agent_started_epoch + execution_limit )); then
+    echo "Azure Pipelines run did not complete within ${execution_limit}s after its job started on an agent at ${agent_started_at}: $run_url" >&2
+    exit 1
+  fi
+  sleep "$poll_interval"
 done
-echo "Azure Pipelines run did not complete before the timeout: $run_url" >&2
-exit 1

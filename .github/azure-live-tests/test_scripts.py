@@ -107,6 +107,18 @@ def respond(body, code='200'):
         print(code)
     else:
         print(body)
+def agent_start():
+    import datetime
+    return os.getenv('AGENT_START') or datetime.datetime.now(
+        datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+def timeline_records():
+    # A stage also starts before an agent is assigned. Only a Job record with a
+    # workerName proves that an agent picked the run up.
+    started = agent_start()
+    job = {'type': 'Job', 'state': 'inProgress', 'startTime': started}
+    if os.getenv('AGENT_ASSIGNED', '1') == '1':
+        job['workerName'] = 'reqsign-azure-vmss-1'
+    return [{'type': 'Stage', 'state': 'inProgress', 'startTime': started}, job]
 method = option('--request', 'GET')
 url = args[-1]
 if url.startswith('https://oidc.example.test/token'):
@@ -122,7 +134,13 @@ if url.startswith('https://dev.azure.com/'):
 assert list(root.glob('ci-probe-*'))
 with (root / 'curl-calls.jsonl').open('a') as f:
     f.write(json.dumps({'method': method, 'url': args[-1]}) + '\n')
-if method == 'POST':
+if method == 'GET' and url.endswith('/timeline?api-version=7.1'):
+    if os.getenv('MISSING_TIMELINE'):
+        respond(json.dumps({'message': 'missing timeline'}), '404')
+        sys.exit(22)
+    records = {'records': timeline_records()}
+    respond(json.dumps([records] if os.getenv('TIMELINE_ARRAY') else records))
+elif method == 'POST':
     request = json.loads(option('--data'))
     params = request['templateParameters']
     assert params['githubSha'] == 'a' * 40
@@ -158,6 +176,8 @@ else:
     if os.getenv('FAIL_PIPELINE_POLL'):
         if count == 1:
             sys.exit(22)
+        respond(json.dumps({'state': 'inProgress'}))
+    elif count <= int(os.getenv('PIPELINE_INPROGRESS_POLLS', '0')):
         respond(json.dumps({'state': 'inProgress'}))
     else:
         respond(json.dumps({'state': 'completed',
@@ -201,6 +221,7 @@ class LiveScriptTests(unittest.TestCase):
             'GITHUB_RUN_ID': '123',
             'GITHUB_RUN_ATTEMPT': '1',
             'GITHUB_OUTPUT': str(self.root / 'outputs'),
+            'REQSIGN_AZURE_PIPELINES_POLL_INTERVAL': '0',
         }
 
     def run_script(self, script, *args):
@@ -214,6 +235,10 @@ class LiveScriptTests(unittest.TestCase):
     def curl_calls(self):
         return [json.loads(line) for line in
                 (self.state / 'curl-calls.jsonl').read_text().splitlines()]
+
+    def timeline_calls(self):
+        return [c for c in self.curl_calls()
+                if c['url'].endswith('/builds/23/timeline?api-version=7.1')]
 
     def resources(self):
         return [p.name for p in self.state.iterdir()
@@ -442,6 +467,67 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
         self.assertNotIn('sensitive-403-response-body', result.stdout + result.stderr)
         self.assertNotIn('fake-devops-token', result.stdout + result.stderr)
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_queue_wait_ends_before_an_agent_starts(self):
+        # A stage record starts before any agent is assigned. Only a Job record
+        # with a workerName is agent start, so this run is still queued.
+        self.env.update(PIPELINE_INPROGRESS_POLLS='1000',
+                        AGENT_ASSIGNED='0',
+                        AGENT_START='2020-01-01T00:00:00Z',
+                        REQSIGN_AZURE_PIPELINES_QUEUE_LIMIT='0')
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('did not start on an agent within 0s of queueing', result.stderr)
+        self.assertNotIn('job started on an agent', result.stdout)
+        self.assertEqual(len(self.timeline_calls()), 1)
+        self.assertTrue((self.state / 'cancelled').exists())
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_execution_bound_is_measured_from_the_agent_start(self):
+        # The default queue limit is an hour still to come, so only the
+        # execution bound measured from the observed agent start can fail this.
+        self.env.update(PIPELINE_INPROGRESS_POLLS='1000',
+                        AGENT_START='2020-01-01T00:00:00Z',
+                        REQSIGN_AZURE_PIPELINES_EXECUTION_LIMIT='60')
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('job started on an agent at 2020-01-01T00:00:00Z', result.stdout)
+        self.assertIn('did not complete within 60s after its job started on an agent',
+                      result.stderr)
+        self.assertNotIn('did not start on an agent', result.stderr)
+        self.assertTrue((self.state / 'cancelled').exists())
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_missing_timeline_keeps_waiting_for_the_agent(self):
+        self.env.update(PIPELINE_INPROGRESS_POLLS='1000', MISSING_TIMELINE='1',
+                        REQSIGN_AZURE_PIPELINES_QUEUE_LIMIT='0')
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('did not start on an agent within 0s of queueing', result.stderr)
+        self.assertNotEqual(result.returncode, 22)
+        self.assertTrue((self.state / 'cancelled').exists())
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_agent_start_is_read_from_a_timeline_list(self):
+        self.env.update(PIPELINE_INPROGRESS_POLLS='1000', TIMELINE_ARRAY='1',
+                        AGENT_START='2020-01-01T00:00:00Z',
+                        REQSIGN_AZURE_PIPELINES_EXECUTION_LIMIT='60')
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn('did not complete within 60s after its job started on an agent',
+                      result.stderr)
+        self.assertTrue((self.state / 'cancelled').exists())
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_started_probe_completes_within_its_bounds(self):
+        self.env['PIPELINE_INPROGRESS_POLLS'] = '1'
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('job started on an agent', result.stdout)
+        self.assertFalse((self.state / 'cancelled').exists())
+        self.assertEqual([c for c in self.curl_calls() if c['method'] == 'PATCH'], [])
+        self.assertEqual(len(self.timeline_calls()), 1)
         self.assertEqual(list(self.state.glob('ci-probe-*')), [])
 
 
