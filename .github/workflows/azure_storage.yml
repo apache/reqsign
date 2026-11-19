@@ -21,9 +21,33 @@ on:
   push:
     branches:
       - main
+    # Live coverage needs this service and the shared workspace crates. Keep
+    # unrelated changes out of the hosted runner queue and the cloud quota.
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "core/**"
+      - "context/**"
+      - "reqsign/**"
+      - "services/azure-storage/**"
+      - "azure-pipelines.yml"
+      - ".github/azure-live-tests/**"
+      - ".github/workflows/azure_storage.yml"
   pull_request:
     branches:
       - main
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "core/**"
+      - "context/**"
+      - "reqsign/**"
+      - "services/azure-storage/**"
+      - "azure-pipelines.yml"
+      - ".github/azure-live-tests/**"
+      - ".github/workflows/azure_storage.yml"
 
 # Cancellation is per job so that a superseded run stops its own work without
 # cancelling the Azure Pipelines probe, whose cleanup has to finish. A
