@@ -20,6 +20,9 @@
 mod credential;
 pub use credential::Credential;
 
+mod agency;
+pub use agency::{AgencyGrant, AgencyGranter};
+
 mod sign_request;
 pub use sign_request::RequestSigner;
 

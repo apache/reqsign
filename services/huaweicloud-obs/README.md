@@ -6,6 +6,21 @@ The default credential provider reads `HUAWEI_CLOUD_ACCESS_KEY_ID` and
 `HUAWEI_CLOUD_SECRET_ACCESS_KEY`, with an optional
 `HUAWEI_CLOUD_SECURITY_TOKEN`.
 
+## Changelog: credential expiry
+
+`Credential` now has an absolute `expires_at: Option<Timestamp>` field.
+`Credential::new` keeps its original three-argument, no-expiry behavior; use
+`Credential::with_expires_at` when the expiration is known. The added public
+field means existing struct-literal construction no longer compiles, so
+struct-literal callers must switch to `Credential::new` (and
+`with_expires_at` where needed).
+
+`AgencyGrant` and `AgencyGranter` issue Huawei Cloud IAM agency temporary
+credentials through `Granter<Credential>`. The result carries the exact IAM
+`expires_at` and can be passed directly to `RequestSigner`. Known-expiry
+credentials are rejected by header signing or presigning when they do not cover
+the requested operation deadline.
+
 ## Quick Start
 
 ```rust,no_run

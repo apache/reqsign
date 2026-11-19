@@ -28,11 +28,11 @@ impl StaticCredentialProvider {
     /// Create a new StaticCredentialProvider with the given credentials.
     pub fn new(access_key_id: &str, secret_access_key: &str) -> Self {
         Self {
-            credential: Credential {
-                access_key_id: access_key_id.to_string(),
-                secret_access_key: secret_access_key.to_string(),
-                security_token: None,
-            },
+            credential: Credential::new(
+                access_key_id.to_string(),
+                secret_access_key.to_string(),
+                None,
+            ),
         }
     }
 
@@ -43,11 +43,11 @@ impl StaticCredentialProvider {
         security_token: &str,
     ) -> Self {
         Self {
-            credential: Credential {
-                access_key_id: access_key_id.to_string(),
-                secret_access_key: secret_access_key.to_string(),
-                security_token: Some(security_token.to_string()),
-            },
+            credential: Credential::new(
+                access_key_id.to_string(),
+                secret_access_key.to_string(),
+                Some(security_token.to_string()),
+            ),
         }
     }
 }
