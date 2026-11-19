@@ -259,4 +259,30 @@ mod tests {
             assert_eq!(t, v.parse().expect("must be valid time"));
         }
     }
+
+    #[test]
+    fn test_as_system_time_around_unix_epoch() {
+        let epoch = SystemTime::UNIX_EPOCH;
+        for (value, expected) in [
+            ("1970-01-01T00:00:00Z", epoch),
+            (
+                "1970-01-01T00:00:00.123456789Z",
+                epoch + Duration::from_nanos(123_456_789),
+            ),
+            (
+                "1969-12-31T23:59:59.123456789Z",
+                epoch - Duration::from_nanos(876_543_211),
+            ),
+        ] {
+            let timestamp: Timestamp = value.parse().expect("must be valid time");
+            assert_eq!(timestamp.as_system_time(), expected);
+        }
+    }
+
+    #[test]
+    fn test_parse_timestamp_below_minimum() {
+        // Jiff 1.0.0 could parse this into a timestamp below its supported range.
+        // https://github.com/BurntSushi/jiff/issues/714
+        assert!("-009999-01-02T01:59:58.5Z".parse::<Timestamp>().is_err());
+    }
 }
