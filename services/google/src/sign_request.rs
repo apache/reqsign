@@ -876,7 +876,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use crate::test_support::RSA_PKCS8_PEM;
+    use crate::test_support::{RSA_PKCS8_ALT_PEM, RSA_PKCS8_PEM};
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -1366,8 +1366,12 @@ mod tests {
     }
 
     fn test_service_account(client_email: &str) -> ServiceAccount {
+        test_service_account_with_key(client_email, RSA_PKCS8_PEM)
+    }
+
+    fn test_service_account_with_key(client_email: &str, private_key_pem: &str) -> ServiceAccount {
         ServiceAccount {
-            private_key: RSA_PKCS8_PEM.to_string(),
+            private_key: private_key_pem.to_string(),
             client_email: client_email.to_string(),
         }
     }
@@ -1877,7 +1881,10 @@ mod tests {
         let ctx = Context::new().with_http_send(http.clone());
         let email = "same-email@example.iam.gserviceaccount.com";
         let key_1 = Credential::with_service_account(test_service_account(email));
-        let key_2 = Credential::with_service_account(test_service_account(email));
+        let key_2 = Credential::with_service_account(test_service_account_with_key(
+            email,
+            RSA_PKCS8_ALT_PEM,
+        ));
         let signer = RequestSigner::new("storage");
 
         let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")

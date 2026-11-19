@@ -18,3 +18,4 @@
 //! Shared synthetic key material for unit tests.
 
 pub(crate) const RSA_PKCS8_PEM: &str = include_str!("../tests/fixtures/rsa-2048-pkcs8.pem");
+pub(crate) const RSA_PKCS8_ALT_PEM: &str = include_str!("../tests/fixtures/rsa-2048-pkcs8-alt.pem");
