@@ -15,13 +15,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::Credential;
+use crate::{Credential, PercentEncodingMode};
 use http::request::Parts;
 use http::{HeaderValue, header};
 use log::debug;
+use reqsign_aws_core::constants::{X_AMZ_S3_SESSION_TOKEN, X_AMZ_SECURITY_TOKEN};
 use reqsign_aws_core::signing::{
-    append_query_fragment, append_query_pairs, canonical_request_string, canonicalize_headers,
-    canonicalize_headers_with_standard_session_token, canonicalize_query,
+    append_query_fragment, append_query_pairs, canonical_request_string_with_encoding,
+    canonicalize_headers, canonicalize_query,
 };
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
@@ -83,6 +84,7 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 pub struct RequestSigner {
     service: String,
     region: String,
+    percent_encoding_mode: PercentEncodingMode,
     use_standard_session_token: bool,
 
     time: Option<Timestamp>,
@@ -94,6 +96,7 @@ impl RequestSigner {
         Self {
             service: service.into(),
             region: region.into(),
+            percent_encoding_mode: PercentEncodingMode::default(),
             use_standard_session_token: false,
 
             time: None,
@@ -107,11 +110,13 @@ impl RequestSigner {
     /// `x-amz-security-token`, and query authentication uses
     /// `X-Amz-Security-Token`.
     ///
-    /// By default, S3 Express endpoints use the [`CreateSession`] credential
-    /// representation: `x-amz-s3session-token` for header authentication and
-    /// `X-Amz-S3session-Token` for query authentication. The S3 Express
-    /// [`CopyObject`], [`HeadBucket`], and [`UploadPartCopy`] operations require
-    /// IAM credentials instead of CreateSession credentials.
+    /// By default, requests signed with the `s3express` service use the
+    /// [`CreateSession`] credential representation for any request authority:
+    /// `x-amz-s3session-token` for header authentication and
+    /// `X-Amz-S3session-Token` for query authentication. Other AWS signing
+    /// services use the standard representation. The S3 Express [`CopyObject`],
+    /// [`HeadBucket`], and [`UploadPartCopy`] operations require IAM
+    /// credentials instead of CreateSession credentials.
     ///
     /// This setting only selects how an existing [`Credential`] session token
     /// is represented. It does not modify the credential or load a different
@@ -133,6 +138,31 @@ impl RequestSigner {
     pub fn with_standard_session_token(mut self) -> Self {
         self.use_standard_session_token = true;
         self
+    }
+
+    /// Set the canonical URI percent-encoding mode for header and query signing.
+    ///
+    /// The default is [`PercentEncodingMode::Single`] for every signing service,
+    /// preserving Reqsign's existing canonical URI and signature bytes. Select
+    /// [`PercentEncodingMode::Double`] explicitly when the service expects one
+    /// additional encoding pass over the wire path. This does not modify the
+    /// outgoing URI, normalize paths, or change payload hashing.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use reqsign_aws_v4::{PercentEncodingMode, RequestSigner};
+    ///
+    /// let signer = RequestSigner::new("execute-api", "us-east-1")
+    ///     .with_percent_encoding_mode(PercentEncodingMode::Double);
+    /// ```
+    pub fn with_percent_encoding_mode(mut self, mode: PercentEncodingMode) -> Self {
+        self.percent_encoding_mode = mode;
+        self
+    }
+
+    fn uses_s3_express_session_token(&self) -> bool {
+        self.service == "s3express" && !self.use_standard_session_token
     }
 
     /// Specify the signing time.
@@ -193,16 +223,14 @@ impl SignRequest for RequestSigner {
         let mut signed_req = SigningRequest::build(req)?;
 
         // canonicalize context
-        if self.use_standard_session_token {
-            canonicalize_headers_with_standard_session_token(
-                &mut signed_req,
-                cred,
-                expires_in,
-                now,
-            )?;
-        } else {
-            canonicalize_headers(&mut signed_req, cred, expires_in, now)?;
-        }
+        let uses_s3_express_session_token = self.uses_s3_express_session_token();
+        canonicalize_signing_headers(
+            &mut signed_req,
+            cred,
+            expires_in,
+            now,
+            uses_s3_express_session_token,
+        )?;
         let authentication_query = authentication_query(
             &signed_req,
             cred,
@@ -210,12 +238,16 @@ impl SignRequest for RequestSigner {
             now,
             &self.service,
             &self.region,
-            self.use_standard_session_token,
+            uses_s3_express_session_token,
         );
         let canonical_query = canonicalize_query(&signed_req, &authentication_query);
 
         // build canonical request and string to sign.
-        let creq = canonical_request_string(&signed_req, &canonical_query)?;
+        let creq = canonical_request_string_with_encoding(
+            &signed_req,
+            &canonical_query,
+            self.percent_encoding_mode,
+        )?;
         let encoded_req = hex_sha256(creq.as_bytes());
 
         // Scope: "20220313/<region>/<service>/aws4_request"
@@ -291,6 +323,30 @@ impl SignRequest for RequestSigner {
     }
 }
 
+fn canonicalize_signing_headers(
+    request: &mut SigningRequest,
+    credential: &Credential,
+    expires_in: Option<Duration>,
+    now: Timestamp,
+    uses_s3_express_session_token: bool,
+) -> Result<()> {
+    canonicalize_headers(request, credential, expires_in, now)?;
+
+    if !uses_s3_express_session_token || expires_in.is_some() || credential.session_token.is_none()
+    {
+        return Ok(());
+    }
+
+    // Shared canonicalization writes the standard header. S3 Express selects
+    // its representation from the signing service, so move the same sensitive
+    // header value before the canonical request is built.
+    if let Some(value) = request.headers.remove(X_AMZ_SECURITY_TOKEN) {
+        request.headers.insert(X_AMZ_S3_SESSION_TOKEN, value);
+    }
+
+    Ok(())
+}
+
 fn authentication_query(
     ctx: &SigningRequest,
     cred: &Credential,
@@ -298,7 +354,7 @@ fn authentication_query(
     now: Timestamp,
     service: &str,
     region: &str,
-    use_standard_session_token: bool,
+    uses_s3_express_session_token: bool,
 ) -> Vec<(String, String)> {
     let mut query = Vec::new();
     if let Some(expire) = expires_in {
@@ -321,10 +377,7 @@ fn authentication_query(
         ));
 
         if let Some(token) = &cred.session_token {
-            let is_s3_express = !use_standard_session_token
-                && (ctx.authority.as_str().contains("s3express")
-                    || ctx.authority.as_str().contains("--x-s3"));
-            let name = if is_s3_express {
+            let name = if uses_s3_express_session_token {
                 "X-Amz-S3session-Token"
             } else {
                 "X-Amz-Security-Token"
@@ -351,20 +404,22 @@ fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StaticCredentialProvider;
+    use crate::{PercentEncodingMode, StaticCredentialProvider};
     use anyhow::Result;
     use aws_credential_types::Credentials;
     use aws_sigv4::http_request::PayloadChecksumKind;
-    use aws_sigv4::http_request::PercentEncodingMode;
+    use aws_sigv4::http_request::PercentEncodingMode as AwsPercentEncodingMode;
+    use aws_sigv4::http_request::SessionTokenMode;
     use aws_sigv4::http_request::SignableBody;
     use aws_sigv4::http_request::SignableRequest;
     use aws_sigv4::http_request::SignatureLocation;
     use aws_sigv4::http_request::SigningSettings;
+    use aws_sigv4::http_request::UriPathNormalizationMode;
     use aws_sigv4::sign::v4;
     use http::Request;
     use http::header;
     use reqsign_aws_core::constants::X_AMZ_CONTENT_SHA_256;
-    use reqsign_aws_core::signing::canonical_uri;
+    use reqsign_aws_core::signing::{canonical_request_string, canonical_uri};
     use reqsign_core::{ErrorKind, ProvideCredential, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -375,6 +430,7 @@ mod tests {
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
     const S3_EXPRESS_URI: &str =
         "https://bucket--use2-az1--x-s3.s3express-use2-az1.us-east-2.amazonaws.com/object";
+    const CUSTOM_AUTHORITY_URI: &str = "https://objects.example.com/object";
     const S3_EXPRESS_REGION: &str = "us-east-2";
     const TEST_ACCESS_KEY: &str = "AKIDEXAMPLE";
     const TEST_SECRET_KEY: &str = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
@@ -396,7 +452,7 @@ mod tests {
         session_token_name_override: Option<&'static str>,
     ) -> Result<Request<&'static str>> {
         let mut settings = SigningSettings::default();
-        settings.percent_encoding_mode = PercentEncodingMode::Double;
+        settings.percent_encoding_mode = AwsPercentEncodingMode::Double;
         settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         settings.session_token_name_override = session_token_name_override;
         if presigned {
@@ -439,23 +495,21 @@ mod tests {
 
     fn reqsign_s3_express_canonical_request(
         now: Timestamp,
+        uri: &str,
         presigned: bool,
         use_standard_session_token: bool,
     ) -> Result<String> {
         let credential = s3_express_credential(now);
-        let mut parts = Request::get(S3_EXPRESS_URI).body(())?.into_parts().0;
+        let mut parts = Request::get(uri).body(())?.into_parts().0;
         let mut signing_request = SigningRequest::build(&mut parts)?;
         let expires_in = presigned.then_some(Duration::from_secs(60));
-        if use_standard_session_token {
-            canonicalize_headers_with_standard_session_token(
-                &mut signing_request,
-                &credential,
-                expires_in,
-                now,
-            )?;
-        } else {
-            canonicalize_headers(&mut signing_request, &credential, expires_in, now)?;
-        }
+        canonicalize_signing_headers(
+            &mut signing_request,
+            &credential,
+            expires_in,
+            now,
+            !use_standard_session_token,
+        )?;
         let authentication_query = authentication_query(
             &signing_request,
             &credential,
@@ -463,7 +517,7 @@ mod tests {
             now,
             "s3express",
             S3_EXPRESS_REGION,
-            use_standard_session_token,
+            !use_standard_session_token,
         );
         let canonical_query = canonicalize_query(&signing_request, &authentication_query);
         canonical_request_string(&signing_request, &canonical_query).map_err(Into::into)
@@ -564,8 +618,9 @@ mod tests {
         assert!(session_authorization.contains("x-amz-s3session-token"));
         assert!(iam_authorization.contains("x-amz-security-token"));
         assert_ne!(session_authorization, iam_authorization);
-        let session_canonical = reqsign_s3_express_canonical_request(now, false, false)?;
-        let iam_canonical = reqsign_s3_express_canonical_request(now, false, true)?;
+        let session_canonical =
+            reqsign_s3_express_canonical_request(now, S3_EXPRESS_URI, false, false)?;
+        let iam_canonical = reqsign_s3_express_canonical_request(now, S3_EXPRESS_URI, false, true)?;
         assert_eq!(
             session_canonical,
             format!(
@@ -647,8 +702,9 @@ mod tests {
             .expect("signature must exist")
             .1;
         assert_ne!(session_signature, iam_signature);
-        let session_canonical = reqsign_s3_express_canonical_request(now, true, false)?;
-        let iam_canonical = reqsign_s3_express_canonical_request(now, true, true)?;
+        let session_canonical =
+            reqsign_s3_express_canonical_request(now, S3_EXPRESS_URI, true, false)?;
+        let iam_canonical = reqsign_s3_express_canonical_request(now, S3_EXPRESS_URI, true, true)?;
         assert_eq!(
             session_canonical,
             format!(
@@ -671,6 +727,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn s3_express_custom_authority_selects_session_token_representation() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let credential = s3_express_credential(now);
+
+        for presigned in [false, true] {
+            let expires_in = presigned.then_some(Duration::from_secs(60));
+
+            let session_token_name = if presigned {
+                "X-Amz-S3session-Token"
+            } else {
+                "x-amz-s3session-token"
+            };
+            let expected_session = aws_signed_s3_express_request(
+                Request::get(CUSTOM_AUTHORITY_URI).body("")?,
+                now,
+                presigned,
+                Some(session_token_name),
+            )?;
+            let (mut session_parts, body) =
+                Request::get(CUSTOM_AUTHORITY_URI).body("")?.into_parts();
+            RequestSigner::new("s3express", S3_EXPRESS_REGION)
+                .with_time(now)
+                .sign_request(
+                    &Context::new(),
+                    &mut session_parts,
+                    Some(&credential),
+                    expires_in,
+                )
+                .await?;
+            let actual_session = Request::from_parts(session_parts, body);
+            compare_request(
+                &format!("custom authority CreateSession mode (presigned={presigned})"),
+                &expected_session,
+                &actual_session,
+            );
+
+            let expected_iam = aws_signed_s3_express_request(
+                Request::get(CUSTOM_AUTHORITY_URI).body("")?,
+                now,
+                presigned,
+                None,
+            )?;
+            let (mut iam_parts, body) = Request::get(CUSTOM_AUTHORITY_URI).body("")?.into_parts();
+            RequestSigner::new("s3express", S3_EXPRESS_REGION)
+                .with_standard_session_token()
+                .with_time(now)
+                .sign_request(
+                    &Context::new(),
+                    &mut iam_parts,
+                    Some(&credential),
+                    expires_in,
+                )
+                .await?;
+            let actual_iam = Request::from_parts(iam_parts, body);
+            compare_request(
+                &format!("custom authority IAM mode (presigned={presigned})"),
+                &expected_iam,
+                &actual_iam,
+            );
+
+            if presigned {
+                let session_query = actual_session.uri().query().expect("query must exist");
+                let iam_query = actual_iam.uri().query().expect("query must exist");
+                assert!(session_query.contains("X-Amz-S3session-Token="));
+                assert!(!session_query.contains("X-Amz-Security-Token="));
+                assert!(iam_query.contains("X-Amz-Security-Token="));
+                assert!(!iam_query.contains("X-Amz-S3session-Token="));
+            } else {
+                assert_eq!(
+                    actual_session.headers()[X_AMZ_S3_SESSION_TOKEN],
+                    TEST_SESSION_TOKEN
+                );
+                assert!(actual_session.headers()[X_AMZ_S3_SESSION_TOKEN].is_sensitive());
+                assert!(!actual_session.headers().contains_key(X_AMZ_SECURITY_TOKEN));
+
+                assert_eq!(
+                    actual_iam.headers()[X_AMZ_SECURITY_TOKEN],
+                    TEST_SESSION_TOKEN
+                );
+                assert!(actual_iam.headers()[X_AMZ_SECURITY_TOKEN].is_sensitive());
+                assert!(!actual_iam.headers().contains_key(X_AMZ_S3_SESSION_TOKEN));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn other_services_keep_standard_session_token_on_express_authorities() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let credential = s3_express_credential(now);
+
+        for uri in [S3_EXPRESS_URI, CUSTOM_AUTHORITY_URI] {
+            for presigned in [false, true] {
+                let expires_in = presigned.then_some(Duration::from_secs(60));
+                let (mut parts, _body) = Request::get(uri).body("")?.into_parts();
+                RequestSigner::new("s3", S3_EXPRESS_REGION)
+                    .with_time(now)
+                    .sign_request(&Context::new(), &mut parts, Some(&credential), expires_in)
+                    .await?;
+
+                if presigned {
+                    let query = parts.uri.query().expect("query must exist");
+                    assert!(query.contains("X-Amz-Security-Token="));
+                    assert!(!query.contains("X-Amz-S3session-Token="));
+                } else {
+                    assert_eq!(parts.headers[X_AMZ_SECURITY_TOKEN], TEST_SESSION_TOKEN);
+                    assert!(parts.headers[X_AMZ_SECURITY_TOKEN].is_sensitive());
+                    assert!(!parts.headers.contains_key(X_AMZ_S3_SESSION_TOKEN));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn session_token_is_redacted_from_debug_and_signing_errors() -> Result<()> {
         const TOKEN_MARKER: &str = "SENSITIVE_SESSION_TOKEN";
 
@@ -681,31 +854,33 @@ mod tests {
         };
         assert!(!format!("{credential:?}").contains(TOKEN_MARKER));
 
-        for use_standard_session_token in [false, true] {
-            let signer = RequestSigner::new("s3express", S3_EXPRESS_REGION);
-            let signer = if use_standard_session_token {
-                signer.with_standard_session_token()
-            } else {
-                signer
+        for uri in [S3_EXPRESS_URI, CUSTOM_AUTHORITY_URI] {
+            for use_standard_session_token in [false, true] {
+                let signer = RequestSigner::new("s3express", S3_EXPRESS_REGION);
+                let signer = if use_standard_session_token {
+                    signer.with_standard_session_token()
+                } else {
+                    signer
+                }
+                .with_time(now);
+                assert!(!format!("{signer:?}").contains(TOKEN_MARKER));
+
+                let mut parts = Request::get(uri).body(())?.into_parts().0;
+                let original = parts.clone();
+                let error = signer
+                    .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+                    .await
+                    .expect_err("invalid session token must be rejected");
+
+                assert!(!format!("{error}").contains(TOKEN_MARKER));
+                assert!(!format!("{error:?}").contains(TOKEN_MARKER));
+                assert_eq!(parts.uri, original.uri);
+                assert_eq!(parts.headers, original.headers);
+                assert_eq!(
+                    credential.session_token.as_deref(),
+                    Some("SENSITIVE_SESSION_TOKEN\n")
+                );
             }
-            .with_time(now);
-            assert!(!format!("{signer:?}").contains(TOKEN_MARKER));
-
-            let mut parts = Request::get(S3_EXPRESS_URI).body(())?.into_parts().0;
-            let original = parts.clone();
-            let error = signer
-                .sign_request(&Context::new(), &mut parts, Some(&credential), None)
-                .await
-                .expect_err("invalid session token must be rejected");
-
-            assert!(!format!("{error}").contains(TOKEN_MARKER));
-            assert!(!format!("{error:?}").contains(TOKEN_MARKER));
-            assert_eq!(parts.uri, original.uri);
-            assert_eq!(parts.headers, original.headers);
-            assert_eq!(
-                credential.session_token.as_deref(),
-                Some("SENSITIVE_SESSION_TOKEN\n")
-            );
         }
 
         Ok(())
@@ -996,6 +1171,308 @@ mod tests {
         assert_eq!(format_query(l), format_query(r), "{name} query mismatch");
     }
 
+    fn encoding_request(uri: &str) -> Result<Request<&'static str>> {
+        Ok(Request::get(uri)
+            .header("x-custom", "encoding-test")
+            .body("")?)
+    }
+
+    fn aws_signed_encoding_request(
+        uri: &str,
+        now: Timestamp,
+        mode: PercentEncodingMode,
+        presigned: bool,
+    ) -> Result<Request<&'static str>> {
+        let mut request = encoding_request(uri)?;
+        let mut settings = SigningSettings::default();
+        settings.percent_encoding_mode = match mode {
+            PercentEncodingMode::Single => AwsPercentEncodingMode::Single,
+            PercentEncodingMode::Double => AwsPercentEncodingMode::Double,
+        };
+        // Match reqsign's other signing choices so only URI encoding varies.
+        settings.uri_path_normalization_mode = UriPathNormalizationMode::Disabled;
+        settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
+        settings.session_token_mode = SessionTokenMode::Include;
+        settings.session_token_name_override = None;
+        settings.excluded_headers = None;
+        settings.signature_location = if presigned {
+            SignatureLocation::QueryParams
+        } else {
+            SignatureLocation::Headers
+        };
+        settings.expires_in = presigned.then_some(Duration::from_secs(60));
+
+        let identity = Credentials::new(
+            TEST_ACCESS_KEY,
+            TEST_SECRET_KEY,
+            Some(TEST_SESSION_TOKEN.to_string()),
+            None,
+            "hardcoded-credentials",
+        )
+        .into();
+        let params = v4::SigningParams::builder()
+            .identity(&identity)
+            .region("us-east-1")
+            .name("execute-api")
+            .time(now.as_system_time())
+            .settings(settings)
+            .build()
+            .expect("signing params must be valid");
+        let output = aws_sigv4::http_request::sign(
+            SignableRequest::new(
+                request.method().as_str(),
+                request.uri().to_string(),
+                request
+                    .headers()
+                    .iter()
+                    .map(|(name, value)| (name.as_str(), value.to_str().unwrap())),
+                SignableBody::UnsignedPayload,
+            )?,
+            &params.into(),
+        )?;
+        let (instructions, _) = output.into_parts();
+        instructions.apply_to_request_http1x(&mut request);
+        Ok(request)
+    }
+
+    async fn reqsign_signed_encoding_request(
+        service: &str,
+        uri: &str,
+        now: Timestamp,
+        mode: Option<PercentEncodingMode>,
+        presigned: bool,
+    ) -> Result<Request<&'static str>> {
+        let credential = Credential {
+            access_key_id: TEST_ACCESS_KEY.to_string(),
+            secret_access_key: TEST_SECRET_KEY.to_string(),
+            session_token: Some(TEST_SESSION_TOKEN.to_string()),
+            expires_in: Some(now + Duration::from_secs(3600)),
+        };
+        let mut signer = RequestSigner::new(service, "us-east-1").with_time(now);
+        if let Some(mode) = mode {
+            signer = signer.with_percent_encoding_mode(mode);
+        }
+        let (mut parts, body) = encoding_request(uri)?.into_parts();
+        signer
+            .sign_request(
+                &Context::new(),
+                &mut parts,
+                Some(&credential),
+                presigned.then_some(Duration::from_secs(60)),
+            )
+            .await?;
+        Ok(Request::from_parts(parts, body))
+    }
+
+    async fn check_encoding_signatures_match_aws_sigv4(presigned: bool) -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        // Both implementations agree on Single for canonically encoded wire
+        // paths. Noncanonical inputs are covered separately below.
+        let encoded_paths = [
+            "/",
+            "/percent%25",
+            "/encoded%2Fslash",
+            "/space%20here",
+            "/user%40example.com",
+            "/key%3Dvalue",
+            "/%E4%BD%A0%E5%A5%BD/%C3%A9",
+            "/literal%252Fescape",
+            "/unreserved-._~/a//b/./c/../d/",
+        ];
+        let double_only_paths = [
+            "/user@example.com/key=value",
+            "/lowercase%2fslash/%c3%a9",
+            "/encoded%7Etilde",
+            "/invalid-utf8%FF",
+            "/a//b/./c/../d/",
+        ];
+        const QUERY: &str = "z=last&slash=%2f&dup=two&dup=one&empty=&flag&double=%252F";
+
+        for mode in [PercentEncodingMode::Single, PercentEncodingMode::Double] {
+            let mut paths = encoded_paths.to_vec();
+            if mode == PercentEncodingMode::Double {
+                paths.extend(double_only_paths);
+            }
+            for path in paths {
+                let uri = format!("https://example.com{path}?{QUERY}");
+                let expected = aws_signed_encoding_request(&uri, now, mode, presigned)?;
+                let actual = reqsign_signed_encoding_request(
+                    "execute-api",
+                    &uri,
+                    now,
+                    Some(mode),
+                    presigned,
+                )
+                .await?;
+                let name = format!("{mode:?}, presigned={presigned}, path={path}");
+                compare_request(&name, &expected, &actual);
+                assert_eq!(actual.uri().path(), path, "{name} changed wire path");
+                if presigned {
+                    assert!(
+                        actual.uri().to_string().starts_with(&format!("{uri}&")),
+                        "{name} changed existing wire query"
+                    );
+                    assert!(actual.uri().query().unwrap().contains("X-Amz-Signature="));
+                } else {
+                    assert_eq!(actual.uri().to_string(), uri, "{name} changed wire URI");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn canonical_uri_encoding_header_signatures_match_aws_sigv4() -> Result<()> {
+        check_encoding_signatures_match_aws_sigv4(false).await
+    }
+
+    #[tokio::test]
+    async fn canonical_uri_encoding_query_signatures_match_aws_sigv4() -> Result<()> {
+        check_encoding_signatures_match_aws_sigv4(true).await
+    }
+
+    #[tokio::test]
+    async fn default_encoding_mode_is_single_for_every_service() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let path = "/a//b/./c/../user@example.com/%2f/%7E/key=value/%25";
+        let uri = format!("https://example.com{path}?{RAW_QUERY}");
+
+        for service in ["s3", "s3express", "execute-api", "sts"] {
+            for presigned in [false, true] {
+                let default =
+                    reqsign_signed_encoding_request(service, &uri, now, None, presigned).await?;
+                let single = reqsign_signed_encoding_request(
+                    service,
+                    &uri,
+                    now,
+                    Some(PercentEncodingMode::Single),
+                    presigned,
+                )
+                .await?;
+                let double = reqsign_signed_encoding_request(
+                    service,
+                    &uri,
+                    now,
+                    Some(PercentEncodingMode::Double),
+                    presigned,
+                )
+                .await?;
+
+                assert_eq!(
+                    default.headers(),
+                    single.headers(),
+                    "{service} should default to Single"
+                );
+                assert_eq!(
+                    default.uri(),
+                    single.uri(),
+                    "{service} should default to Single"
+                );
+                if presigned {
+                    assert_ne!(
+                        default.uri(),
+                        double.uri(),
+                        "{service} should only use Double when requested"
+                    );
+                } else {
+                    assert_ne!(
+                        default.headers()[header::AUTHORIZATION],
+                        double.headers()[header::AUTHORIZATION],
+                        "{service} should only use Double when requested"
+                    );
+                }
+                assert_eq!(default.uri().path(), path, "{service} changed wire path");
+                if presigned {
+                    assert!(
+                        default.uri().to_string().starts_with(&uri),
+                        "{service} changed existing wire query"
+                    );
+                } else {
+                    assert_eq!(default.uri().to_string(), uri, "{service} changed wire URI");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn default_encoding_mode_retains_legacy_canonicalization_differences() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        for (wire_path, legacy_path) in [
+            (
+                "/user@example.com/key=value",
+                "/user%40example.com/key%3Dvalue",
+            ),
+            ("/lowercase%2fslash/%c3%a9", "/lowercase%2Fslash/%C3%A9"),
+            ("/encoded%7Etilde", "/encoded~tilde"),
+        ] {
+            assert_eq!(canonical_uri(wire_path)?, legacy_path);
+            let uri = format!("https://example.com{wire_path}");
+            let legacy_uri = format!("https://example.com{legacy_path}");
+            for presigned in [false, true] {
+                let actual =
+                    reqsign_signed_encoding_request("execute-api", &uri, now, None, presigned)
+                        .await?;
+                // SDK Single leaves the path verbatim. Legacy reqsign Single
+                // decodes and re-encodes each segment, so compare the default
+                // signature against the SDK signing the legacy canonical path.
+                let expected = aws_signed_encoding_request(
+                    &legacy_uri,
+                    now,
+                    PercentEncodingMode::Single,
+                    presigned,
+                )?;
+                compare_request(wire_path, &expected, &actual);
+                assert_eq!(actual.uri().path(), wire_path);
+
+                let sdk_wire =
+                    aws_signed_encoding_request(&uri, now, PercentEncodingMode::Single, presigned)?;
+                if presigned {
+                    let signature = |request: &Request<&str>| {
+                        form_urlencoded::parse(request.uri().query().unwrap().as_bytes())
+                            .find(|(name, _)| name == "X-Amz-Signature")
+                            .expect("presigned signature must exist")
+                            .1
+                            .into_owned()
+                    };
+                    assert_ne!(signature(&actual), signature(&sdk_wire));
+                } else {
+                    assert_ne!(
+                        actual.headers()[header::AUTHORIZATION],
+                        sdk_wire.headers()[header::AUTHORIZATION]
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn default_encoding_mode_retains_invalid_utf8_rejection() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let credential = s3_express_credential(now);
+        for presigned in [false, true] {
+            let signer = RequestSigner::new("execute-api", "us-east-1").with_time(now);
+            let mut parts = encoding_request("https://example.com/invalid%FF?raw=%2f")?
+                .into_parts()
+                .0;
+            let original = parts.clone();
+            let error = signer
+                .sign_request(
+                    &Context::new(),
+                    &mut parts,
+                    Some(&credential),
+                    presigned.then_some(Duration::from_secs(60)),
+                )
+                .await
+                .expect_err("Single must retain its legacy UTF-8 validation");
+            assert_eq!(error.kind(), ErrorKind::RequestInvalid);
+            assert_eq!(parts.uri, original.uri);
+            assert_eq!(parts.headers, original.headers);
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn canonicalization_preserves_wire_uri() -> Result<()> {
         let credential = Credential {
@@ -1009,11 +1486,12 @@ mod tests {
 
         let mut canonical_parts = Request::get(&original_uri).body(())?.into_parts().0;
         let mut signing_req = SigningRequest::build(&mut canonical_parts)?;
-        canonicalize_headers(
+        canonicalize_signing_headers(
             &mut signing_req,
             &credential,
             Some(Duration::from_secs(60)),
             now,
+            false,
         )?;
         let auth_query = authentication_query(
             &signing_req,
@@ -1103,7 +1581,7 @@ mod tests {
         let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
-        ss.percent_encoding_mode = PercentEncodingMode::Double;
+        ss.percent_encoding_mode = AwsPercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         let id = Credentials::new(
             "access_key_id",
@@ -1178,7 +1656,7 @@ mod tests {
         let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
-        ss.percent_encoding_mode = PercentEncodingMode::Double;
+        ss.percent_encoding_mode = AwsPercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         ss.signature_location = SignatureLocation::QueryParams;
         ss.expires_in = Some(Duration::from_secs(3600));
@@ -1260,7 +1738,7 @@ mod tests {
         let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
-        ss.percent_encoding_mode = PercentEncodingMode::Double;
+        ss.percent_encoding_mode = AwsPercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         let id = Credentials::new(
             "access_key_id",
@@ -1338,7 +1816,7 @@ mod tests {
         let now = Timestamp::now();
 
         let mut ss = SigningSettings::default();
-        ss.percent_encoding_mode = PercentEncodingMode::Double;
+        ss.percent_encoding_mode = AwsPercentEncodingMode::Double;
         ss.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         ss.signature_location = SignatureLocation::QueryParams;
         ss.expires_in = Some(Duration::from_secs(3600));

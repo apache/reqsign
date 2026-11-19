@@ -35,6 +35,31 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
+## Canonical URI Encoding
+
+The signer uses `PercentEncodingMode::Single` by default for every signing
+service. This keeps Reqsign's existing canonical URI bytes and signatures stable
+across upgrades. Call `with_percent_encoding_mode` to opt in to
+`PercentEncodingMode::Double` when a service requires one additional encoding
+pass:
+
+```rust
+use reqsign_aws_v4::{PercentEncodingMode, RequestSigner};
+
+let signer = RequestSigner::new("execute-api", "us-east-1")
+    .with_percent_encoding_mode(PercentEncodingMode::Double);
+```
+
+Both header signing and presigning use this setting. Supply the final wire-ready
+URI: a path of `/a%20b` is signed as `/a%2520b` in Double mode, while the outgoing
+path remains `/a%20b`. Double encodes the original path without decoding it; a
+literal `@` becomes `%40`, while an existing `%40` becomes `%2540`. It preserves
+literal `/` separators and does not normalize paths or change payload hashing.
+
+Single retains Reqsign's existing per-segment decode/re-encode behavior, including
+normalizing escape spelling and rejecting percent-encoded invalid UTF-8. It is
+not a raw-path pass-through for noncanonical wire paths.
+
 ## Payload Signing
 
 `RequestSigner` signs the request head (`http::request::Parts`) and never reads
@@ -101,10 +126,10 @@ On `wasm32`, the non-portable `sso` and `process` slots are not available.
 ## S3 Express Authentication
 
 `RequestSigner::new("s3express", region)` uses the S3 Express CreateSession
-token representation by default. Use `with_standard_session_token()` for
-operations that require IAM credentials, including `CopyObject`, `HeadBucket`,
-and `UploadPartCopy`. The same selection applies to header and query
-authentication.
+token representation by default for every request authority. Use
+`with_standard_session_token()` for operations that require IAM credentials,
+including `CopyObject`, `HeadBucket`, and `UploadPartCopy`. The same selection
+applies to header and query authentication.
 
 ```rust
 use reqsign_aws_v4::RequestSigner;

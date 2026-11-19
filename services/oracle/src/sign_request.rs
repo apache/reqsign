@@ -17,12 +17,12 @@
 
 use crate::Credential;
 use base64::{Engine as _, engine::general_purpose};
-use http::header::{AUTHORIZATION, DATE};
+use http::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, DATE};
 use http::request::Parts;
+use http::{HeaderMap, HeaderName, Method};
 use log::debug;
-use reqsign_core::Result;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, SignRequest, SigningCredential, SigningRequest};
+use reqsign_core::{Context, Error, Result, SignRequest, SigningCredential, SigningRequest};
 use rsa::pkcs1v15::SigningKey;
 use rsa::sha2::Sha256;
 use rsa::signature::{SignatureEncoding, Signer};
@@ -30,9 +30,19 @@ use rsa::{PrivateKey, pkcs1::DecodeRsaPrivateKey, pkcs8::DecodePrivateKey};
 use std::fmt::Write;
 use std::time::Duration;
 
+const X_CONTENT_SHA256: &str = "x-content-sha256";
+
 /// RequestSigner that implements Oracle Cloud Infrastructure API signing.
 ///
 /// API private key files may contain unencrypted PKCS#1 or PKCS#8 PEM keys.
+///
+/// The signing string always covers `date`, `(request-target)`, and `host`.
+/// For `POST`, `PUT`, and `PATCH` requests it also covers `content-length`,
+/// `content-type`, and `x-content-sha256` when the caller supplies them.
+/// Reqsign does not read the request body or compute `x-content-sha256`; callers
+/// must prepare the body headers before signing. Other methods keep the bodyless
+/// signing contract, and Object Storage `PutObject` and `UploadPart` PUT requests
+/// may omit body metadata as OCI permits.
 ///
 /// - [Oracle Cloud Infrastructure API Signing](https://docs.oracle.com/en-us/iaas/Content/API/Concepts/signingrequests.htm)
 #[derive(Debug)]
@@ -88,7 +98,8 @@ impl SignRequest for RequestSigner {
         let mut signing_req = SigningRequest::build(req)?;
 
         // Construct string to sign
-        let string_to_sign = build_string_to_sign(&signing_req, &request_target, now)?;
+        let (string_to_sign, signed_headers) =
+            build_signing_input(&signing_req, &request_target, now)?;
 
         debug!("string to sign: {}", string_to_sign);
 
@@ -116,7 +127,7 @@ impl SignRequest for RequestSigner {
         // Build authorization header
         let mut auth_value = String::new();
         write!(auth_value, "Signature version=\"1\",")?;
-        write!(auth_value, "headers=\"date (request-target) host\",")?;
+        write!(auth_value, "headers=\"{signed_headers}\",")?;
         write!(
             auth_value,
             "keyId=\"{}/{}/{}\",",
@@ -133,21 +144,64 @@ impl SignRequest for RequestSigner {
     }
 }
 
-fn build_string_to_sign(
+fn build_signing_input(
     request: &SigningRequest,
     request_target: &str,
     now: Timestamp,
-) -> Result<String> {
-    let mut value = String::new();
-    writeln!(value, "date: {}", now.format_http_date())?;
-    writeln!(
-        value,
-        "(request-target): {} {}",
-        request.method.as_str().to_lowercase(),
-        request_target
-    )?;
-    write!(value, "host: {}", request.authority)?;
-    Ok(value)
+) -> Result<(String, String)> {
+    let mut lines = vec![
+        format!("date: {}", now.format_http_date()),
+        format!(
+            "(request-target): {} {}",
+            request.method.as_str().to_lowercase(),
+            request_target
+        ),
+        format!("host: {}", request.authority),
+    ];
+    let mut signed_headers = String::from("date (request-target) host");
+
+    if method_carries_body(&request.method) {
+        let body_headers = [
+            CONTENT_LENGTH,
+            CONTENT_TYPE,
+            HeaderName::from_static(X_CONTENT_SHA256),
+        ];
+        for name in body_headers {
+            let Some(value) = single_header_value(&request.headers, &name)? else {
+                continue;
+            };
+            lines.push(format!("{}: {}", name.as_str(), value));
+            signed_headers.push(' ');
+            signed_headers.push_str(name.as_str());
+        }
+    }
+
+    Ok((lines.join("\n"), signed_headers))
+}
+
+fn method_carries_body(method: &Method) -> bool {
+    method == Method::POST || method == Method::PUT || method == Method::PATCH
+}
+
+fn single_header_value<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Result<Option<&'a str>> {
+    let mut values = headers.get_all(name).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(Error::request_invalid(format!(
+            "request contains multiple values for signed header {}",
+            name.as_str()
+        )));
+    }
+
+    value.to_str().map(Some).map_err(|err| {
+        Error::request_invalid(format!(
+            "request header {} is not valid ASCII",
+            name.as_str()
+        ))
+        .with_source(err)
+    })
 }
 
 #[cfg(test)]
@@ -184,11 +238,12 @@ mod tests {
         let mut canonical_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
         let signing_req = SigningRequest::build(&mut canonical_parts)?;
         let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
-        let string_to_sign = build_string_to_sign(
+        let (string_to_sign, signed_headers) = build_signing_input(
             &signing_req,
             canonical_parts.uri.path_and_query().unwrap().as_str(),
             now,
         )?;
+        assert_eq!(signed_headers, "date (request-target) host");
         assert!(
             string_to_sign.contains(&format!("(request-target): get /object%2Fname?{RAW_QUERY}"))
         );

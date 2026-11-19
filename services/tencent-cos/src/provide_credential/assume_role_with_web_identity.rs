@@ -181,3 +181,151 @@ struct AssumeRoleWithWebIdentityError {
     code: String,
     message: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use reqsign_core::{FileRead, HttpSend, StaticEnv};
+    use serde_json::Value;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Debug)]
+    struct TestFileRead {
+        expected_path: String,
+        content: Vec<u8>,
+    }
+
+    impl FileRead for TestFileRead {
+        async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+            assert_eq!(path, self.expected_path);
+            Ok(self.content.clone())
+        }
+    }
+
+    #[derive(Clone)]
+    struct CaptureHttpSend {
+        requests: Arc<Mutex<Vec<http::Request<Bytes>>>>,
+        response_body: String,
+    }
+
+    impl CaptureHttpSend {
+        fn new(response_body: impl Into<String>) -> Self {
+            Self {
+                requests: Arc::new(Mutex::new(Vec::new())),
+                response_body: response_body.into(),
+            }
+        }
+
+        fn requests(&self) -> Vec<http::Request<Bytes>> {
+            self.requests.lock().expect("lock poisoned").clone()
+        }
+    }
+
+    impl std::fmt::Debug for CaptureHttpSend {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("CaptureHttpSend").finish_non_exhaustive()
+        }
+    }
+
+    impl HttpSend for CaptureHttpSend {
+        async fn http_send(&self, req: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+            self.requests.lock().expect("lock poisoned").push(req);
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(Bytes::from(self.response_body.clone()))
+                .expect("response must build"))
+        }
+    }
+
+    // Exercises the full provider path with a synthetic token and STS fixture, without network
+    // access or cloud credentials.
+    #[tokio::test]
+    async fn test_assume_role_with_web_identity_uses_config_and_decodes_credentials() -> Result<()>
+    {
+        let token_path = "/mock/tencent-web-identity-token";
+        let token = "synthetic-tencent-web-identity-token";
+        let role_arn = "qcs::cam::uin/123456789:roleName/reqsign-test";
+        let provider_id = "123456789";
+        let role_session_name = "reqsign-test-session";
+        let expiration = "2030-01-02T03:04:05Z";
+
+        let http_send = CaptureHttpSend::new(
+            r#"{
+                "Response": {
+                    "Credentials": {
+                        "Token": "temporary-security-token",
+                        "TmpSecretId": "temporary-secret-id",
+                        "TmpSecretKey": "temporary-secret-key"
+                    },
+                    "Expiration": "2030-01-02T03:04:05Z",
+                    "RequestId": "synthetic-request-id"
+                }
+            }"#,
+        );
+
+        let ctx = Context::new()
+            .with_file_read(TestFileRead {
+                expected_path: token_path.to_string(),
+                content: token.as_bytes().to_vec(),
+            })
+            .with_http_send(http_send.clone())
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([
+                    (TENCENTCLOUD_REGION.to_string(), "ap-shanghai".to_string()),
+                    (
+                        TENCENTCLOUD_WEB_IDENTITY_TOKEN_FILE.to_string(),
+                        token_path.to_string(),
+                    ),
+                    (TENCENTCLOUD_ROLE_ARN.to_string(), role_arn.to_string()),
+                    (
+                        TENCENTCLOUD_PROVIDER_ID.to_string(),
+                        provider_id.to_string(),
+                    ),
+                    (
+                        TENCENTCLOUD_ROLE_SESSSION_NAME.to_string(),
+                        role_session_name.to_string(),
+                    ),
+                ]),
+            });
+
+        let credential = AssumeRoleWithWebIdentityCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+
+        let requests = http_send.requests();
+        assert_eq!(1, requests.len());
+        let request = &requests[0];
+        assert_eq!(http::Method::POST, request.method());
+        assert_eq!("https://sts.tencentcloudapi.com", request.uri());
+        assert_eq!("SKIP", request.headers()[AUTHORIZATION]);
+        assert_eq!(
+            "AssumeRoleWithWebIdentity",
+            request.headers()["X-TC-Action"]
+        );
+        assert_eq!("ap-shanghai", request.headers()["X-TC-Region"]);
+        assert_eq!("2018-08-13", request.headers()["X-TC-Version"]);
+        assert_eq!("application/json", request.headers()[CONTENT_TYPE]);
+
+        let body: Value =
+            serde_json::from_slice(request.body()).expect("request body must be valid JSON");
+        assert_eq!(role_session_name, body["RoleSessionName"]);
+        assert_eq!(token, body["WebIdentityToken"]);
+        assert_eq!(role_arn, body["RoleArn"]);
+        assert_eq!(provider_id, body["ProviderId"]);
+
+        assert_eq!("temporary-secret-id", credential.secret_id);
+        assert_eq!("temporary-secret-key", credential.secret_key);
+        assert_eq!(
+            Some("temporary-security-token"),
+            credential.security_token.as_deref()
+        );
+        let expected_expiration: Timestamp = expiration.parse().expect("expiration must parse");
+        assert_eq!(Some(expected_expiration), credential.expires_in);
+
+        Ok(())
+    }
+}
