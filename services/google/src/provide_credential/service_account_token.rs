@@ -488,7 +488,7 @@ mod tests {
 
     fn decode_jwt_json(segment: &str) -> Value {
         let mut standard = segment.replace('-', "+").replace('_', "/");
-        while standard.len() % 4 != 0 {
+        while !standard.len().is_multiple_of(4) {
             standard.push('=');
         }
         serde_json::from_slice(&base64_decode(&standard).expect("JWT segment must decode"))
