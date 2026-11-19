@@ -236,6 +236,56 @@ async fn keystone_provider_authenticates_and_returns_catalog() {
 }
 
 #[tokio::test]
+async fn keystone_provider_resolves_endpoints_across_service_entries() {
+    let mock = MockKeystone {
+        catalog: r#"[
+            {"type": "object-store", "endpoints": []},
+            {"type": "object-store", "endpoints": [{
+                "interface": "internal", "region_id": "RegionOne",
+                "url": "http://swift-internal:8080/v1/AUTH_test"
+            }]},
+            {"type": "identity", "endpoints": [{
+                "interface": "public", "region_id": "RegionTwo",
+                "url": "https://keystone.example.com/v3"
+            }]},
+            {"type": "object-store", "endpoints": [{
+                "interface": "public", "region": "RegionTwo",
+                "url": "https://swift.example.com/v1/AUTH_test"
+            }]}
+        ]"#,
+        ..MockKeystone::scoped()
+    };
+    let ctx = Context::new().with_http_send(mock.clone());
+    let credential = scoped_provider(AUTH_URL)
+        .provide_credential(&ctx)
+        .await
+        .expect("credential loading must succeed")
+        .expect("credential must be present");
+
+    assert_eq!(
+        credential.endpoint("object-store", "public"),
+        Some(SWIFT_PUBLIC_URL)
+    );
+    assert_eq!(
+        credential.endpoint_in_region("object-store", "public", "RegionTwo"),
+        Some(SWIFT_PUBLIC_URL)
+    );
+    assert_eq!(
+        credential.endpoint_in_region("object-store", "internal", "RegionOne"),
+        Some(SWIFT_INTERNAL_URL)
+    );
+    assert_eq!(
+        credential.endpoint_in_region("object-store", "public", "RegionOne"),
+        None
+    );
+    assert_eq!(
+        mock.request_count(),
+        1,
+        "lookup must reuse the returned catalog"
+    );
+}
+
+#[tokio::test]
 async fn keystone_provider_rejects_bad_credentials() {
     let mock = MockKeystone::unauthorized();
     let ctx = Context::new().with_http_send(mock);
