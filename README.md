@@ -12,7 +12,7 @@ Signing API requests without effort.
 
 ---
 
-Most API is simple. But they could be complicated when they are hidden from complex abstraction. `reqsign` bring the simple API back: build, sign, send.
+Most APIs are simple, but they can become complicated when hidden behind complex abstractions. `reqsign` brings the simple API back: build, sign, send.
 
 ## Quick Start
 
@@ -159,13 +159,13 @@ let signer = google::default_signer("storage.googleapis.com");
 use reqsign::aliyun;
 
 // Default signer for Aliyun OSS
-let signer = aliyun::default_signer();
+let signer = aliyun::default_signer("mybucket");
 ```
 
 ## Features
 
-- Pure rust with minimal dependencies.
-- Test again official SDK and services.
+- Pure Rust with minimal dependencies.
+- Tested against official SDKs and services.
 - Supported services
   - Aliyun OSS: `reqsign-aliyun-oss`
   - AWS shared credentials and canonicalization: `reqsign-aws-core`
@@ -177,6 +177,7 @@ let signer = aliyun::default_signer();
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
   - Tencent COS: `reqsign-tencent-cos`
+  - Volcengine TOS: `reqsign-volcengine-tos`
 
 ## Contributing
 
@@ -188,9 +189,9 @@ Submit [issues](https://github.com/apache/reqsign/issues/new/choose) for bug rep
 
 Join the [development mailing list](mailto:dev@reqsign.apache.org) for project discussions and release votes. [Subscribe](mailto:dev-subscribe@reqsign.apache.org) before posting, or browse the [archives](https://lists.apache.org/list.html?dev@reqsign.apache.org).
 
-## Acknowledge
+## Acknowledgments
 
-Inspired a lot from:
+Inspired by:
 
 - [aws-sigv4](https://crates.io/crates/aws-sigv4) for AWS SigV4 support.
 - [azure_storage_blobs](https://crates.io/crates/azure_storage_blobs) for Azure Storage support.

@@ -5,7 +5,7 @@ AWS SigV4 signing implementation for `reqsign`.
 ## Quick Start
 
 ```rust,no_run
-use reqsign_aws_v4::{DefaultCredentialProvider, RequestSigner};
+use reqsign_aws_v4::{DefaultCredentialProvider, EMPTY_STRING_SHA256, RequestSigner};
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let mut req = http::Request::get("https://s3.amazonaws.com/mybucket/mykey")
+        .header("x-amz-content-sha256", EMPTY_STRING_SHA256)
         .body(())
         .unwrap()
         .into_parts()
@@ -58,6 +59,55 @@ literal `/` separators and does not normalize paths or change payload hashing.
 Single retains Reqsign's existing per-segment decode/re-encode behavior, including
 normalizing escape spelling and rejecting percent-encoded invalid UTF-8. It is
 not a raw-path pass-through for noncanonical wire paths.
+
+## Payload Signing
+
+`RequestSigner` signs the request head (`http::request::Parts`) and never reads
+the body. If `x-amz-content-sha256` is present, the signer preserves it and uses
+it as the SigV4 payload hash. Otherwise, header authentication adds
+`x-amz-content-sha256: UNSIGNED-PAYLOAD`, including for an empty body. Query
+authentication (presigning) does not add the header, but uses
+`UNSIGNED-PAYLOAD` in the canonical request.
+
+`UNSIGNED-PAYLOAD` is an Amazon S3 payload mode. The signer uses the same
+default for every service name, while other AWS services define their own
+payload requirements. Check the endpoint's [SigV4 requirements] when that mode
+is not accepted.
+
+For an S3 request that must sign the actual payload, hash the exact bytes that
+will be sent and set `x-amz-content-sha256` before signing. Use
+`EMPTY_STRING_SHA256` for an empty body and `reqsign_core::hash::hex_sha256` for
+non-empty bytes:
+
+```rust,no_run
+use reqsign_aws_v4::EMPTY_STRING_SHA256;
+use reqsign_core::hash::hex_sha256;
+
+let body: &[u8] = b"Hello, World!";
+let payload_hash = if body.is_empty() {
+    EMPTY_STRING_SHA256.to_string()
+} else {
+    hex_sha256(body)
+};
+
+let request = http::Request::put("https://s3.amazonaws.com/mybucket/hello.txt")
+    .header("x-amz-content-sha256", payload_hash)
+    .body(body)
+    .expect("request must be valid");
+```
+
+Setting `EMPTY_STRING_SHA256` is only required when the endpoint requires a
+signed empty payload; otherwise the default `UNSIGNED-PAYLOAD` remains in
+effect. If the header is set before presigning, it becomes part of
+`X-Amz-SignedHeaders`, and the same header must be sent with the presigned
+request. Leave it unset when the URL should use `UNSIGNED-PAYLOAD` without a
+payload header.
+
+Hash the bytes after content encoding or compression, and do not change the
+payload after signing. `RequestSigner` does not implement chunked or streaming
+payload signatures.
+
+[SigV4 requirements]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html
 
 ## Default Credential Chain
 
