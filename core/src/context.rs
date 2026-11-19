@@ -36,9 +36,10 @@ use std::sync::Arc;
 ///
 /// Crypto operations resolve through the context. Resolution prefers a provider
 /// bound with [`Context::with_crypto`], then the process-wide provider installed
-/// with [`crate::crypto::install_default`]. A bare `Context::new()` has neither
-/// and returns [`crate::ErrorKind::ConfigInvalid`] when crypto is first needed.
-/// Creating or cloning a context never installs or freezes a global provider.
+/// with [`crate::crypto::install_default`]. A bare `Context::new()` has no
+/// explicit binding and returns [`crate::ErrorKind::ConfigInvalid`] when crypto
+/// is first needed without a process-wide provider. Creating or cloning a
+/// context never installs or freezes a global provider.
 ///
 /// ## Example
 ///

@@ -108,10 +108,10 @@ explicit binding keeps that provider for its lifetime, including after a global
 provider is installed later. An unbound context observes the current global
 registration at the point of use. Cloning a context preserves its binding.
 
-`Context::new()` starts with neither an explicit binding nor a global provider.
-Portable core code must either bind a provider on the context or install a
-global one. The facade's `default_context()` binds RustCrypto when the global
-slot is empty at construction, as described below.
+`Context::new()` starts without an explicit binding. Resolution may still find
+a process-wide provider; otherwise portable core code must bind a provider on
+the context or install a global one. The facade's `default_context()` binds
+RustCrypto when the global slot is empty at construction, as described below.
 
 ## Global Registration
 
