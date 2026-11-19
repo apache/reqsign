@@ -105,6 +105,9 @@ if url.startswith('https://oidc.example.test/token'):
     assert option('--header') == 'Authorization: bearer fake-oidc-request-token'
     print(json.dumps({'value': 'fake-federated-token'}))
     sys.exit(0)
+if url.startswith('https://dev.azure.com/'):
+    assert option('--header') == 'Authorization: Bearer fake-devops-token', \
+        'unexpected DevOps authorization header'
 # Both waiting and cancellation must finish before fixture cleanup.
 assert list(root.glob('ci-probe-*'))
 with (root / 'curl-calls.jsonl').open('a') as f:
@@ -325,6 +328,7 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         patches = [c for c in calls if c['method'] == 'PATCH']
         self.assertEqual(len(patches), 1)
         self.assertTrue(all('/runs/23?api-version=7.1' in c['url'] for c in gets))
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
 
     def test_pipeline_cleanup_reauthenticates_after_assertion_expiry(self):
         self.env.update(EXPIRE_DEVOPS_AUTH_AFTER='2',
@@ -337,6 +341,28 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         self.assertTrue((self.state / 'cancelled').exists())
         self.assertNotIn('fake-federated-token', result.stdout + result.stderr)
         self.assertNotIn('fake-devops-token', result.stdout + result.stderr)
+        self.assertEqual(list(self.state.glob('ci-probe-*')), [])
+
+    def test_pipeline_cleanup_reauthenticates_in_actions_mode(self):
+        self.env.update(EXPIRE_DEVOPS_AUTH_AFTER='2',
+                        FAIL_PIPELINE_POLL='1', GITHUB_ACTIONS='true')
+        result = self.run_script('with-probe.sh', 'bash', str(SCRIPTS / 'azure-pipelines.sh'))
+        self.assertEqual(result.returncode, 22, result.stderr)
+        calls = self.curl_calls()
+        gets = [c for c in calls if c['method'] == 'GET']
+        self.assertEqual(len(gets), 2)
+        self.assertEqual(len([c for c in calls if c['method'] == 'POST']), 1)
+        self.assertEqual(len([c for c in calls if c['method'] == 'PATCH']), 1)
+        self.assertTrue((self.state / 'cancelled').exists())
+        masks = [line for line in result.stdout.splitlines()
+                 if line.startswith('::add-mask::')]
+        self.assertEqual(masks, ['::add-mask::fake-devops-token',
+                                 '::add-mask::fake-federated-token'])
+        self.assertNotIn('::add-mask::', result.stderr)
+        unmasked_stdout = '\n'.join(line for line in result.stdout.splitlines()
+                                     if not line.startswith('::add-mask::'))
+        self.assertNotIn('fake-federated-token', unmasked_stdout + result.stderr)
+        self.assertNotIn('fake-devops-token', unmasked_stdout + result.stderr)
         self.assertEqual(list(self.state.glob('ci-probe-*')), [])
 
     def test_blob_cleanup_reauthenticates_after_assertion_expiry(self):

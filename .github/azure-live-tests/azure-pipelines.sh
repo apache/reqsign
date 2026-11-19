@@ -49,24 +49,28 @@ read_run_status() {
 
 # A delayed cleanup can outlive the GitHub OIDC assertion used by the initial
 # login. Retry once through a fresh login as the same service principal.
-get_devops_access_token() {
-  local token
-  token=$(az account get-access-token \
+# Set the global access_token directly instead of returning it: the login
+# helper must write its ::add-mask:: command to the runner's stdout, not into
+# the captured token.
+load_devops_access_token() {
+  if access_token=$(az account get-access-token \
     --resource https://app.vssps.visualstudio.com/ \
     --query accessToken \
-    --output tsv) && { printf '%s\n' "$token"; return 0; }
+    --output tsv); then
+    return 0
+  fi
   bash "$script_dir/azure-oidc-login.sh" || return
-  az account get-access-token \
+  access_token=$(az account get-access-token \
     --resource https://app.vssps.visualstudio.com/ \
     --query accessToken \
-    --output tsv
+    --output tsv)
 }
 
 # Called by the EXIT handler.
 # shellcheck disable=SC2329
 cancel_unfinished_run() {
   local response
-  access_token=$(get_devops_access_token) || return
+  load_devops_access_token || return
   response=$(read_run_status "$access_token") || return $?
   state=$(jq --raw-output '.state' <<< "$response") || return
   if [[ "$state" != "completed" ]]; then
@@ -140,7 +144,7 @@ echo "Queued Azure Pipelines run: $run_url"
 
 deadline=$((SECONDS + 3300))
 while (( SECONDS < deadline )); do
-  access_token=$(get_devops_access_token) || exit $?
+  load_devops_access_token || exit $?
   response=$(read_run_status "$access_token") || exit $?
   state=$(jq --raw-output '.state' <<< "$response")
   result=$(jq --raw-output '.result // empty' <<< "$response")
