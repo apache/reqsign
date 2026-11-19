@@ -580,6 +580,15 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
 ROOT = SCRIPTS.parent.parent
 
 
+def pipeline_checkout_script():
+    """Return the inline shell of the pipeline's checkout step."""
+    text = (ROOT / 'azure-pipelines.yml').read_text()
+    end = text.index('    displayName: Check out the GitHub Actions revision')
+    start = text.rindex('  - bash: |', 0, end)
+    lines = text[start:end].splitlines()[1:]
+    return '\n'.join(line[6:] if line.startswith('      ') else line for line in lines)
+
+
 class ProbeWiringTests(unittest.TestCase):
     """The workflow has to skip every remote step for a superseded probe."""
 
@@ -610,6 +619,103 @@ class ProbeWiringTests(unittest.TestCase):
         text = (ROOT / '.github/workflows/azure_storage.yml').read_text()
         self.assertIn('AZURE_PIPELINES_SUPERSEDED', text)
         self.assertIn('skipped (superseded by a newer run)', text)
+
+
+class ProbePipelineTests(unittest.TestCase):
+    """The pipeline must check out the revision that triggered the probe."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name)
+        self.remote = root / 'remote.git'
+        self.seed = root / 'seed'
+        self.checkout = root / 'checkout'
+        self.git_env = {**os.environ,
+                        'GIT_AUTHOR_NAME': 'fixture',
+                        'GIT_AUTHOR_EMAIL': 'fixture@example.test',
+                        'GIT_COMMITTER_NAME': 'fixture',
+                        'GIT_COMMITTER_EMAIL': 'fixture@example.test'}
+        self.git('init', '-q', '--bare', str(self.remote))
+        # GitHub served commit-by-SHA fetches for both branch commits and
+        # displaced pull request merge commits when this was checked read-only.
+        self.git('-C', str(self.remote), 'config',
+                 'uploadpack.allowReachableSHA1InWant', 'true')
+        self.git('-C', str(self.remote), 'config',
+                 'uploadpack.allowAnySHA1InWant', 'true')
+        self.git('init', '-q', '-b', 'main', str(self.seed))
+        self.queued = self.commit('main.txt', 'queued revision')
+        self.git('-C', str(self.seed), 'push', '-q', str(self.remote), 'main')
+        self.newer = self.commit('main.txt', 'docs-only successor')
+        self.git('-C', str(self.seed), 'push', '-q', str(self.remote), 'main')
+        self.git('init', '-q', '-b', 'main', str(self.checkout))
+
+    def git(self, *args):
+        return subprocess.run(['git', *args], check=True, capture_output=True,
+                              text=True, env=self.git_env)
+
+    def commit(self, name, message):
+        (self.seed / name).write_text(message)
+        self.git('-C', str(self.seed), 'add', name)
+        self.git('-C', str(self.seed), 'commit', '-q', '-m', message)
+        return self.git('-C', str(self.seed), 'rev-parse', 'HEAD').stdout.strip()
+
+    def head(self):
+        result = subprocess.run(['git', '-C', str(self.checkout), 'rev-parse', 'HEAD'],
+                                capture_output=True, text=True)
+        return result.stdout.strip() if result.returncode == 0 else ''
+
+    def run_checkout(self, sha, ref):
+        script = pipeline_checkout_script()
+        self.assertIn('https://github.com/apache/reqsign.git', script)
+        script = script.replace('https://github.com/apache/reqsign.git', str(self.remote))
+        env = {**os.environ, 'GITHUB_SHA': sha, 'GITHUB_REF': ref}
+        return subprocess.run(['bash', '-c', script], cwd=self.checkout, env=env,
+                              capture_output=True, text=True)
+
+    def test_checks_out_the_queued_commit_after_the_branch_advanced(self):
+        result = self.run_checkout(self.queued, 'refs/heads/main')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.head(), self.queued)
+        self.assertNotEqual(self.head(), self.newer)
+        self.assertEqual((self.checkout / 'main.txt').read_text(), 'queued revision')
+
+    def test_checks_out_the_queued_merge_commit_after_the_merge_ref_moved(self):
+        self.git('-C', str(self.seed), 'checkout', '-q', '-B', 'pr', self.queued)
+        self.commit('pr.txt', 'pull request head')
+        self.git('-C', str(self.seed), 'merge', '-q', '--no-ff', '-m', 'merge one', 'main')
+        first_merge = self.git('-C', str(self.seed), 'rev-parse', 'HEAD').stdout.strip()
+        self.git('-C', str(self.seed), 'push', '-q', str(self.remote),
+                 'HEAD:refs/pull/1/merge')
+        self.commit('pr.txt', 'pull request head again')
+        self.git('-C', str(self.seed), 'merge', '-q', '--no-ff', '-m', 'merge two', 'main')
+        second_merge = self.git('-C', str(self.seed), 'rev-parse', 'HEAD').stdout.strip()
+        self.git('-C', str(self.seed), 'push', '-q', '--force', str(self.remote),
+                 'HEAD:refs/pull/1/merge')
+
+        result = self.run_checkout(first_merge, 'refs/pull/1/merge')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.head(), first_merge)
+        self.assertNotEqual(self.head(), second_merge)
+
+    def test_refuses_to_check_out_a_ref_that_moved(self):
+        # The queued commit is gone, so only newer code is fetchable. The step
+        # has to stop instead of testing a revision that never triggered it.
+        result = self.run_checkout('0' * 40, 'refs/heads/main')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('instead of the triggering commit', result.stderr)
+        self.assertEqual(self.head(), '')
+
+    def test_rejects_a_ref_the_workflow_never_runs_on(self):
+        result = self.run_checkout(self.queued, 'refs/remotes/origin/main')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Unsupported GitHub ref', result.stderr)
+        self.assertEqual(self.head(), '')
+
+    def test_rejects_a_malformed_commit(self):
+        result = self.run_checkout('not-a-commit', 'refs/heads/main')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.head(), '')
 
 
 if __name__ == '__main__':
