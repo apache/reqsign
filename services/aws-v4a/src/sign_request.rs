@@ -55,27 +55,26 @@ impl RequestSigner {
         Self {
             service: service.to_string(),
             region_set,
-            percent_encoding_mode: PercentEncodingMode::for_service(service),
+            percent_encoding_mode: PercentEncodingMode::default(),
             time: None,
         }
     }
 
-    /// Override the canonical URI percent-encoding mode for header and query signing.
+    /// Set the canonical URI percent-encoding mode for header and query signing.
     ///
-    /// The default follows the AWS service rules: `s3` and `s3express` use
-    /// [`PercentEncodingMode::Single`], and every other service uses
-    /// [`PercentEncodingMode::Double`] (the `aws-sigv4` default). Call this to
-    /// override the inferred mode for a custom or self-hosted endpoint. This
-    /// does not modify the outgoing URI, normalize paths, or change payload
-    /// hashing.
+    /// The default is [`PercentEncodingMode::Single`] for every signing service,
+    /// preserving Reqsign's existing canonical URI and signature bytes. Select
+    /// [`PercentEncodingMode::Double`] explicitly when the service expects one
+    /// additional encoding pass over the wire path. This does not modify the
+    /// outgoing URI, normalize paths, or change payload hashing.
     ///
     /// # Example
     ///
     /// ```
     /// use reqsign_aws_v4a::{PercentEncodingMode, RequestSigner, SigningRegionSet};
     ///
-    /// let signer = RequestSigner::new("my-custom-service", SigningRegionSet::new("*")?)
-    ///     .with_percent_encoding_mode(PercentEncodingMode::Single);
+    /// let signer = RequestSigner::new("execute-api", SigningRegionSet::new("*")?)
+    ///     .with_percent_encoding_mode(PercentEncodingMode::Double);
     /// # Ok::<(), reqsign_core::Error>(())
     /// ```
     pub fn with_percent_encoding_mode(mut self, mode: PercentEncodingMode) -> Self {
@@ -690,14 +689,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_encoding_mode_follows_aws_service_rules() -> AnyResult<()> {
+    async fn default_encoding_mode_is_single_for_every_service() -> AnyResult<()> {
         let uri = format!("https://example.amazonaws.com/object%2Fname?{ENCODING_QUERY}");
-        for (service, expected) in [
-            ("s3", PercentEncodingMode::Single),
-            ("s3express", PercentEncodingMode::Single),
-            ("service", PercentEncodingMode::Double),
-            ("execute-api", PercentEncodingMode::Double),
-        ] {
+        for service in ["s3", "s3express", "service", "execute-api"] {
             for expires_in in [None, Some(Duration::from_secs(3600))] {
                 let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
                 signer_for(service)
@@ -707,21 +701,54 @@ mod tests {
 
                 let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
                 signer_for(service)
-                    .with_percent_encoding_mode(expected)
+                    .with_percent_encoding_mode(PercentEncodingMode::Single)
                     .sign_request(&Context::new(), &mut parts, Some(&credential()), expires_in)
                     .await?;
-                let explicit = Request::from_parts(parts, body);
+                let single = Request::from_parts(parts, body);
+
+                let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
+                signer_for(service)
+                    .with_percent_encoding_mode(PercentEncodingMode::Double)
+                    .sign_request(&Context::new(), &mut parts, Some(&credential()), expires_in)
+                    .await?;
+                let double = Request::from_parts(parts, body);
 
                 assert_eq!(
                     comparable_headers(&default),
-                    comparable_headers(&explicit),
-                    "{service} should default to {expected:?}"
+                    comparable_headers(&single),
+                    "{service} should default to Single"
                 );
                 assert_eq!(
-                    comparable_query(&default),
-                    comparable_query(&explicit),
-                    "{service} should default to {expected:?}"
+                    default.uri(),
+                    single.uri(),
+                    "{service} should default to Single"
                 );
+                assert_eq!(default.uri().path(), "/object%2Fname");
+                if expires_in.is_some() {
+                    assert!(
+                        default
+                            .uri()
+                            .to_string()
+                            .starts_with(&format!("{uri}&X-Amz-Algorithm="))
+                    );
+                    assert_ne!(
+                        default.uri(),
+                        double.uri(),
+                        "{service} should only use Double when requested"
+                    );
+                } else {
+                    assert_eq!(default.uri().to_string(), uri);
+                    assert_eq!(
+                        default.headers()[header::AUTHORIZATION],
+                        single.headers()[header::AUTHORIZATION],
+                        "{service} should default to Single"
+                    );
+                    assert_ne!(
+                        default.headers()[header::AUTHORIZATION],
+                        double.headers()[header::AUTHORIZATION],
+                        "{service} should only use Double when requested"
+                    );
+                }
             }
         }
         Ok(())

@@ -50,7 +50,7 @@ impl RequestSigner {
         Self {
             service: service.into(),
             region: region.into(),
-            percent_encoding_mode: PercentEncodingMode::for_service(service),
+            percent_encoding_mode: PercentEncodingMode::default(),
             use_standard_session_token: false,
 
             time: None,
@@ -92,22 +92,21 @@ impl RequestSigner {
         self
     }
 
-    /// Override the canonical URI percent-encoding mode for header and query signing.
+    /// Set the canonical URI percent-encoding mode for header and query signing.
     ///
-    /// The default follows the AWS service rules: `s3` and `s3express` use
-    /// [`PercentEncodingMode::Single`], and every other service uses
-    /// [`PercentEncodingMode::Double`] (the `aws-sigv4` default). Call this to
-    /// override the inferred mode for a custom or self-hosted endpoint. This
-    /// does not modify the outgoing URI, normalize paths, or change payload
-    /// hashing.
+    /// The default is [`PercentEncodingMode::Single`] for every signing service,
+    /// preserving Reqsign's existing canonical URI and signature bytes. Select
+    /// [`PercentEncodingMode::Double`] explicitly when the service expects one
+    /// additional encoding pass over the wire path. This does not modify the
+    /// outgoing URI, normalize paths, or change payload hashing.
     ///
     /// # Example
     ///
     /// ```
     /// use reqsign_aws_v4::{PercentEncodingMode, RequestSigner};
     ///
-    /// let signer = RequestSigner::new("my-custom-service", "us-east-1")
-    ///     .with_percent_encoding_mode(PercentEncodingMode::Single);
+    /// let signer = RequestSigner::new("execute-api", "us-east-1")
+    ///     .with_percent_encoding_mode(PercentEncodingMode::Double);
     /// ```
     pub fn with_percent_encoding_mode(mut self, mode: PercentEncodingMode) -> Self {
         self.percent_encoding_mode = mode;
@@ -1142,33 +1141,55 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn default_encoding_mode_follows_aws_service_rules() -> Result<()> {
+    async fn default_encoding_mode_is_single_for_every_service() -> Result<()> {
         let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
         let path = "/a//b/./c/../user@example.com/%2f/%7E/key=value/%25";
         let uri = format!("https://example.com{path}?{RAW_QUERY}");
 
         for service in ["s3", "s3express", "execute-api", "sts"] {
-            let expected = if matches!(service, "s3" | "s3express") {
-                PercentEncodingMode::Single
-            } else {
-                PercentEncodingMode::Double
-            };
             for presigned in [false, true] {
                 let default =
                     reqsign_signed_encoding_request(service, &uri, now, None, presigned).await?;
-                let explicit =
-                    reqsign_signed_encoding_request(service, &uri, now, Some(expected), presigned)
-                        .await?;
+                let single = reqsign_signed_encoding_request(
+                    service,
+                    &uri,
+                    now,
+                    Some(PercentEncodingMode::Single),
+                    presigned,
+                )
+                .await?;
+                let double = reqsign_signed_encoding_request(
+                    service,
+                    &uri,
+                    now,
+                    Some(PercentEncodingMode::Double),
+                    presigned,
+                )
+                .await?;
+
                 assert_eq!(
                     default.headers(),
-                    explicit.headers(),
-                    "{service} should default to {expected:?}"
+                    single.headers(),
+                    "{service} should default to Single"
                 );
                 assert_eq!(
                     default.uri(),
-                    explicit.uri(),
-                    "{service} should default to {expected:?}"
+                    single.uri(),
+                    "{service} should default to Single"
                 );
+                if presigned {
+                    assert_ne!(
+                        default.uri(),
+                        double.uri(),
+                        "{service} should only use Double when requested"
+                    );
+                } else {
+                    assert_ne!(
+                        default.headers()[header::AUTHORIZATION],
+                        double.headers()[header::AUTHORIZATION],
+                        "{service} should only use Double when requested"
+                    );
+                }
                 assert_eq!(default.uri().path(), path, "{service} changed wire path");
                 if presigned {
                     assert!(
@@ -1180,21 +1201,11 @@ mod tests {
                 }
             }
         }
-
-        // S3 and non-S3 defaults must produce distinct signatures on the same
-        // noncanonical path, proving the mode is inferred per service.
-        let s3 = reqsign_signed_encoding_request("s3", &uri, now, None, false).await?;
-        let execute_api =
-            reqsign_signed_encoding_request("execute-api", &uri, now, None, false).await?;
-        assert_ne!(
-            s3.headers()[header::AUTHORIZATION],
-            execute_api.headers()[header::AUTHORIZATION]
-        );
         Ok(())
     }
 
     #[tokio::test]
-    async fn single_encoding_retains_legacy_canonicalization_differences() -> Result<()> {
+    async fn default_encoding_mode_retains_legacy_canonicalization_differences() -> Result<()> {
         let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
         for (wire_path, legacy_path) in [
             (
@@ -1208,17 +1219,12 @@ mod tests {
             let uri = format!("https://example.com{wire_path}");
             let legacy_uri = format!("https://example.com{legacy_path}");
             for presigned in [false, true] {
-                let actual = reqsign_signed_encoding_request(
-                    "execute-api",
-                    &uri,
-                    now,
-                    Some(PercentEncodingMode::Single),
-                    presigned,
-                )
-                .await?;
+                let actual =
+                    reqsign_signed_encoding_request("execute-api", &uri, now, None, presigned)
+                        .await?;
                 // SDK Single leaves the path verbatim. Legacy reqsign Single
-                // decodes and re-encodes each segment, so compare its signature
-                // against the SDK signing that explicitly canonicalized path.
+                // decodes and re-encodes each segment, so compare the default
+                // signature against the SDK signing the legacy canonical path.
                 let expected = aws_signed_encoding_request(
                     &legacy_uri,
                     now,
@@ -1251,13 +1257,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn single_encoding_retains_invalid_utf8_rejection() -> Result<()> {
+    async fn default_encoding_mode_retains_invalid_utf8_rejection() -> Result<()> {
         let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
         let credential = s3_express_credential(now);
         for presigned in [false, true] {
-            let signer = RequestSigner::new("execute-api", "us-east-1")
-                .with_time(now)
-                .with_percent_encoding_mode(PercentEncodingMode::Single);
+            let signer = RequestSigner::new("execute-api", "us-east-1").with_time(now);
             let mut parts = encoding_request("https://example.com/invalid%FF?raw=%2f")?
                 .into_parts()
                 .0;

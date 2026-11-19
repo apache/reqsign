@@ -36,17 +36,17 @@ async fn main() -> anyhow::Result<()> {
 
 ## Canonical URI Encoding
 
-The signer follows the AWS service rules by default: `s3` and `s3express` use
-`PercentEncodingMode::Single`, and every other service uses
-`PercentEncodingMode::Double` (the `aws-sigv4` default). Call
-`with_percent_encoding_mode` to override the inferred mode for a custom or
-self-hosted endpoint:
+The signer uses `PercentEncodingMode::Single` by default for every signing
+service. This keeps Reqsign's existing canonical URI bytes and signatures stable
+across upgrades. Call `with_percent_encoding_mode` to opt in to
+`PercentEncodingMode::Double` when a service requires one additional encoding
+pass:
 
 ```rust
 use reqsign_aws_v4::{PercentEncodingMode, RequestSigner};
 
-let signer = RequestSigner::new("my-custom-service", "us-east-1")
-    .with_percent_encoding_mode(PercentEncodingMode::Single);
+let signer = RequestSigner::new("execute-api", "us-east-1")
+    .with_percent_encoding_mode(PercentEncodingMode::Double);
 ```
 
 Both header signing and presigning use this setting. Supply the final wire-ready
