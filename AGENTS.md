@@ -43,12 +43,12 @@ security boundary and its relationship to OpenDAL and other host applications.
 ### Crypto Provider
 
 All signing cryptography goes through a `reqsign_core::crypto::CryptoProvider`
-resolved by `Context` (explicit binding, then the process-wide registration,
-then the context fallback). `reqsign-core` and every `services/*` crate carry no
-production cryptographic implementation. Follow
-[docs/crypto-provider.md](docs/crypto-provider.md) as the source of truth for
-the provider contract, resolution and installation ownership, error semantics,
-and the official RustCrypto/BoringSSL implementations.
+resolved by `Context` (explicit binding, then the process-wide registration).
+`reqsign-core` and every `services/*` crate carry no production cryptographic
+implementation. Follow [docs/crypto-provider.md](docs/crypto-provider.md) as the
+source of truth for the provider contract, resolution and installation
+ownership, error semantics, and the official RustCrypto/BoringSSL
+implementations.
 
 ### Default Credential Provider
 

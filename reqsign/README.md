@@ -44,11 +44,11 @@ reqsign = "0.20"
 
 By default, this includes `default-context` (a ready-to-use context using
 `reqwest` and `tokio`) and `default-crypto` (the RustCrypto provider).
-`default-crypto` makes `default_context()` use RustCrypto as a context
-fallback, so default signers work without startup boilerplate. The fallback is
-not a process-wide installation: an application can call
-`RustCryptoProvider::install_default()` to override it, and an explicit
-`Context::with_crypto` binding always wins.
+`default-crypto` makes `default_context()` bind RustCrypto when the process-wide
+slot is empty, so default signers work without startup boilerplate. It never
+writes the global slot. To choose a global provider, install it before
+constructing facade contexts; contexts already bound to RustCrypto keep that
+binding, and an explicit `Context::with_crypto` binding always wins.
 
 To use specific services only:
 
@@ -69,7 +69,7 @@ use reqsign::aws;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // The facade's default context carries the RustCrypto fallback.
+    // The facade's default context binds RustCrypto when no global provider is installed.
     // Create a default signer for AWS S3 in us-east-1
     // This will automatically:
     // - Set up HTTP client and file reader
@@ -104,11 +104,11 @@ use reqsign::aws::{DefaultCredentialProvider, RequestSigner};
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create a context with default implementations
-    // (including the RustCrypto fallback when default-crypto is enabled).
+    // (including a RustCrypto binding when default-crypto is enabled).
     let ctx = default_context();
 
     // Or build your own context with specific implementations.
-    // A bare Context has no fallback, so bind the provider explicitly.
+    // A bare Context starts unbound, so bind the provider explicitly.
     let ctx = Context::new()
         .with_crypto(RustCryptoProvider::new())
         .with_file_read(reqsign_file_read_tokio::TokioFileRead)

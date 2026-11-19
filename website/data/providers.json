@@ -7,7 +7,7 @@
     },
     {
       "name": "reqsign-crypto-rustcrypto",
-      "role": "Pure-Rust CryptoProvider backend, re-exported by the reqsign facade's default-crypto feature and used as the facade default context fallback."
+      "role": "Pure-Rust CryptoProvider backend, re-exported by the reqsign facade's default-crypto feature and bound by the facade default context when no global provider is installed."
     },
     {
       "name": "reqsign-aws-core",

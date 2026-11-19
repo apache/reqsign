@@ -26,7 +26,7 @@ use reqsign::aws;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // The facade's default context carries the RustCrypto fallback.
+    // The facade's default context binds RustCrypto when no global provider is installed.
     // Create a default signer for S3 in us-east-1
     // This will automatically:
     // - Load credentials from environment variables, config files, or IAM roles
@@ -65,7 +65,7 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Build your own context with specific implementations.
-    // A bare Context has no fallback, so bind the provider explicitly.
+    // A bare Context starts unbound, so bind the provider explicitly.
     let ctx = Context::new()
         .with_crypto(RustCryptoProvider::new())
         .with_file_read(TokioFileRead)

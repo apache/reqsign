@@ -15,11 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! The facade supplies a fallback but never installs a global provider.
+//! The facade binds RustCrypto only when the global slot is empty.
 
 #[cfg(feature = "default-context")]
 #[test]
-fn default_context_uses_fallback_without_installing_global_and_global_wins_later() {
+fn default_context_binds_rustcrypto_without_installing_global() {
     use reqsign::crypto::{CryptoProvider, get_default, install_default};
     use reqsign::hash;
     use reqsign::{Context, Result};
@@ -45,29 +45,39 @@ fn default_context_uses_fallback_without_installing_global_and_global_wins_later
         }
     }
 
+    fn assert_sha256_abc(ctx: &Context) {
+        assert_eq!(
+            reqsign::hash::base64_encode(
+                &hash::sha256(
+                    ctx.crypto_provider().expect("provider must resolve"),
+                    b"abc"
+                )
+                .expect("hashing must succeed")
+            ),
+            "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
+        );
+    }
+
     assert!(get_default().is_none());
     let ctx = reqsign::default_context();
     assert!(get_default().is_none(), "default_context must not install");
+    assert_sha256_abc(&ctx);
+
+    install_default(TestProvider(9)).expect("global installation must succeed");
+    assert_sha256_abc(&ctx);
+
+    let after_global = reqsign::default_context();
     assert_eq!(
-        reqsign::hash::base64_encode(
-            &hash::sha256(
-                ctx.crypto_provider().expect("fallback must resolve"),
-                b"abc"
-            )
-            .expect("fallback hashing must succeed")
-        ),
-        "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
+        hash::sha256(
+            after_global.crypto_provider().expect("global must resolve"),
+            b"x"
+        )
+        .expect("global hashing must succeed"),
+        [9; 32],
+        "a default_context created after installation must use the global provider"
     );
 
     let explicit = Context::new().with_crypto(TestProvider(2));
-    install_default(TestProvider(9)).expect("global installation must succeed");
-
-    assert_eq!(
-        hash::sha256(ctx.crypto_provider().expect("global must resolve"), b"x")
-            .expect("global hashing must succeed"),
-        [9; 32],
-        "a provider installed after default_context() must override its fallback"
-    );
     assert_eq!(
         hash::sha256(
             explicit.crypto_provider().expect("explicit must resolve"),

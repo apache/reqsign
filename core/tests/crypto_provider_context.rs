@@ -22,25 +22,14 @@ use reqsign_core::{Context, hash};
 use support::ByteProvider;
 
 #[test]
-fn context_resolution_prefers_explicit_then_late_global_then_fallback() {
-    let fallback = Context::new().with_crypto_fallback(ByteProvider(1));
+fn context_resolution_prefers_explicit_then_global() {
+    let bare = Context::new();
     assert!(
-        get_default().is_none(),
-        "creating a context must not install"
+        bare.crypto_provider().is_err(),
+        "a bare context must fail before a global provider exists"
     );
 
-    assert_eq!(
-        hash::sha256(
-            fallback.crypto_provider().expect("fallback must resolve"),
-            b"x"
-        )
-        .expect("fallback hashing must succeed"),
-        [1; 32]
-    );
-
-    let explicit = Context::new()
-        .with_crypto(ByteProvider(2))
-        .with_crypto_fallback(ByteProvider(3));
+    let explicit = Context::new().with_crypto(ByteProvider(2));
     assert_eq!(
         hash::sha256(
             explicit.crypto_provider().expect("explicit must resolve"),
@@ -50,17 +39,21 @@ fn context_resolution_prefers_explicit_then_late_global_then_fallback() {
         [2; 32]
     );
 
+    let unbound = Context::new();
+    assert!(
+        get_default().is_none(),
+        "creating a context must not install"
+    );
     install_default(ByteProvider(9)).expect("global installation must succeed");
 
-    // The same context was constructed before the global installation. The
-    // global provider must now override its fallback.
     assert_eq!(
         hash::sha256(
-            fallback.crypto_provider().expect("global must resolve"),
+            unbound.crypto_provider().expect("global must resolve"),
             b"x"
         )
         .expect("global hashing must succeed"),
-        [9; 32]
+        [9; 32],
+        "an unbound context must observe the process-wide provider"
     );
     assert_eq!(
         hash::sha256(

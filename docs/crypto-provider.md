@@ -88,7 +88,6 @@ but it must not be required to serialize signing operations for correctness.
 ```rust
 impl Context {
     pub fn with_crypto(self, provider: impl CryptoProvider) -> Self;
-    pub fn with_crypto_fallback(self, provider: impl CryptoProvider) -> Self;
     pub fn crypto_provider(&self) -> Result<&dyn CryptoProvider>;
 }
 ```
@@ -98,23 +97,21 @@ impl Context {
 1. the provider bound with `Context::with_crypto`;
 2. the process-wide provider installed with
    `reqsign_core::crypto::install_default`;
-3. the context fallback set with `Context::with_crypto_fallback`;
-4. otherwise `ErrorKind::ConfigInvalid`.
+3. otherwise `ErrorKind::ConfigInvalid`.
 
 The order is fixed. Resolution does not fall through because a provider returns
 an error or reports an operation as unsupported.
 
 A context never installs or freezes the process-wide registration. Creating,
-using, or cloning a context does not change `get_default()`. Resolution reads
-the current global registration on every call, so a global provider installed
-after a context was created takes precedence over that context's fallback for
-later operations through the same context. An explicit `with_crypto` binding
-continues to win over a later global installation. Cloning a context preserves
-its explicit and fallback bindings.
+using, or cloning a context does not change `get_default()`. A context with an
+explicit binding keeps that provider for its lifetime, including after a global
+provider is installed later. An unbound context observes the current global
+registration at the point of use. Cloning a context preserves its binding.
 
-`Context::new()` sets no explicit provider and no fallback. Portable core code
-must either bind a provider on the context or install a global one. The facade's
-`default_context()` is the exception described below: it supplies a fallback.
+`Context::new()` starts with neither an explicit binding nor a global provider.
+Portable core code must either bind a provider on the context or install a
+global one. The facade's `default_context()` binds RustCrypto when the global
+slot is empty at construction, as described below.
 
 ## Global Registration
 
@@ -140,13 +137,12 @@ Global installation is optional and backed by
   returns `None` and does not freeze the unset state; a later
   `install_default()` still succeeds.
 
-Applications own the process-wide choice. A top-level application may call
-`install_default()` once to override facade fallbacks and any other context that
-has no explicit provider. Integrating middleware, such as OpenDAL, must not
+Applications own the process-wide choice. A top-level application that wants a
+global provider installs it before constructing facade contexts; contexts
+created afterward use the global provider, while contexts that already bind
+RustCrypto keep that binding. Integrating middleware, such as OpenDAL, must not
 install a global provider on behalf of its users: doing so would take away the
 application's choice and can race with the application's own initialization.
-Middleware may set a fallback on a context it owns, but it must not write the
-process-wide slot.
 
 ## Failure Semantics
 
@@ -263,18 +259,19 @@ default-crypto = ["dep:reqsign-crypto-rustcrypto"]
 ```
 
 `default-crypto` re-exports `RustCryptoProvider`. When it is enabled,
-`default_context()` sets that provider as a **context fallback** and never
-as the process-wide provider. `default_context()` therefore works without
-startup boilerplate, while a global installation performed later still takes
-precedence and an explicit `with_crypto` binding still wins.
+`default_context()` checks the process-wide registration at construction. If
+the slot is empty it binds `RustCryptoProvider` with `with_crypto`; if a global
+provider is already installed it leaves the context unbound so the global
+provider is used. It never writes the process-wide slot.
 
-Without `default-crypto`, `default_context()` has no fallback and resolves a
-provider only from an explicit binding or a process-wide installation.
-`Context::new()` never has a fallback.
+Without `default-crypto`, `default_context()` resolves a provider only from an
+explicit binding or a process-wide installation. `Context::new()` starts
+unbound.
 
 The facade's per-service `default_signer(...)` helpers use `default_context()`,
-so they inherit the same behavior: usable with the default feature set, and
-still governed by explicit and global overrides.
+so they inherit the same behavior. Explicit `with_crypto` bindings always win;
+a global provider is used when it was installed before the context was
+constructed.
 
 Applications that select a different backend disable `default-crypto` and take
 the backend crate directly. Applications that use only hashing can provide
@@ -286,8 +283,8 @@ their own minimal `CryptoProvider`.
 
 Facade users can keep using `default_context()` or a per-service
 `default_signer(...)` without installing anything. To select one provider for
-the whole application, install it once at startup; this overrides facade
-fallbacks:
+the whole application, install it once before constructing facade contexts;
+contexts that were already bound to RustCrypto keep their binding:
 
 ```rust
 use reqsign::RustCryptoProvider;
@@ -356,8 +353,8 @@ Notable service-specific details:
   Use `encode_rs256_pem(provider, ...)` with PEM bytes.
 - Hash and MAC helpers take `&dyn CryptoProvider` and return `Result`.
 - `reqsign-core` no longer provides crypto implementations, so a context with no
-  provider binding, global provider, or fallback fails with `ConfigInvalid` at
-  the point of use.
+  provider binding and no global provider fails with `ConfigInvalid` at the
+  point of use.
 
 ## Verification
 
@@ -365,13 +362,13 @@ The repository verifies this contract with:
 
 - Separate `reqsign-core` integration test binaries for the bare missing
   context, early global lookup, rejected second installation, concurrent
-  installation, and context resolution priority. The priority test covers a
-  context used before global installation, the global override of its fallback,
-  explicit priority over global, and independent providers on distinct
+  installation, and context resolution priority. The priority test covers
+  explicit priority over global and independent providers on distinct
   contexts.
-- Facade tests with and without `default-crypto`, including a default signer
-  that signs through the fallback and a signer whose explicitly selected
-  provider is used.
+- Facade tests with and without `default-crypto`, including installation before
+  and after context construction, OnceLock non-occupation, a default signer
+  using its bound provider, and a signer whose explicitly selected provider is
+  used.
 - RustCrypto provider tests for published hash/HMAC vectors, block-size key
   boundaries, both RSA PEM formats, AES-128/256-GCM with and without AAD,
   ECDSA verification, invalid scalars, invalid AES key lengths, random output,

@@ -20,9 +20,7 @@
 //! Reqsign does not bundle a cryptographic implementation. A [`Context`](crate::Context)
 //! resolves crypto operations with this priority: an explicit
 //! [`Context::with_crypto`](crate::Context::with_crypto) binding, then the
-//! process-wide provider installed with [`install_default`], then the context
-//! fallback set with
-//! [`Context::with_crypto_fallback`](crate::Context::with_crypto_fallback).
+//! process-wide provider installed with [`install_default`].
 //!
 //! A process can install at most one global provider. Installation is not
 //! idempotent: later attempts return the provider they tried to install and

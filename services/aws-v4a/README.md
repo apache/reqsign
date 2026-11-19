@@ -9,7 +9,8 @@ signed request to be accepted in multiple AWS regions. See the
 
 > Signing needs a `CryptoProvider` resolved through the `Context`: bind one with
 > `Context::with_crypto`, install a process-wide default, or use a facade
-> `default_context()` fallback. A bare `Context::new()` has no fallback. See
+> `default_context()` (which binds RustCrypto when the global slot is empty). A
+> bare `Context::new()` starts unbound. See
 > [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
 
 ```rust

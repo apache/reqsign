@@ -20,12 +20,46 @@
 #![cfg(all(feature = "default-context", not(feature = "default-crypto")))]
 
 use reqsign::ErrorKind;
+use reqsign::crypto::{CryptoProvider, install_default};
+
+#[derive(Debug)]
+struct TestProvider;
+
+impl CryptoProvider for TestProvider {
+    fn sha1(&self, _: &[u8]) -> reqsign::Result<[u8; 20]> {
+        Ok([9; 20])
+    }
+
+    fn sha256(&self, _: &[u8]) -> reqsign::Result<[u8; 32]> {
+        Ok([9; 32])
+    }
+
+    fn hmac_sha1(&self, _: &[u8], _: &[u8]) -> reqsign::Result<[u8; 20]> {
+        Ok([9; 20])
+    }
+
+    fn hmac_sha256(&self, _: &[u8], _: &[u8]) -> reqsign::Result<[u8; 32]> {
+        Ok([9; 32])
+    }
+}
 
 #[test]
-fn default_context_without_default_crypto_has_no_fallback() {
+fn default_context_without_default_crypto_uses_explicit_or_global_only() {
     assert!(reqsign::crypto::get_default().is_none());
-    let err = reqsign::default_context()
+    let before_global = reqsign::default_context();
+    let err = before_global
         .crypto_provider()
         .expect_err("default-context alone must not resolve a provider");
     assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+
+    install_default(TestProvider).expect("global installation must succeed");
+    let after_global = reqsign::default_context();
+    assert_eq!(
+        reqsign::hash::sha256(
+            after_global.crypto_provider().expect("global must resolve"),
+            b"x"
+        )
+        .expect("global hashing must succeed"),
+        [9; 32]
+    );
 }

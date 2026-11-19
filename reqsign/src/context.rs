@@ -33,14 +33,15 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 /// - `TokioFileRead` for file reading (non-WASM only)
 /// - `ReqwestHttpSend` for HTTP requests
 /// - `OsEnv` for environment variable access
-/// - `RustCryptoProvider` as a context fallback when `default-crypto` is enabled
+/// - `RustCryptoProvider` bound to the context when `default-crypto` is enabled
+///   and no process-wide provider is installed at construction time
 ///
-/// The fallback makes `reqsign` examples and default signers usable without
-/// installation boilerplate. It does not touch the process-wide registration:
-/// a provider installed later with `RustCryptoProvider::install_default()` (or
-/// another global provider) takes precedence for this context, and an explicit
-/// `Context::with_crypto` binding still wins. Integrating middleware must leave
-/// provider installation to the application.
+/// This makes `reqsign` examples and default signers usable without installation
+/// boilerplate. It does not touch the process-wide registration. An application
+/// that wants to choose a process-wide provider installs it before constructing
+/// facade contexts; a context that already binds RustCrypto keeps that binding.
+/// An explicit `Context::with_crypto` binding always wins. Integrating middleware
+/// must leave provider installation to the application.
 ///
 /// # Example
 ///
@@ -89,7 +90,11 @@ pub fn default_context() -> Context {
         .with_env(OsEnv);
 
     #[cfg(feature = "default-crypto")]
-    let ctx = ctx.with_crypto_fallback(RustCryptoProvider::new());
+    let ctx = if reqsign_core::crypto::get_default().is_none() {
+        ctx.with_crypto(RustCryptoProvider::new())
+    } else {
+        ctx
+    };
 
     ctx
 }

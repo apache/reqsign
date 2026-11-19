@@ -43,7 +43,7 @@ impl CryptoProvider for UnsupportedProvider {
 }
 
 #[tokio::test]
-async fn default_signer_signs_with_the_context_fallback() {
+async fn default_signer_signs_with_the_context_provider() {
     let signer = default_signer("s3", "test-region")
         .with_credential_provider(StaticCredentialProvider::new("access-key", "secret-key"));
     let mut parts = http::Request::get("https://example.amazonaws.com/object")
@@ -55,7 +55,7 @@ async fn default_signer_signs_with_the_context_fallback() {
     signer
         .sign(&mut parts, None)
         .await
-        .expect("default signer must use the facade crypto fallback");
+        .expect("default signer must use the context crypto provider");
     assert!(
         parts.headers[http::header::AUTHORIZATION]
             .to_str()

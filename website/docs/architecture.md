@@ -109,7 +109,7 @@ Cryptography is resolved through `Context`. Every hash, MAC, asymmetric
 signature, AES-GCM operation, and random draw calls
 `ctx.crypto_provider()`, which prefers an explicit
 `Context::with_crypto` binding, then the process-wide provider installed with
-`RustCryptoProvider::install_default()`, then the context fallback:
+`RustCryptoProvider::install_default()`:
 
 ```rust
 use reqsign::{Context, RustCryptoProvider, Signer};
@@ -117,16 +117,17 @@ use reqsign::{Context, RustCryptoProvider, Signer};
 // Explicit provider for this context.
 let ctx = Context::new().with_crypto(RustCryptoProvider::new());
 
-// Or let an application select one provider for every fallback context.
+// Or install before constructing facade contexts to select one provider.
 RustCryptoProvider::install_default()
     .map_err(|_| "a CryptoProvider is already installed")?;
 ```
 
 `reqsign-core` and the service crates contain no cryptographic implementation.
-A bare `Context::new()` has no provider or fallback and returns `ConfigInvalid`
-when signing needs crypto. The facade's `default-crypto` feature sets RustCrypto
-as a fallback on `default_context()` without touching the process-wide slot, so
-default signers work out of the box and a later global installation still wins.
+A bare `Context::new()` starts unbound and returns `ConfigInvalid` when signing
+needs crypto without a global provider. The facade's `default-crypto` feature
+makes `default_context()` bind RustCrypto only when the process-wide slot is
+empty at construction; it never writes the slot. A context that already binds
+RustCrypto keeps it, and an explicit `with_crypto` binding always wins.
 Applications choose the provider, and integrating middleware such as OpenDAL
 must not install a global default. See
 [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md)

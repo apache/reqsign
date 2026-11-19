@@ -36,8 +36,7 @@ use std::sync::Arc;
 ///
 /// Crypto operations resolve through the context. Resolution prefers a provider
 /// bound with [`Context::with_crypto`], then the process-wide provider installed
-/// with [`crate::crypto::install_default`], then a fallback set with
-/// [`Context::with_crypto_fallback`]. A bare `Context::new()` has none of these
+/// with [`crate::crypto::install_default`]. A bare `Context::new()` has neither
 /// and returns [`crate::ErrorKind::ConfigInvalid`] when crypto is first needed.
 /// Creating or cloning a context never installs or freezes a global provider.
 ///
@@ -57,7 +56,6 @@ pub struct Context {
     env: Arc<dyn Env>,
     cmd: Arc<dyn CommandExecuteDyn>,
     crypto: Option<Arc<dyn CryptoProvider>>,
-    crypto_fallback: Option<Arc<dyn CryptoProvider>>,
 }
 
 impl Debug for Context {
@@ -68,7 +66,6 @@ impl Debug for Context {
             .field("env", &self.env)
             .field("cmd", &self.cmd)
             .field("crypto", &self.crypto)
-            .field("crypto_fallback", &self.crypto_fallback)
             .finish()
     }
 }
@@ -102,7 +99,6 @@ impl Context {
             env: Arc::new(NoopEnv),
             cmd: Arc::new(NoopCommandExecute),
             crypto: None,
-            crypto_fallback: None,
         }
     }
 
@@ -140,39 +136,23 @@ impl Context {
         self
     }
 
-    /// Set a fallback cryptographic provider for this context.
-    ///
-    /// The fallback is used only when no provider is bound explicitly with
-    /// [`Context::with_crypto`] and no process-wide provider has been installed
-    /// with [`crate::crypto::install_default`]. It does not install a
-    /// process-wide provider. Facades use this to make their default context
-    /// usable without taking away an application's later provider choice.
-    pub fn with_crypto_fallback(mut self, provider: impl CryptoProvider) -> Self {
-        self.crypto_fallback = Some(Arc::new(provider));
-        self
-    }
-
     /// Resolve the cryptographic provider for this context.
     ///
     /// Resolution order is:
     ///
     /// 1. the provider bound with [`Context::with_crypto`];
     /// 2. the process-wide provider installed with
-    ///    [`crate::crypto::install_default`];
-    /// 3. the context fallback set with [`Context::with_crypto_fallback`].
+    ///    [`crate::crypto::install_default`].
     ///
-    /// If none is available this returns [`crate::ErrorKind::ConfigInvalid`] at
-    /// the point of use. Resolution never installs or freezes a provider, so a
-    /// process-wide installation performed after this context was created is
-    /// observed by later operations through the same context.
+    /// If neither is available this returns [`crate::ErrorKind::ConfigInvalid`]
+    /// at the point of use. Resolution never installs or freezes a provider.
+    /// An unbound context observes the current process-wide registration; a
+    /// context that already has an explicit binding keeps it.
     pub fn crypto_provider(&self) -> Result<&dyn CryptoProvider> {
         if let Some(provider) = &self.crypto {
             return Ok(provider.as_ref());
         }
         if let Some(provider) = crypto::get_default() {
-            return Ok(provider.as_ref());
-        }
-        if let Some(provider) = &self.crypto_fallback {
             return Ok(provider.as_ref());
         }
 
