@@ -54,7 +54,6 @@ tokio = { workspace = true, features = ["time"] }
 zeroize = { workspace = true, optional = true }
 
 [dev-dependencies]
-aes-gcm = { workspace = true, features = ["zeroize"] }
 asyncband = { workspace = true, features = ["semaphore"] }
 dotenvy = { workspace = true }
 env_logger = { workspace = true }
@@ -62,5 +61,4 @@ reqsign-crypto-rustcrypto = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 reqwest = { workspace = true, features = ["default-tls"] }
-rsa = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

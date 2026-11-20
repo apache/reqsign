@@ -315,10 +315,17 @@ loading is what makes the missing-provider `ConfigInvalid` visible.
 
 ### Core and Service Crates
 
-`reqsign-core` and every `services/*` crate have no production dependency on
-`sha1`, `sha2`, `hmac`, `rsa`, `p256`, or `aes-gcm`. Those crates remain
-permitted as `dev-dependencies` for verification. Encoding (`base64`, `hex`) and
-secret zeroization (`zeroize`) remain ordinary dependencies where needed.
+No crate outside `crypto/*` may declare a direct dependency on a raw
+cryptographic implementation crate such as `sha1`, `sha2`, `hmac`, `rsa`,
+`p256`, `aes-gcm`, `getrandom`, `boring`, `openssl`, `ring`, or `aws-lc-rs`.
+This applies to `[dependencies]`, `[dev-dependencies]`, and
+`[build-dependencies]`, including target-specific tables, renamed packages, and
+`[workspace.dependencies]` entries in any repo-local workspace. Provider crates
+such as `reqsign-crypto-rustcrypto` remain permitted as dependencies and
+dev-dependencies. Encoding (`base64`, `hex`), PEM parsing (`pem`), secret
+zeroization (`zeroize`), and interoperability reference harnesses such as
+`aws-sigv4` remain ordinary dependencies where needed. Backend crates under
+`crypto/*` own primitive verification and cross-backend parity.
 
 All former hash and MAC call sites propagate `?` and resolve the provider from
 the `Context` supplied to the signing, granting, or credential-loading entry
@@ -380,6 +387,10 @@ The repository verifies this contract with:
   confirms that no core or service production graph contains a cryptographic
   implementation crate, without workspace feature unification hiding optional
   paths.
+- A manifest check rejects direct cryptographic implementation dependencies
+  outside `crypto/*` in every dependency kind, including target-specific and
+  renamed declarations, and rejects unused entries in any repo-local
+  `[workspace.dependencies]`.
 - `cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown`,
   the workspace test suite, doc tests, formatting, clippy with `-D warnings`,
   license headers, the standalone BoringSSL workflow, and the website provider

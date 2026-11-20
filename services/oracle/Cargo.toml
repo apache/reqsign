@@ -37,7 +37,6 @@ rust-ini = { workspace = true }
 [dev-dependencies]
 env_logger = "0.11"
 reqsign-crypto-rustcrypto = { workspace = true }
-rsa = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 tokio = { version = "1", features = ["test-util", "macros", "rt-multi-thread"] }

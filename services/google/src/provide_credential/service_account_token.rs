@@ -352,9 +352,6 @@ mod tests {
     use http::{HeaderMap, Method};
     use reqsign_core::hash::base64_decode;
     use reqsign_core::{ErrorKind, FileRead, Granter, HttpSend, StaticEnv, time::Timestamp};
-    use rsa::Generate;
-    use rsa::PrivateKey;
-    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use serde_json::Value;
 
     use crate::{
@@ -445,13 +442,8 @@ mod tests {
     }
 
     fn service_account() -> ServiceAccount {
-        let key = PrivateKey::generate();
-        let private_key = key
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("test RSA key must encode")
-            .to_string();
         ServiceAccount {
-            private_key,
+            private_key: include_str!("../../tests/fixtures/rsa_pkcs8.pem").to_string(),
             client_email: "provider@example.iam.gserviceaccount.com".to_string(),
         }
     }

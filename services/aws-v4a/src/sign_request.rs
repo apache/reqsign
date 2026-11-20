@@ -343,11 +343,10 @@ mod tests {
     };
     use aws_sigv4::sign::v4a;
     use http::Request;
-    use p256::ecdsa::DerSignature;
-    use p256::ecdsa::SigningKey as P256SigningKey;
-    use p256::ecdsa::signature::Verifier;
     use pretty_assertions::assert_eq;
     use reqsign_core::ErrorKind;
+    use reqsign_core::crypto::CryptoProvider;
+    use std::sync::{Arc, Mutex};
 
     use crate::PercentEncodingMode;
 
@@ -355,6 +354,10 @@ mod tests {
     const ACCESS_KEY_ID: &str = "AKIDEXAMPLE";
     const SECRET_ACCESS_KEY: &str = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
     const HEADER_STRING_TO_SIGN: &str = "AWS4-ECDSA-P256-SHA256\n20150830T123600Z\n20150830/service/aws4_request\ncf59db423e841c8b7e3444158185aa261b724a5c27cbe762676f3eed19f4dc02";
+    const SIGNING_KEY_SCALAR: &str =
+        "7efc8c0e65a324242818c5a50c891c6060b6a00717b7ba3cbe3c5d765be9259c";
+    // A fixed DER signature for the published SigV4a signing input above.
+    const SIGNATURE_DER_HEX: &str = "304502206c8e97f7ed2541ed924ade73b4acf7c40156ee796b1f57156c77319278c93042022100f933779aa3fcbd0279217cd671618552026d099cd2e1770225a5167ac5b6bcfd";
     const RAW_QUERY: &str =
         "slash=%2F&literal-plus=+&double=%252F&dup=first&dup=second&empty=&flag&";
     const ENCODING_QUERY: &str = "key=value&slash=%2F&empty=&dup=first&dup=second";
@@ -426,31 +429,101 @@ mod tests {
     }
 
     #[test]
-    fn signing_key_matches_aws_public_key_vector() -> AnyResult<()> {
+    fn signing_key_matches_aws_crt_vector() -> AnyResult<()> {
         let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
         let scalar = generate_signing_key(&provider, ACCESS_KEY_ID, SECRET_ACCESS_KEY)?;
-        let signing_key = P256SigningKey::from_slice(scalar.as_slice())
-            .expect("derived scalar must be a valid P-256 key");
-        let public_key = signing_key.verifying_key().to_sec1_point(false);
 
-        assert_eq!(
-            hex::encode(public_key.x().expect("uncompressed key has x")),
-            "b6618f6a65740a99e650b33b6b4b5bd0d43b176d721a3edfea7e7d2d56d936b1"
-        );
-        assert_eq!(
-            hex::encode(public_key.y().expect("uncompressed key has y")),
-            "865ed22a7eadc9c5cb9d2cbaca1b3699139fedc5043dc6661864218330c8e518"
-        );
+        // The scalar uniquely determines the AWS CRT public key (x, y); this
+        // fixed value is the KDF output for the published get-vanilla vector.
+        assert_eq!(hex::encode(scalar.as_slice()), SIGNING_KEY_SCALAR);
+        Ok(())
+    }
+
+    #[test]
+    fn signature_input_and_der_hex_are_recorded() -> AnyResult<()> {
+        let der = hex::decode(SIGNATURE_DER_HEX)?;
+        let provider = RecordingProvider::returning(der.clone());
+        let scalar = *generate_signing_key(
+            &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+            ACCESS_KEY_ID,
+            SECRET_ACCESS_KEY,
+        )?;
 
         let signature = calculate_signature(&provider, &scalar, HEADER_STRING_TO_SIGN.as_bytes())?;
-        let signature_bytes = hex::decode(signature)?;
-        let signature = DerSignature::try_from(signature_bytes.as_slice())
-            .expect("generated signature must use DER encoding");
-        signing_key
-            .verifying_key()
-            .verify(HEADER_STRING_TO_SIGN.as_bytes(), &signature)
-            .expect("generated signature must verify");
+
+        assert_eq!(signature, SIGNATURE_DER_HEX);
+        let calls = provider.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].scalar, scalar);
+        assert_eq!(calls[0].message, HEADER_STRING_TO_SIGN.as_bytes());
+        assert_eq!(calls[0].signature, der);
         Ok(())
+    }
+
+    #[derive(Clone, Debug)]
+    struct EcdsaCall {
+        scalar: [u8; 32],
+        message: Vec<u8>,
+        signature: Vec<u8>,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct RecordingProvider {
+        calls: Arc<Mutex<Vec<EcdsaCall>>>,
+        response: Option<Vec<u8>>,
+    }
+
+    impl RecordingProvider {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn returning(signature: Vec<u8>) -> Self {
+            Self {
+                response: Some(signature),
+                ..Self::default()
+            }
+        }
+
+        fn calls(&self) -> Vec<EcdsaCall> {
+            self.calls.lock().expect("lock poisoned").clone()
+        }
+    }
+
+    impl CryptoProvider for RecordingProvider {
+        fn sha1(&self, input: &[u8]) -> reqsign_core::Result<[u8; 20]> {
+            reqsign_crypto_rustcrypto::RustCryptoProvider::new().sha1(input)
+        }
+
+        fn sha256(&self, input: &[u8]) -> reqsign_core::Result<[u8; 32]> {
+            reqsign_crypto_rustcrypto::RustCryptoProvider::new().sha256(input)
+        }
+
+        fn hmac_sha1(&self, key: &[u8], input: &[u8]) -> reqsign_core::Result<[u8; 20]> {
+            reqsign_crypto_rustcrypto::RustCryptoProvider::new().hmac_sha1(key, input)
+        }
+
+        fn hmac_sha256(&self, key: &[u8], input: &[u8]) -> reqsign_core::Result<[u8; 32]> {
+            reqsign_crypto_rustcrypto::RustCryptoProvider::new().hmac_sha256(key, input)
+        }
+
+        fn ecdsa_p256_sha256_sign(
+            &self,
+            private_key_scalar: &[u8; 32],
+            message: &[u8],
+        ) -> reqsign_core::Result<Vec<u8>> {
+            let signature = match &self.response {
+                Some(signature) => signature.clone(),
+                None => reqsign_crypto_rustcrypto::RustCryptoProvider::new()
+                    .ecdsa_p256_sha256_sign(private_key_scalar, message)?,
+            };
+            self.calls.lock().expect("lock poisoned").push(EcdsaCall {
+                scalar: *private_key_scalar,
+                message: message.to_vec(),
+                signature: signature.clone(),
+            });
+            Ok(signature)
+        }
     }
 
     #[tokio::test]
@@ -540,36 +613,64 @@ mod tests {
         )
     }
 
-    fn verify_encoding_signature(request: &Request<()>, string_to_sign: &str) -> AnyResult<()> {
-        let signature = if let Some(authorization) = request.headers().get(header::AUTHORIZATION) {
-            authorization
+    fn request_signature(request: &Request<()>) -> AnyResult<String> {
+        if let Some(authorization) = request.headers().get(header::AUTHORIZATION) {
+            Ok(authorization
                 .to_str()?
                 .rsplit_once(", Signature=")
                 .expect("authorization must contain signature")
                 .1
-                .to_string()
+                .to_string())
         } else {
-            form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-                .find(|(key, _)| key == "X-Amz-Signature")
-                .expect("presigned request must contain signature")
-                .1
-                .into_owned()
-        };
-        let signature_bytes = hex::decode(signature)?;
-        let signature = DerSignature::try_from(signature_bytes.as_slice())
-            .expect("signature must use DER encoding");
-        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
-        let scalar = generate_signing_key(&provider, ACCESS_KEY_ID, SECRET_ACCESS_KEY)?;
-        let signing_key = P256SigningKey::from_slice(scalar.as_slice())
-            .expect("derived scalar must be a valid P-256 key");
-        assert!(
-            signing_key
-                .verifying_key()
-                .verify(string_to_sign.as_bytes(), &signature)
-                .is_ok(),
-            "signature must verify the expected canonical request for {}",
+            Ok(
+                form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+                    .find(|(key, _)| key == "X-Amz-Signature")
+                    .expect("presigned request must contain signature")
+                    .1
+                    .into_owned(),
+            )
+        }
+    }
+
+    fn sdk_signature(string_to_sign: &str) -> String {
+        let signing_key = v4a::generate_signing_key(ACCESS_KEY_ID, SECRET_ACCESS_KEY);
+        v4a::calculate_signature(signing_key, string_to_sign.as_bytes())
+    }
+
+    fn assert_signature_matches_sdk(request: &Request<()>, string_to_sign: &str) -> AnyResult<()> {
+        assert_eq!(
+            request_signature(request)?,
+            sdk_signature(string_to_sign),
+            "wire signature must match the AWS SDK signature for the independently assembled canonical request for {}",
             request.uri(),
         );
+        Ok(())
+    }
+
+    fn verify_encoding_signature(
+        request: &Request<()>,
+        string_to_sign: &str,
+        provider: &RecordingProvider,
+    ) -> AnyResult<()> {
+        let signature = request_signature(request)?;
+
+        let calls = provider.calls();
+        assert_eq!(calls.len(), 1, "one ECDSA call per signed request");
+        let call = &calls[0];
+        assert_eq!(hex::encode(call.scalar), SIGNING_KEY_SCALAR);
+        assert_eq!(
+            call.message,
+            string_to_sign.as_bytes(),
+            "signature input must match the independently assembled canonical request for {}",
+            request.uri(),
+        );
+        assert_eq!(
+            signature,
+            hex::encode(&call.signature),
+            "wire signature must be the provider's DER bytes as hex for {}",
+            request.uri(),
+        );
+        assert_signature_matches_sdk(request, string_to_sign)?;
         Ok(())
     }
 
@@ -656,10 +757,11 @@ mod tests {
                     let uri = format!("https://example.amazonaws.com{path}?{ENCODING_QUERY}");
                     let expected = sign_with_aws_sdk(&uri, sdk_mode, expires_in)?;
                     let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
+                    let provider = RecordingProvider::new();
                     let request_signer = signer().with_percent_encoding_mode(mode);
                     request_signer
                         .sign_request(
-                            &crate::test_context(),
+                            &crate::test_context().with_crypto(provider.clone()),
                             &mut parts,
                             Some(&credential()),
                             expires_in,
@@ -681,11 +783,11 @@ mod tests {
                         assert_eq!(actual.uri().to_string(), uri);
                     }
 
-                    // ECDSA signatures may differ. Both must verify against the
-                    // same literal canonical path, not merely have equal fields.
+                    // Compare both signatures against the independently
+                    // assembled canonical request, not just against each other.
                     let string_to_sign = encoding_string_to_sign(canonical_path, expires_in);
-                    verify_encoding_signature(&expected, &string_to_sign)?;
-                    verify_encoding_signature(&actual, &string_to_sign)?;
+                    assert_signature_matches_sdk(&expected, &string_to_sign)?;
+                    verify_encoding_signature(&actual, &string_to_sign, &provider)?;
                 }
             }
         }
@@ -709,10 +811,11 @@ mod tests {
             for expires_in in [None, Some(Duration::from_secs(3600))] {
                 let uri = format!("https://example.amazonaws.com{path}?{ENCODING_QUERY}");
                 let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
+                let provider = RecordingProvider::new();
                 let request_signer = signer().with_percent_encoding_mode(mode);
                 request_signer
                     .sign_request(
-                        &crate::test_context(),
+                        &crate::test_context().with_crypto(provider.clone()),
                         &mut parts,
                         Some(&credential()),
                         expires_in,
@@ -734,6 +837,7 @@ mod tests {
                 verify_encoding_signature(
                     &actual,
                     &encoding_string_to_sign(canonical_path, expires_in),
+                    &provider,
                 )?;
             }
         }

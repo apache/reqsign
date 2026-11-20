@@ -196,8 +196,6 @@ fn single_header_value<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Result<
 mod tests {
     use super::*;
     use reqsign_core::FileRead;
-    use rsa::Generate;
-    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -236,13 +234,11 @@ mod tests {
             string_to_sign.contains(&format!("(request-target): get /object%2Fname?{RAW_QUERY}"))
         );
 
-        let private_key = rsa::PrivateKey::generate();
-        let private_key = private_key
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("private key must encode")
-            .as_bytes()
-            .to_vec();
-        let ctx = crate::test_context().with_file_read(StaticFileRead(private_key));
+        let ctx = crate::test_context().with_file_read(StaticFileRead(
+            include_str!("../tests/fixtures/rsa-2048-pkcs8.pem")
+                .as_bytes()
+                .to_vec(),
+        ));
         let mut parts = http::Request::get(&original_uri).body(())?.into_parts().0;
 
         RequestSigner::new()

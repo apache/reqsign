@@ -909,8 +909,6 @@ mod tests {
     use bytes::Bytes;
     use http::header;
     use reqsign_core::{ErrorKind, HttpSend, ProvideCredential, Signer};
-    use rsa::Generate;
-    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -1291,12 +1289,8 @@ mod tests {
 
     #[tokio::test]
     async fn service_account_exchange_preserves_optional_expiration_response() -> Result<()> {
-        let private_key = rsa::PrivateKey::generate()
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("private key must encode")
-            .to_string();
         let credential = Credential::with_service_account(ServiceAccount {
-            private_key,
+            private_key: include_str!("../tests/fixtures/rsa_pkcs8.pem").to_string(),
             client_email: "signer@example.iam.gserviceaccount.com".to_string(),
         });
         let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")
@@ -1418,12 +1412,15 @@ mod tests {
     }
 
     fn test_service_account(client_email: &str) -> ServiceAccount {
-        let private_key = rsa::PrivateKey::generate()
-            .to_pkcs8_pem(LineEnding::LF)
-            .expect("private key must encode")
-            .to_string();
         ServiceAccount {
-            private_key,
+            private_key: include_str!("../tests/fixtures/rsa_pkcs8.pem").to_string(),
+            client_email: client_email.to_string(),
+        }
+    }
+
+    fn test_service_account_with_alternate_key(client_email: &str) -> ServiceAccount {
+        ServiceAccount {
+            private_key: include_str!("../tests/fixtures/rsa_pkcs8_alt.pem").to_string(),
             client_email: client_email.to_string(),
         }
     }
@@ -1933,7 +1930,8 @@ mod tests {
         let ctx = crate::test_context().with_http_send(http.clone());
         let email = "same-email@example.iam.gserviceaccount.com";
         let key_1 = Credential::with_service_account(test_service_account(email));
-        let key_2 = Credential::with_service_account(test_service_account(email));
+        let key_2 =
+            Credential::with_service_account(test_service_account_with_alternate_key(email));
         let signer = RequestSigner::new("storage");
 
         let mut parts = http::Request::get("https://storage.googleapis.com/bucket/object")

@@ -19,7 +19,6 @@ use super::{init_signing_test, load_static_credential, send_signed_request};
 use anyhow::Result;
 use http::{Method, Request, StatusCode};
 use log::warn;
-use sha2::{Digest, Sha256};
 use std::str::FromStr;
 
 #[tokio::test]
@@ -67,7 +66,7 @@ async fn test_put_object() -> Result<()> {
 
     let cred = load_static_credential()?;
     let body = "Hello, World!";
-    let body_digest = hex::encode(Sha256::digest(body.as_bytes()));
+    let body_digest = reqsign_core::hash::hex_sha256(ctx.crypto_provider()?, body.as_bytes())?;
 
     let mut req = Request::new(body.to_string());
     req.headers_mut().insert(

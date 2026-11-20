@@ -362,15 +362,11 @@ mod tests {
 
     #[test]
     fn client_assertion_is_three_unpadded_verifiable_segments_for_both_pem_formats() {
-        use rsa::Generate;
-        use rsa::PrivateKey;
-        use rsa::pkcs1::EncodeRsaPrivateKey;
-        use rsa::pkcs1v15::{Signature, VerifyingKey};
-        use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-        use rsa::sha2::Sha256;
-        use rsa::signature::Verifier;
-
-        let key = PrivateKey::generate();
+        const RSA_PKCS8: &[u8] = include_bytes!("../../tests/fixtures/rsa_pkcs8.pem");
+        const RSA_PKCS1: &[u8] = include_bytes!("../../tests/fixtures/rsa_pkcs1.pem");
+        // Fixed RS256 vector for the fixture key. The signature was cross-checked
+        // with an independent RSA implementation before being recorded here.
+        const EXPECTED_JWT: &str = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsIng1dCI6Ijcxd3N5NGxsS0l6dFZyd25qa0U5RGMyVDY4YyJ9.eyJhdWQiOiJodHRwczovL2V4YW1wbGUuY29tL3Rva2VuIiwiZXhwIjoxLCJpc3MiOiJjbGllbnQiLCJqdGkiOiJqdGkiLCJuYmYiOjAsInN1YiI6ImNsaWVudCJ9.XrtIVf1jpj4EdPs4uEKh_MpYwk3ItE8ggsRe5ra4uTt4sRPIiKoNjGxG4FEJ_3Olo61tOhiBAxabdvq4Wo0JMEsrH2npV558kds9TYnsBdYKTPrWyqmJLRHAgDS5HW7shbCclHyKYPJUGbPCDmW14lCjZMWDP0ClJ6KoQjnkiO8R5RbhnqadxpDxPGJajQ1TMvlh55b8uTl8nY9MRJKCbZzFoGeYZOOET-Xasw73XKIlm0vb-Ke-GXvJMtjsfseMP5hP8RIRb8eKFHppta8FiAVEF_GJjLx7CmsRgoHjkl5UqwA86VW4NBwNj32XeSoVXtHQGBvXK3SV4aKgR9PWBg";
         let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
         let certificate_provider = ClientCertificateCredentialProvider::new();
         let cert_der = b"test certificate";
@@ -391,19 +387,12 @@ mod tests {
             sub: "client".to_string(),
         };
 
-        for pem in [
-            key.to_pkcs8_pem(LineEnding::LF)
-                .expect("test key must encode as PKCS#8"),
-            key.to_pkcs1_pem(LineEnding::LF)
-                .expect("test key must encode as PKCS#1"),
-        ] {
+        for pem in [RSA_PKCS8, RSA_PKCS1] {
             let jwt = ClientCertificateCredentialProvider::encode_rs256_jws(
-                &provider,
-                &header,
-                &claims,
-                pem.as_bytes(),
+                &provider, &header, &claims, pem,
             )
             .expect("JWT encoding must succeed");
+            assert_eq!(jwt, EXPECTED_JWT);
             let parts = jwt.split('.').collect::<Vec<_>>();
             assert_eq!(parts.len(), 3);
             assert!(parts.iter().all(|part| !part.contains('=')));
@@ -432,16 +421,6 @@ mod tests {
                     "sub": "client"
                 })
             );
-
-            let signature = URL_SAFE_NO_PAD
-                .decode(parts[2])
-                .expect("signature must decode");
-            let signature =
-                Signature::try_from(signature.as_slice()).expect("signature must parse");
-            let verifying_key = VerifyingKey::<Sha256>::new(key.to_public_key());
-            verifying_key
-                .verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &signature)
-                .expect("signature must verify");
         }
     }
 

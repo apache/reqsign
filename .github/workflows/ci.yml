@@ -71,6 +71,11 @@ jobs:
             fi
           done
 
+      - name: Check direct crypto dependencies
+        run: |
+          python3 .github/scripts/check_crypto_dependencies.py
+          python3 -m unittest discover -s .github/scripts -p 'test_check_crypto_dependencies.py'
+
   licenses:
     runs-on: ubuntu-latest
     timeout-minutes: 10
