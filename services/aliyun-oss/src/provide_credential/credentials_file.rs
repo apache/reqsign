@@ -227,7 +227,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_credentials_file_provider_reads_default_profile() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead::new(HashMap::from([(
                 "/mock/credentials.ini".to_string(),
                 br#"[default]
@@ -261,7 +261,7 @@ access_key_secret=shared_secret_key
     #[tokio::test]
     async fn test_credentials_file_provider_env_profile_overrides_builder_profile()
     -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead::new(HashMap::from([(
                 "/mock/credentials.ini".to_string(),
                 br#"[default]
@@ -305,7 +305,7 @@ sts_token=prod_token
 
     #[tokio::test]
     async fn test_credentials_file_provider_ignores_unsupported_mode() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead::new(HashMap::from([(
                 "/mock/credentials.ini".to_string(),
                 br#"[default]

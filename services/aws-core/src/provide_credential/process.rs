@@ -245,7 +245,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_provider_no_config() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_command_execute(TokioCommandExecute)
@@ -298,7 +298,7 @@ mod tests {
         executor: RecordingCommandExecute,
     ) -> (ProcessCredentialProvider, Context) {
         let provider = ProcessCredentialProvider::new();
-        let ctx = Context::new().with_command_execute(executor);
+        let ctx = crate::test_context().with_command_execute(executor);
         match profile {
             None => (provider.with_command(command), ctx),
             Some(profile) => {

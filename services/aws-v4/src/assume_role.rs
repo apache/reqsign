@@ -200,7 +200,7 @@ impl GrantCredential for AssumeRoleGranter {
         let required_until = self.required_valid_until(credential, expires_in);
         self.validate_source(credential, required_until)?;
 
-        let request = operation.build_request()?;
+        let request = operation.build_request(ctx.crypto_provider()?)?;
         let (mut parts, body) = request.into_parts();
         self.request_signer()
             .sign_request(ctx, &mut parts, Some(credential), None)
@@ -459,7 +459,7 @@ mod tests {
             success_response("ASIAFIRSTOUTPUT001"),
             success_response("ASIASECONDOUTPUT01"),
         ]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let (provider, provider_calls) =
             FixedCredentialProvider::new(source_credential(Some(SOURCE_SESSION_TOKEN)));
         let operation =
@@ -538,14 +538,18 @@ mod tests {
             "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20260730/us-east-1/sts/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=9561cc1cbe7212bd5763162afbaf215cd24c153eb27ac2718ebee4b12ff82a5f"
         );
         let sdk_request = sign_with_aws_sdk(
-            AssumeRoleOperation::new(
-                "sts.us-east-1.amazonaws.com",
-                &valid_grant().with_external_id("tenant/123"),
-                Some(3_600),
-            )
-            .expect("operation must build")
-            .build_request()
-            .expect("request must build"),
+            {
+                let operation = AssumeRoleOperation::new(
+                    "sts.us-east-1.amazonaws.com",
+                    &valid_grant().with_external_id("tenant/123"),
+                    Some(3_600),
+                )
+                .expect("operation must build");
+                let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+                operation
+                    .build_request(&provider)
+                    .expect("request must build")
+            },
             Some(SOURCE_SESSION_TOKEN),
         );
         assert_eq!(
@@ -570,14 +574,19 @@ mod tests {
                 .collect(),
         );
         let sdk_request = sign_with_aws_sdk(
-            AssumeRoleOperation::new("sts.us-east-1.amazonaws.com", &grant, Some(3_600))
-                .expect("operation must build")
-                .build_request()
-                .expect("request must build"),
+            {
+                let operation =
+                    AssumeRoleOperation::new("sts.us-east-1.amazonaws.com", &grant, Some(3_600))
+                        .expect("operation must build");
+                let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+                operation
+                    .build_request(&provider)
+                    .expect("request must build")
+            },
             Some(SOURCE_SESSION_TOKEN),
         );
         let http = MockHttpSend::new([success_response("ASIAPOSTOUTPUT0001")]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let operation = AssumeRoleGranter::new(REGION, grant).with_time(signing_time());
 
         operation
@@ -604,7 +613,11 @@ mod tests {
                 .expect("payload hash must be set")
                 .to_str()
                 .expect("payload hash must be text"),
-            hex_sha256(&request.body)
+            hex_sha256(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+                &request.body,
+            )
+            .expect("SHA-256 must succeed")
         );
         assert_eq!(
             request
@@ -634,7 +647,7 @@ mod tests {
             success_response("ASIALONGTERMSOURCE1"),
             success_response("ASIATEMPSOURCE00001"),
         ]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let operation = AssumeRoleGranter::new(REGION, valid_grant()).with_time(signing_time());
         let mut long_lived_source = source_credential(None);
         long_lived_source.expires_in = None;
@@ -689,7 +702,7 @@ mod tests {
     #[tokio::test]
     async fn validates_typed_grant_region_and_lifetime_before_sts_io() {
         let http = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let source = source_credential(None);
         let valid_policy_arn = "arn:aws:iam::123456789012:policy/customer-reader".to_string();
 
@@ -765,7 +778,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_source_variants_before_sts_io() {
         let http = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let operation = AssumeRoleGranter::new(REGION, valid_grant()).with_time(signing_time());
         let invalid_sources = [
             Credential::default(),
@@ -846,7 +859,7 @@ mod tests {
             malformed_access_key,
             malformed_session_token,
         ]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let operation = AssumeRoleGranter::new(REGION, valid_grant()).with_time(signing_time());
 
         let expired_error = operation
@@ -872,7 +885,7 @@ mod tests {
     #[tokio::test]
     async fn fixed_provider_preserves_global_endpoint_and_request_defaults() {
         let http = MockHttpSend::new([success_response("ASIAPROVIDERDEFAULT1")]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let (source, _) = FixedCredentialProvider::new(source_credential(None));
         let provider = AssumeRoleCredentialProvider::new(
             ROLE_ARN.to_string(),
@@ -900,7 +913,7 @@ mod tests {
     #[tokio::test]
     async fn fixed_provider_accepts_valid_iam_role_paths_and_preserves_retryability() {
         let success_http = MockHttpSend::new([success_response("ASIAVALIDROLEPATH01")]);
-        let success_context = Context::new().with_http_send(success_http);
+        let success_context = crate::test_context().with_http_send(success_http);
         let (source, _) = FixedCredentialProvider::new(source_credential(None));
         let provider = AssumeRoleCredentialProvider::new(
             "arn:aws:iam::123456789012:role/team!prod/Reader".to_string(),
@@ -920,13 +933,13 @@ mod tests {
         let provider = AssumeRoleCredentialProvider::new(
             ROLE_ARN.to_string(),
             Signer::new(
-                Context::new(),
+                crate::test_context(),
                 source,
                 RequestSigner::new("sts", REGION).with_time(signing_time()),
             ),
         );
         let error = provider
-            .provide_credential(&Context::new().with_http_send(NonRetryableTransportError))
+            .provide_credential(&crate::test_context().with_http_send(NonRetryableTransportError))
             .await
             .expect_err("transport must fail");
         assert_eq!(error.kind(), ErrorKind::Unexpected);
@@ -952,7 +965,7 @@ mod tests {
             success_response("ASIAGRANTEROUTPUT01"),
             success_response("ASIAPROVIDEROUTPUT1"),
         ]);
-        let context = Context::new().with_http_send(http.clone());
+        let context = crate::test_context().with_http_send(http.clone());
         let operation = AssumeRoleGranter::new(REGION, grant.clone()).with_time(signing_time());
         let granted = operation
             .grant_credential(
@@ -1028,7 +1041,7 @@ mod tests {
             }
         }
 
-        let transport_context = Context::new().with_http_send(SecretTransportError);
+        let transport_context = crate::test_context().with_http_send(SecretTransportError);
         let transport_error = operation
             .grant_credential(&transport_context, &source, None)
             .await
@@ -1056,7 +1069,7 @@ mod tests {
             ))
             .expect("response must build");
         let http = MockHttpSend::new([known_sts_error_response, unknown_sts_error_response]);
-        let context = Context::new().with_http_send(http);
+        let context = crate::test_context().with_http_send(http);
 
         let denied = operation
             .grant_credential(&context, &source, None)
@@ -1081,7 +1094,7 @@ mod tests {
         let provider = AssumeRoleCredentialProvider::new(
             ROLE_ARN.to_string(),
             Signer::new(
-                Context::new(),
+                crate::test_context(),
                 provider_source,
                 RequestSigner::new("sts", REGION),
             ),

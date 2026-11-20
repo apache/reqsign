@@ -33,11 +33,12 @@ still uses the current time, so this example checks the authentication header
 rather than asserting a timestamp-dependent signature:
 
 ```rust
-use reqsign::{Context, Signer};
+use reqsign::{Context, RustCryptoProvider, Signer};
 use reqsign::aws::{RequestSigner, StaticCredentialProvider};
 
 let signer = Signer::new(
-    Context::new(), // no I/O needed with static credentials
+    // No I/O needed with static credentials; bind crypto locally.
+    Context::new().with_crypto(RustCryptoProvider::new()),
     StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
     RequestSigner::new("s3", "us-east-1"),
 );

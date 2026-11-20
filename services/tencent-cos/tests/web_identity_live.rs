@@ -23,13 +23,15 @@
 //! temporary Tencent Cloud credentials through the real STS endpoint, then
 //! reads a private COS object with the credentials returned by the provider.
 
+mod common;
+
 use std::env;
 use std::time::Duration;
 
 use http::StatusCode;
 use log::info;
 use reqsign_core::Result;
-use reqsign_core::{Context, OsEnv, Signer};
+use reqsign_core::{OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 use reqsign_tencent_cos::{AssumeRoleWithWebIdentityCredentialProvider, RequestSigner};
@@ -102,7 +104,7 @@ async fn test_web_identity_credential_reads_private_object() -> Result<()> {
         unsigned_response.status()
     );
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);

@@ -75,7 +75,7 @@ mod tests {
             ),
         ]);
 
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs,
         });
@@ -105,7 +105,7 @@ mod tests {
             ),
         ]);
 
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs,
         });
@@ -123,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_env_credential_provider_missing_credentials() -> anyhow::Result<()> {
-        let ctx = Context::new().with_env(StaticEnv::default());
+        let ctx = crate::test_context().with_env(StaticEnv::default());
 
         let provider = EnvCredentialProvider::new();
         let cred = provider.provide_credential(&ctx).await?;
@@ -136,7 +136,7 @@ mod tests {
     async fn test_env_credential_provider_partial_credentials() -> anyhow::Result<()> {
         let envs = HashMap::from([(ENV_ACCESS_KEY_ID.to_string(), "test_access_key".to_string())]);
 
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs,
         });

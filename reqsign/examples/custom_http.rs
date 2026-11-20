@@ -30,5 +30,7 @@ impl HttpSend for MyHttpSend {
 
 fn main() {
     // This example only assembles the context; implement http_send before use.
-    let _ctx = Context::new().with_http_send(MyHttpSend);
+    let _ctx = Context::new()
+        .with_crypto(reqsign::RustCryptoProvider::new())
+        .with_http_send(MyHttpSend);
 }

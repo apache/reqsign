@@ -311,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ecs_provider_no_env() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let ctx = ctx.with_env(StaticEnv {
@@ -326,7 +326,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_endpoint_relative_uri() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let ctx = ctx.with_env(StaticEnv {
@@ -344,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fargate_metadata_uri_does_not_override_credentials_endpoint() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let ctx = ctx.with_env(StaticEnv {
@@ -368,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_endpoint_full_uri() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let ctx = ctx.with_env(StaticEnv {
@@ -386,7 +386,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_custom_endpoint() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let provider = ECSCredentialProvider::new().with_endpoint("http://custom-endpoint/creds");
@@ -397,7 +397,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_configured_relative_uri() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -413,7 +413,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_configured_relative_uri_with_custom_base() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -431,7 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_configured_values_override_env() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -458,7 +458,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_priority_order() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -486,7 +486,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_configured_auth_token() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -513,7 +513,7 @@ mod tests {
         writeln!(temp_file, "file-token").unwrap();
         let temp_path = temp_file.path().to_str().unwrap();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -546,7 +546,7 @@ mod tests {
         writeln!(temp_file, "file-token").unwrap();
         let temp_path = temp_file.path().to_str().unwrap();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {

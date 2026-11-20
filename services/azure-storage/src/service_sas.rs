@@ -19,6 +19,7 @@ use crate::Credential;
 use crate::constants::AZURE_QUERY_ENCODE_SET;
 use crate::user_delegation_sas::SasProtocol;
 use percent_encoding::percent_encode;
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, GrantCredential, Result, SigningCredential};
@@ -701,11 +702,19 @@ impl ServiceSharedAccessSignature {
         .join("\n")
     }
 
-    fn signature_with_decoded_key(&self, decoded_key: &[u8]) -> String {
-        hash::base64_hmac_sha256(decoded_key, self.string_to_sign().as_bytes())
+    fn signature_with_decoded_key(
+        &self,
+        provider: &dyn CryptoProvider,
+        decoded_key: &[u8],
+    ) -> reqsign_core::Result<String> {
+        hash::base64_hmac_sha256(provider, decoded_key, self.string_to_sign().as_bytes())
     }
 
-    fn token_with_decoded_key(&self, decoded_key: &[u8]) -> Vec<(String, String)> {
+    fn token_with_decoded_key(
+        &self,
+        provider: &dyn CryptoProvider,
+        decoded_key: &[u8],
+    ) -> reqsign_core::Result<Vec<(String, String)>> {
         let mut elements: Vec<(String, String)> = vec![
             ("sv".to_string(), self.version.to_string()),
             ("se".to_string(), self.expiry.format_rfc3339_zulu()),
@@ -728,16 +737,19 @@ impl ServiceSharedAccessSignature {
 
         elements.push((
             "sig".to_string(),
-            self.signature_with_decoded_key(decoded_key),
+            self.signature_with_decoded_key(provider, decoded_key)?,
         ));
 
-        elements
+        Ok(elements)
     }
 
     /// Generate SAS query parameters.
-    pub fn token(&self) -> Result<Vec<(String, String)>> {
+    ///
+    /// `provider` must be the provider selected for this operation. Callers with
+    /// a [`Context`] resolve it with `context.crypto_provider()?`.
+    pub fn token(&self, provider: &dyn CryptoProvider) -> Result<Vec<(String, String)>> {
         let decoded_key = hash::base64_decode(&self.key)?;
-        Ok(self.token_with_decoded_key(&decoded_key))
+        self.token_with_decoded_key(provider, &decoded_key)
     }
 }
 
@@ -887,10 +899,11 @@ impl GrantCredential for ServiceSasGranter {
 
     async fn grant_credential(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         credential: &Self::Credential,
         expires_in: Option<Duration>,
     ) -> Result<Self::Credential> {
+        let provider = ctx.crypto_provider()?;
         let Credential::SharedKey {
             account_name,
             account_key,
@@ -945,7 +958,9 @@ impl GrantCredential for ServiceSasGranter {
             signer = signer.with_ip(ip);
         }
 
-        let pairs = signer.token_with_decoded_key(&decoded_key);
+        let pairs = signer
+            .token_with_decoded_key(provider, &decoded_key)
+            .expect("service SAS token must build");
         let token = encode_query_pairs(&pairs);
         let after_generation = self.now_after_generation();
         if times.expiry <= after_generation {
@@ -1030,7 +1045,9 @@ mod tests {
             expiry,
         );
 
-        let token_content = sign.token().expect("token generation failed");
+        let token_content = sign
+            .token(&reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+            .expect("token generation failed");
         let token = token_content
             .iter()
             .map(|(k, v)| format!("{k}={v}"))
@@ -1197,7 +1214,7 @@ mod tests {
 
         let output = operation
             .grant_credential(
-                &Context::new(),
+                &crate::test_context(),
                 &shared_key("account", VALID_ACCOUNT_KEY),
                 Some(Duration::from_secs(60)),
             )
@@ -1212,7 +1229,7 @@ mod tests {
         );
 
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             StaticCredentialProvider::new_sas_token_expires_at(token, expires_at),
             RequestSigner::new(),
         );
@@ -1256,7 +1273,11 @@ mod tests {
         let source = shared_key("account", VALID_ACCOUNT_KEY);
 
         let output = operation
-            .grant_credential(&Context::new(), &source, Some(Duration::from_millis(1_500)))
+            .grant_credential(
+                &crate::test_context(),
+                &source,
+                Some(Duration::from_millis(1_500)),
+            )
             .await
             .expect("Service SAS grant must succeed");
         let (token, expires_at) = output_parts(&output);
@@ -1291,7 +1312,11 @@ mod tests {
             "rw\n2030-01-01T00:00:01Z\n2030-01-01T00:00:03Z\n/blob/account/container/path/to/blob name.txt\n\n198.51.100.10-198.51.100.20\nhttps,http\n2022-11-02\nb\n\n\n\n\n\n\n"
         );
         assert_eq!(
-            encode_query_pairs(&direct.token().expect("compatibility signer must succeed")),
+            encode_query_pairs(
+                &direct
+                    .token(&reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+                    .expect("compatibility signer must succeed"),
+            ),
             token
         );
     }
@@ -1310,7 +1335,7 @@ mod tests {
 
         let output = operation
             .grant_credential(
-                &Context::new(),
+                &crate::test_context(),
                 &shared_key("account", VALID_ACCOUNT_KEY),
                 Some(Duration::from_secs(60)),
             )
@@ -1344,7 +1369,11 @@ mod tests {
         ];
         for source in invalid_sources {
             let err = operation
-                .grant_credential(&Context::new(), &source, Some(Duration::from_secs(60)))
+                .grant_credential(
+                    &crate::test_context(),
+                    &source,
+                    Some(Duration::from_secs(60)),
+                )
                 .await
                 .expect_err("invalid source must fail");
             assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
@@ -1379,7 +1408,7 @@ mod tests {
             Some(Duration::from_secs(u64::MAX)),
         ] {
             let err = operation
-                .grant_credential(&Context::new(), &source, lifetime)
+                .grant_credential(&crate::test_context(), &source, lifetime)
                 .await
                 .expect_err("invalid lifetime must fail");
             assert_eq!(err.kind(), ErrorKind::RequestInvalid);
@@ -1392,7 +1421,11 @@ mod tests {
         .with_time(now);
         assert_eq!(
             start_after_expiry
-                .grant_credential(&Context::new(), &source, Some(Duration::from_secs(60)),)
+                .grant_credential(
+                    &crate::test_context(),
+                    &source,
+                    Some(Duration::from_secs(60)),
+                )
                 .await
                 .expect_err("start at or after expiry must fail")
                 .kind(),
@@ -1406,7 +1439,11 @@ mod tests {
         .with_time(now);
         assert_eq!(
             future_start
-                .grant_credential(&Context::new(), &source, Some(Duration::from_secs(60)),)
+                .grant_credential(
+                    &crate::test_context(),
+                    &source,
+                    Some(Duration::from_secs(60)),
+                )
                 .await
                 .expect_err("future start must fail the immediate usability contract")
                 .kind(),
@@ -1417,7 +1454,11 @@ mod tests {
             operation.with_time_after_generation(timestamp("2030-01-01T00:05:00Z"));
         assert_eq!(
             expired_after_generation
-                .grant_credential(&Context::new(), &source, Some(Duration::from_secs(300)),)
+                .grant_credential(
+                    &crate::test_context(),
+                    &source,
+                    Some(Duration::from_secs(300)),
+                )
                 .await
                 .expect_err("expired post-generation output must fail")
                 .kind(),
@@ -1440,7 +1481,7 @@ mod tests {
         )
         .with_time(now);
         let output = Granter::new(
-            Context::new(),
+            crate::test_context(),
             StaticCredentialProvider::new_shared_key("account", &key),
             operation,
         )
@@ -1451,7 +1492,7 @@ mod tests {
         let token = token.to_string();
 
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             StaticCredentialProvider::new_sas_token_expires_at(&token, expires_at),
             RequestSigner::new(),
         );
@@ -1485,7 +1526,7 @@ mod tests {
             .with_service_sas_permissions("r")
             .with_service_sas_protocol("https")
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut presigned,
                 Some(&source),
                 Some(Duration::from_secs(300)),
@@ -1532,7 +1573,11 @@ mod tests {
         }
 
         let err = operation
-            .grant_credential(&Context::new(), &source, Some(Duration::from_secs(60)))
+            .grant_credential(
+                &crate::test_context(),
+                &source,
+                Some(Duration::from_secs(60)),
+            )
             .await
             .expect_err("invalid key must fail without disclosure");
         let debug = format!("{err:?}");

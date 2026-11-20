@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::sync::LazyLock;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -57,7 +59,7 @@ impl FileRead for KeyFile {
 }
 
 fn context(pem: &str) -> Context {
-    Context::new().with_file_read(KeyFile(pem.as_bytes().to_vec()))
+    crate::common::test_context().with_file_read(KeyFile(pem.as_bytes().to_vec()))
 }
 
 fn credential() -> Credential {
@@ -357,7 +359,12 @@ async fn absent_or_incomplete_credentials_do_not_read_private_key() -> anyhow::R
         let original = parts.clone();
         // No file adapter is installed: credential checks must precede key loading.
         let result = RequestSigner::default()
-            .sign_request(&Context::new(), &mut parts, credential.as_ref(), None)
+            .sign_request(
+                &crate::common::test_context(),
+                &mut parts,
+                credential.as_ref(),
+                None,
+            )
             .await;
         if credential.is_some() {
             assert_eq!(

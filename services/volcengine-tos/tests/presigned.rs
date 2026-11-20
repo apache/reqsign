@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use anyhow::{Context as _, Result};
 use http::{Method, Request, StatusCode};
 use log::warn;
@@ -33,7 +35,7 @@ async fn test_presigned_object_lifecycle() -> Result<()> {
         return Ok(());
     };
 
-    let ctx = Context::new();
+    let ctx = crate::common::test_context();
     let signer = RequestSigner::new(&cfg.region);
     let client = Client::new();
     let object_key = format!(
@@ -132,7 +134,10 @@ async fn signed_request(
     *req.method_mut() = method;
     *req.uri_mut() = http::Uri::from_str(url)?;
     if !req.body().is_empty() {
-        let content_sha256 = hex_sha256(req.body().as_bytes());
+        let content_sha256 = hex_sha256(
+            &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+            req.body().as_bytes(),
+        )?;
         req.headers_mut()
             .insert("x-tos-content-sha256", content_sha256.parse()?);
     }

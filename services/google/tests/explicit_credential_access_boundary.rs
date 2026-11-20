@@ -15,13 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use reqsign_core::{Context, ErrorKind, Granter, HttpSend, Result, time::Timestamp};
+use reqsign_core::{ErrorKind, Granter, HttpSend, Result, time::Timestamp};
 use reqsign_google::{
     CredentialAccessBoundaryGrant, CredentialAccessBoundaryPermissions,
     CredentialAccessBoundaryRule, ServerSideCredentialAccessBoundaryGranter,
@@ -90,7 +92,7 @@ async fn exchanges_caller_policy_without_changing_roles_or_prefixes() -> Result<
             );
         }
         let output = Granter::new(
-            Context::new().with_http_send(http.clone()),
+            crate::common::test_context().with_http_send(http.clone()),
             source(expires_at),
             ServerSideCredentialAccessBoundaryGranter::new(grant.clone()),
         )
@@ -191,7 +193,7 @@ async fn rejects_invalid_explicit_rules_before_sts_io() {
     let http = MockSts::default();
     for grant in invalid {
         let err = Granter::new(
-            Context::new().with_http_send(http.clone()),
+            crate::common::test_context().with_http_send(http.clone()),
             source(Timestamp::now() + Duration::from_secs(600)),
             ServerSideCredentialAccessBoundaryGranter::new(grant),
         )
@@ -217,7 +219,7 @@ async fn combines_custom_roles_and_typed_rules_without_normalization() -> Result
     )
     .with_rule(CredentialAccessBoundaryRule::new("example-bucket", roles));
     Granter::new(
-        Context::new().with_http_send(http.clone()),
+        crate::common::test_context().with_http_send(http.clone()),
         source(Timestamp::now() + Duration::from_secs(600)),
         ServerSideCredentialAccessBoundaryGranter::new(grant),
     )
@@ -249,7 +251,7 @@ async fn client_side_rejects_explicit_conditions_before_io() {
             .with_condition(CONDITION),
     );
     let err = Granter::new(
-        Context::new().with_http_send(http.clone()),
+        crate::common::test_context().with_http_send(http.clone()),
         source(Timestamp::now() + Duration::from_secs(3600)),
         ClientSideCredentialAccessBoundaryGranter::new(grant),
     )

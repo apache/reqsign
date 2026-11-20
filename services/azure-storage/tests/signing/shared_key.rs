@@ -17,7 +17,7 @@
 
 use bytes::Bytes;
 use reqsign_azure_storage::{RequestSigner, StaticCredentialProvider};
-use reqsign_core::{Context, OsEnv, Signer};
+use reqsign_core::{OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 
@@ -52,7 +52,7 @@ async fn test_shared_key_signing_get() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -104,7 +104,7 @@ async fn test_shared_key_signing_put_with_body() {
         return;
     };
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -148,7 +148,7 @@ async fn test_shared_key_signing_with_query_params() {
         return;
     };
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -180,7 +180,7 @@ async fn test_shared_key_signing_special_headers() {
         return;
     };
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);

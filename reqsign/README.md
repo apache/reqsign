@@ -42,7 +42,13 @@ Add `reqsign` to your `Cargo.toml`:
 reqsign = "0.20"
 ```
 
-By default, this includes the `default-context` feature which provides a ready-to-use context implementation using `reqwest` and `tokio`.
+By default, this includes `default-context` (a ready-to-use context using
+`reqwest` and `tokio`) and `default-crypto` (the RustCrypto provider).
+`default-crypto` makes `default_context()` bind RustCrypto when the process-wide
+slot is empty, so default signers work without startup boilerplate. It never
+writes the global slot. To choose a global provider, install it before
+constructing facade contexts; contexts already bound to RustCrypto keep that
+binding, and an explicit `Context::with_crypto` binding always wins.
 
 To use specific services only:
 
@@ -63,7 +69,8 @@ use reqsign::{aws, default_context};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Create a default runtime context (HTTP client, file reader, OS env, command execution)
+    // Create a default runtime context (HTTP client, file reader, OS env, command execution).
+    // It binds RustCrypto when no process-wide provider is installed.
     let ctx = default_context();
     // Create a default signer for AWS S3 in us-east-1 using the supplied context
     let signer = aws::default_signer(ctx, "s3", "us-east-1");
@@ -90,16 +97,19 @@ For more control, you can manually assemble the signer components:
 
 ```rust,ignore
 use anyhow::Result;
-use reqsign::{Context, Signer, default_context};
+use reqsign::{Context, RustCryptoProvider, Signer, default_context};
 use reqsign::aws::{DefaultCredentialProvider, RequestSigner};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create a context with default implementations
+    // (including a RustCrypto binding when default-crypto is enabled).
     let ctx = default_context();
 
-    // Or build your own context with specific implementations
+    // Or build your own context with specific implementations.
+    // A bare Context starts unbound, so bind the provider explicitly.
     let ctx = Context::new()
+        .with_crypto(RustCryptoProvider::new())
         .with_file_read(reqsign_file_read_tokio::TokioFileRead)
         .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default())
         .with_env(reqsign::OsEnv);
@@ -182,8 +192,9 @@ let signer = oracle::default_signer(ctx);
 
 ## Feature Flags
 
-- `default`: Enables `default-context`
+- `default`: Enables `default-context` and `default-crypto`
 - `default-context`: Provides a default context implementation using `reqwest` and `tokio`
+- `default-crypto`: Re-exports `RustCryptoProvider`; `default_context()` binds it when no process-wide provider is installed
 - `aliyun`: Enable Aliyun OSS support
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support

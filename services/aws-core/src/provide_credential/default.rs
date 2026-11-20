@@ -369,7 +369,7 @@ mod tests {
     async fn test_credential_env_loader_without_env() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -397,7 +397,7 @@ mod tests {
     async fn test_credential_env_loader_with_env() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -424,7 +424,7 @@ mod tests {
     async fn test_default_credential_provider_no_env_removes_slot() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -463,7 +463,7 @@ mod tests {
     async fn test_credential_profile_loader_from_config() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -491,7 +491,7 @@ mod tests {
     async fn test_credential_profile_loader_from_shared() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -516,7 +516,7 @@ mod tests {
     async fn test_default_credential_provider_prepend() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -554,7 +554,7 @@ mod tests {
     async fn test_default_credential_provider_no_profile_removes_slot() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -595,7 +595,7 @@ mod tests {
     async fn test_default_credential_provider_custom_profile_slot() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -633,7 +633,7 @@ mod tests {
         writeln!(file, "aws_access_key_id = SELECTED")?;
         writeln!(file, "aws_secret_access_key = selected-secret")?;
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_env(StaticEnv {
                 home_dir: None,
@@ -670,7 +670,7 @@ mod tests {
         writeln!(file, "sso_role_name = Developer")?;
         writeln!(file, "sso_start_url = https://example.awsapps.com/start")?;
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_env(StaticEnv {
                 home_dir: Some(tmp_dir.path().to_path_buf()),
@@ -712,7 +712,7 @@ mod tests {
         writeln!(file, "[profile selected]")?;
         writeln!(file, "credential_process = python3 {helper} --profile test")?;
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_command_execute(TokioCommandExecute)
             .with_env(StaticEnv {
@@ -763,7 +763,7 @@ mod tests {
     async fn test_default_credential_provider_custom_process_slot() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_command_execute(TokioCommandExecute)
@@ -799,7 +799,7 @@ mod tests {
     async fn test_default_credential_provider_no_process_removes_slot() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_command_execute(TokioCommandExecute)
@@ -834,7 +834,7 @@ mod tests {
     async fn test_credential_profile_loader_from_both() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);

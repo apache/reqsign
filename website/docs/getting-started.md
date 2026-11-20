@@ -52,10 +52,12 @@ cargo add http anyhow
 | `volcengine` | Volcengine TOS |
 | `full` | Everything above |
 
-The default `default-context` feature wires a ready-to-use runtime (Tokio
-file reading, reqwest HTTP, Tokio command execution). Keep it unless you are
-[bringing your own runtime](/docs/guides/custom-runtimes/). Requires
-Rust 1.86.0+.
+The default features include `default-context`, which wires a ready-to-use
+runtime (Tokio file reading, reqwest HTTP, Tokio command execution), and
+`default-crypto`, which lets `default_context()` bind RustCrypto when no
+process-wide provider is installed. Keep `default-context` unless you are
+[bringing your own runtime](/docs/guides/custom-runtimes/); a custom context
+must bind a `CryptoProvider` explicitly. Requires Rust 1.86.0+.
 
 ## 2. Sign your first request
 

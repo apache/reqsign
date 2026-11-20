@@ -255,7 +255,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use reqsign_core::StaticEnv;
-    use reqsign_core::{Context, Env, FileRead, HttpSend};
+    use reqsign_core::{Env, FileRead, HttpSend};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::HashMap;
@@ -321,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_assume_role_with_oidc_loader_without_config() {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let ctx = ctx.with_env(StaticEnv {
@@ -408,7 +408,7 @@ mod tests {
         let http_body = r#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#;
         let http_send = CaptureHttpSend::new(http_body);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -474,7 +474,7 @@ mod tests {
         let http_body = r#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#;
         let http_send = CaptureHttpSend::new(http_body);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(http_send.clone())
             .with_env(PanicEnv);
@@ -543,7 +543,7 @@ mod tests {
         let http_body = r#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#;
         let http_send = CaptureHttpSend::new(http_body);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -602,7 +602,7 @@ mod tests {
         let http_body = r#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#;
         let http_send = CaptureHttpSend::new(http_body);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {

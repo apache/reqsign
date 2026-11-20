@@ -34,8 +34,8 @@ rustdoc owns signatures.
 ## Core
 
 - [`reqsign-core`](https://docs.rs/reqsign-core) — `Context`, `Signer`,
-  `Granter`, and the `ProvideCredential` / `SignRequest` /
-  `GrantCredential` / `SigningCredential` traits.
+  `Granter`, the `ProvideCredential` / `SignRequest` / `GrantCredential` /
+  `SigningCredential` traits, and the `crypto::CryptoProvider` contract.
 
 ## Service crates
 
@@ -51,6 +51,13 @@ rustdoc owns signatures.
 - [`reqsign-oracle`](https://docs.rs/reqsign-oracle)
 - [`reqsign-tencent-cos`](https://docs.rs/reqsign-tencent-cos)
 - [`reqsign-volcengine-tos`](https://docs.rs/reqsign-volcengine-tos)
+
+## Crypto providers
+
+- [`reqsign-crypto-rustcrypto`](https://docs.rs/reqsign-crypto-rustcrypto) —
+  pure-Rust provider, including the supported WASM subset
+- [`reqsign-crypto-boring`](https://docs.rs/reqsign-crypto-boring) — native
+  BoringSSL provider, built outside the main workspace
 
 ## Context components
 

@@ -50,11 +50,12 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 /// use reqsign_aws_v4::EMPTY_STRING_SHA256;
 /// use reqsign_core::hash::hex_sha256;
 ///
+/// let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
 /// let body: &[u8] = b"Hello, World!";
 /// let payload_hash = if body.is_empty() {
 ///     EMPTY_STRING_SHA256.to_string()
 /// } else {
-///     hex_sha256(body)
+///     hex_sha256(&provider, body).expect("SHA-256 must succeed")
 /// };
 ///
 /// let request = http::Request::put("https://s3.amazonaws.com/mybucket/hello.txt")
@@ -194,7 +195,7 @@ impl SignRequest for RequestSigner {
 
     async fn sign_request(
         &self,
-        _: &Context,
+        ctx: &Context,
         req: &mut Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
@@ -202,8 +203,10 @@ impl SignRequest for RequestSigner {
         let Some(credential) = credential else {
             return Ok(());
         };
+        let crypto = ctx.crypto_provider()?;
 
         sign_request_parts(
+            crypto,
             req,
             credential,
             expires_in,
@@ -397,7 +400,12 @@ mod tests {
         let (mut session_parts, body) = Request::get(S3_EXPRESS_URI).body("")?.into_parts();
         RequestSigner::new("s3express", S3_EXPRESS_REGION)
             .with_time(now)
-            .sign_request(&Context::new(), &mut session_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut session_parts,
+                Some(&credential),
+                None,
+            )
             .await?;
         let actual_session = Request::from_parts(session_parts, body);
         compare_request(
@@ -426,7 +434,12 @@ mod tests {
         RequestSigner::new("s3express", S3_EXPRESS_REGION)
             .with_standard_session_token()
             .with_time(now)
-            .sign_request(&Context::new(), &mut iam_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut iam_parts,
+                Some(&credential),
+                None,
+            )
             .await?;
         let actual_iam = Request::from_parts(iam_parts, body);
         compare_request("S3 Express IAM header mode", &expected_iam, &actual_iam);
@@ -482,7 +495,7 @@ mod tests {
         RequestSigner::new("s3express", S3_EXPRESS_REGION)
             .with_time(now)
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut session_parts,
                 Some(&credential),
                 expires_in,
@@ -502,7 +515,7 @@ mod tests {
             .with_standard_session_token()
             .with_time(now)
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut iam_parts,
                 Some(&credential),
                 expires_in,
@@ -574,7 +587,7 @@ mod tests {
             RequestSigner::new("s3express", S3_EXPRESS_REGION)
                 .with_time(now)
                 .sign_request(
-                    &Context::new(),
+                    &crate::test_context(),
                     &mut session_parts,
                     Some(&credential),
                     expires_in,
@@ -598,7 +611,7 @@ mod tests {
                 .with_standard_session_token()
                 .with_time(now)
                 .sign_request(
-                    &Context::new(),
+                    &crate::test_context(),
                     &mut iam_parts,
                     Some(&credential),
                     expires_in,
@@ -649,7 +662,12 @@ mod tests {
                 let (mut parts, _body) = Request::get(uri).body("")?.into_parts();
                 RequestSigner::new("s3", S3_EXPRESS_REGION)
                     .with_time(now)
-                    .sign_request(&Context::new(), &mut parts, Some(&credential), expires_in)
+                    .sign_request(
+                        &crate::test_context(),
+                        &mut parts,
+                        Some(&credential),
+                        expires_in,
+                    )
                     .await?;
 
                 if presigned {
@@ -692,7 +710,7 @@ mod tests {
                 let mut parts = Request::get(uri).body(())?.into_parts().0;
                 let original = parts.clone();
                 let error = signer
-                    .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+                    .sign_request(&crate::test_context(), &mut parts, Some(&credential), None)
                     .await
                     .expect_err("invalid session token must be rejected");
 
@@ -731,7 +749,7 @@ mod tests {
             calls: calls.clone(),
         };
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             provider,
             RequestSigner::new("s3", "test").with_time(now),
         );
@@ -776,7 +794,7 @@ mod tests {
             calls: calls.clone(),
         };
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             provider,
             RequestSigner::new("s3", "test").with_time(now),
         );
@@ -934,7 +952,8 @@ mod tests {
             HeaderValue::from_str(&content.len().to_string()).expect("must be valid"),
         );
 
-        let body = hex_sha256(content.as_bytes());
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        let body = hex_sha256(&provider, content.as_bytes()).expect("SHA-256 must succeed");
         req.headers_mut().insert(
             "x-amz-content-sha256",
             HeaderValue::from_str(&body).expect("must be valid"),
@@ -1079,7 +1098,7 @@ mod tests {
         let (mut parts, body) = encoding_request(uri)?.into_parts();
         signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut parts,
                 Some(&credential),
                 presigned.then_some(Duration::from_secs(60)),
@@ -1283,7 +1302,7 @@ mod tests {
             let original = parts.clone();
             let error = signer
                 .sign_request(
-                    &Context::new(),
+                    &crate::test_context(),
                     &mut parts,
                     Some(&credential),
                     presigned.then_some(Duration::from_secs(60)),
@@ -1340,7 +1359,12 @@ mod tests {
             .into_parts()
             .0;
         signer
-            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut header_parts,
+                Some(&credential),
+                None,
+            )
             .await?;
         assert_eq!(header_parts.uri.to_string(), original_uri);
         assert_eq!(header_parts.headers["x-custom"], " value ");
@@ -1348,7 +1372,7 @@ mod tests {
         let mut query_parts = Request::get(&original_uri).body(())?.into_parts().0;
         signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut query_parts,
                 Some(&credential),
                 Some(Duration::from_secs(60)),
@@ -1448,7 +1472,7 @@ mod tests {
         let req = req_fn();
         let (mut parts, body) = req.into_parts();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let loader = StaticCredentialProvider::new("access_key_id", "secret_access_key");
@@ -1526,7 +1550,7 @@ mod tests {
         let req = req_fn();
         let (mut parts, body) = req.into_parts();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let loader = StaticCredentialProvider::new("access_key_id", "secret_access_key");
@@ -1606,7 +1630,7 @@ mod tests {
         let req = req_fn();
         let (mut parts, body) = req.into_parts();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let loader = StaticCredentialProvider::new("access_key_id", "secret_access_key")
@@ -1687,7 +1711,7 @@ mod tests {
         let req = req_fn();
         let (mut parts, body) = req.into_parts();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let loader = StaticCredentialProvider::new("access_key_id", "secret_access_key")

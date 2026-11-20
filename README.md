@@ -26,7 +26,8 @@ use reqsign::{aws, default_context};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Create a default runtime context (HTTP client, file reader, OS env, command execution)
+    // Create a default runtime context (HTTP client, file reader, OS env, command execution).
+    // It binds RustCrypto when no process-wide provider is installed.
     let ctx = default_context();
     // Create a default signer for S3 in us-east-1 using the supplied context
     let signer = aws::default_signer(ctx, "s3", "us-east-1");
@@ -55,15 +56,17 @@ For more control over the components, you can manually assemble the signer:
 
 ```rust
 use anyhow::Result;
-use reqsign::{Context, Signer};
+use reqsign::{Context, RustCryptoProvider, Signer};
 use reqsign_aws_v4::{DefaultCredentialProvider, RequestSigner};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Build your own context with specific implementations
+    // Build your own context with specific implementations.
+    // A bare Context starts unbound, so bind the provider explicitly.
     let ctx = Context::new()
+        .with_crypto(RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(reqsign::OsEnv);

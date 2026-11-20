@@ -42,7 +42,7 @@ async fn test_default_provider_role_chain_is_consumed_by_signer() {
     use bytes::Bytes;
     use http::{Request, Response, StatusCode, header};
     use reqsign_aws_v4::RequestSigner;
-    use reqsign_core::{Context, FileRead, HttpSend, Signer, StaticEnv};
+    use reqsign_core::{FileRead, HttpSend, Signer, StaticEnv};
     use std::collections::HashMap;
     use std::sync::Mutex;
 
@@ -102,7 +102,7 @@ async fn test_default_provider_role_chain_is_consumed_by_signer() {
     let http = Http {
         request: Mutex::new(None),
     };
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(files)
         .with_http_send(http)
         .with_env(StaticEnv {

@@ -330,7 +330,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use reqsign_core::time::Timestamp;
-    use reqsign_core::{Context, HttpSend, StaticEnv};
+    use reqsign_core::{HttpSend, StaticEnv};
     use reqsign_file_read_tokio::TokioFileRead;
     use std::collections::{HashMap, VecDeque};
     use std::sync::{Arc, Mutex};
@@ -421,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ecs_ram_role_provider_disabled_by_env() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(SequenceHttpSend::new(Vec::new()))
             .with_env(StaticEnv {
@@ -452,7 +452,7 @@ mod tests {
                 body: ecs_credential_response("2124-05-25T11:45:17Z".to_string(), "ecs_access_key"),
             },
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -504,7 +504,7 @@ mod tests {
                 body: ecs_credential_response("2124-05-25T11:45:17Z".to_string(), "ecs_access_key"),
             },
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -533,7 +533,7 @@ mod tests {
             status: http::StatusCode::INTERNAL_SERVER_ERROR,
             body: "token failed".to_string(),
         }]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send)
             .with_env(StaticEnv {
@@ -582,7 +582,7 @@ mod tests {
                 ),
             },
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {

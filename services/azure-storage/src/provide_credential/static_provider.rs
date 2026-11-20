@@ -68,14 +68,14 @@ impl ProvideCredential for StaticCredentialProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqsign_core::{Context, OsEnv};
+    use reqsign_core::OsEnv;
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
 
     #[tokio::test]
     async fn test_static_credential_provider_shared_key() {
         let provider = StaticCredentialProvider::new_shared_key("myaccount", "mykey");
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -96,7 +96,7 @@ mod tests {
     #[tokio::test]
     async fn test_static_credential_provider_sas_token() {
         let provider = StaticCredentialProvider::new_sas_token("mysastoken");
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -115,7 +115,7 @@ mod tests {
         let expires_at = Timestamp::now() + std::time::Duration::from_secs(60);
         let provider = StaticCredentialProvider::new_sas_token_expires_at("mysastoken", expires_at);
         let credential = provider
-            .provide_credential(&Context::new())
+            .provide_credential(&crate::test_context())
             .await
             .expect("provider must succeed");
 
@@ -134,7 +134,7 @@ mod tests {
     #[tokio::test]
     async fn test_static_credential_provider_bearer_token() {
         let provider = StaticCredentialProvider::new_bearer_token("mybearertoken");
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);

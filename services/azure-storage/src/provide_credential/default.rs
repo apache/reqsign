@@ -286,7 +286,7 @@ mod tests {
             ]),
         };
 
-        let ctx = reqsign_core::Context::new().with_env(env);
+        let ctx = crate::test_context().with_env(env);
 
         let loader = DefaultCredentialProvider::new();
 
@@ -313,7 +313,7 @@ mod tests {
             )]),
         };
 
-        let ctx = reqsign_core::Context::new().with_env(env);
+        let ctx = crate::test_context().with_env(env);
 
         let loader = DefaultCredentialProvider::new();
 

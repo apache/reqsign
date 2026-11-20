@@ -36,6 +36,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 # Core functionality (always included)
 reqsign-core = { workspace = true }
+reqsign-crypto-rustcrypto = { workspace = true, optional = true }
 
 # Service implementations (optional)
 reqsign-aliyun-oss = { workspace = true, optional = true }
@@ -55,7 +56,8 @@ reqsign-file-read-tokio = { workspace = true, optional = true }
 reqsign-http-send-reqwest = { workspace = true, optional = true }
 
 [features]
-default = ["default-context"]
+default = ["default-context", "default-crypto"]
+default-crypto = ["dep:reqsign-crypto-rustcrypto"]
 default-context = [
   "dep:reqsign-command-execute-tokio",
   "dep:reqsign-file-read-tokio",
@@ -103,35 +105,36 @@ tokio = { version = "1", features = ["full"] }
 
 [[example]]
 name = "aws"
-required-features = ["aws", "default-context"]
+required-features = ["aws", "default-context", "default-crypto"]
 
 [[example]]
 name = "azure"
-required-features = ["azure", "default-context"]
+required-features = ["azure", "default-context", "default-crypto"]
 
 [[example]]
 name = "google"
-required-features = ["google", "default-context"]
+required-features = ["google", "default-context", "default-crypto"]
 
 [[example]]
 name = "static_credentials"
-required-features = ["aws", "default-context"]
+required-features = ["aws", "default-context", "default-crypto"]
 
 [[example]]
 name = "presign"
-required-features = ["aws", "default-context"]
+required-features = ["aws", "default-context", "default-crypto"]
 
 [[example]]
 name = "custom_context"
-required-features = ["aws", "default-context"]
+required-features = ["aws", "default-context", "default-crypto"]
 
 [[example]]
 name = "s3_express_grant"
-required-features = ["aws", "default-context"]
+required-features = ["aws", "default-context", "default-crypto"]
 
 [[example]]
 name = "s3_express_sign"
-required-features = ["aws", "default-context"]
+required-features = ["aws", "default-context", "default-crypto"]
 
 [[example]]
 name = "custom_http"
+required-features = ["default-crypto"]

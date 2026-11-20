@@ -34,6 +34,7 @@ use std::fmt::{Debug, Formatter};
 use std::time::Duration;
 
 use http::header::{AUTHORIZATION, HeaderValue};
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, GrantCredential, Result, SigningCredential};
@@ -362,6 +363,7 @@ impl AssumeRoleGranter {
 
     fn build_request(
         &self,
+        provider: &dyn CryptoProvider,
         credential: &Credential,
         duration_seconds: Option<u64>,
         signing_time: Timestamp,
@@ -410,15 +412,16 @@ impl AssumeRoleGranter {
         );
         let string_to_sign = format!(
             "HMAC-SHA256\n{date}\n{credential_scope}\n{}",
-            hex_sha256(canonical_request.as_bytes())
+            hex_sha256(provider, canonical_request.as_bytes())?
         );
         let signing_key = derive_signing_key(
+            provider,
             &credential.secret_access_key,
             &short_date,
             &self.region,
             DEFAULT_STS_SERVICE,
-        );
-        let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
+        )?;
+        let signature = hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())?;
         let authorization = format!(
             "HMAC-SHA256 Credential={}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}",
             credential.access_key_id
@@ -532,7 +535,12 @@ impl GrantCredential for AssumeRoleGranter {
         let required_until = self.required_valid_until(credential, expires_in);
         self.validate_source(credential, required_until)?;
 
-        let request = self.build_request(credential, duration_seconds, self.now())?;
+        let request = self.build_request(
+            ctx.crypto_provider()?,
+            credential,
+            duration_seconds,
+            self.now(),
+        )?;
         let response = ctx
             .http_send(request.map(Into::into))
             .await
@@ -562,11 +570,17 @@ fn canonical_query_string(params: &BTreeMap<String, String>) -> String {
         .join("&")
 }
 
-fn derive_signing_key(secret: &str, date: &str, region: &str, service: &str) -> Vec<u8> {
-    let date_key = hmac_sha256(secret.as_bytes(), date.as_bytes());
-    let region_key = hmac_sha256(&date_key, region.as_bytes());
-    let service_key = hmac_sha256(&region_key, service.as_bytes());
-    hmac_sha256(&service_key, b"request")
+fn derive_signing_key(
+    provider: &dyn CryptoProvider,
+    secret: &str,
+    date: &str,
+    region: &str,
+    service: &str,
+) -> Result<Vec<u8>> {
+    let date_key = hmac_sha256(provider, secret.as_bytes(), date.as_bytes())?;
+    let region_key = hmac_sha256(provider, &date_key, region.as_bytes())?;
+    let service_key = hmac_sha256(provider, &region_key, service.as_bytes())?;
+    Ok(hmac_sha256(provider, &service_key, b"request")?.to_vec())
 }
 
 #[derive(Deserialize)]
@@ -884,7 +898,7 @@ mod tests {
             http::StatusCode::OK,
             success_body(FAR_FUTURE_EXPIRY),
         )]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let (provider, provider_calls) = source_provider();
 
         let credential = Granter::new(ctx, provider, granter(signing_time))
@@ -932,7 +946,7 @@ mod tests {
             http::StatusCode::OK,
             success_body(FAR_FUTURE_EXPIRY),
         )]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let grant = AssumeRoleGrant::new(ROLE_TRN, SESSION_NAME).with_policy(POLICY);
         let granter = AssumeRoleGranter::new(REGION, grant).with_time(signing_time);
 
@@ -987,7 +1001,7 @@ mod tests {
             http::StatusCode::OK,
             success_body(FAR_FUTURE_EXPIRY),
         )]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let (provider, _) = source_provider();
 
         Granter::new(ctx, provider, granter(signing_time))
@@ -1011,7 +1025,7 @@ mod tests {
             Some(Duration::from_millis(900_500)),
         ] {
             let http_send = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-            let ctx = Context::new().with_http_send(http_send.clone());
+            let ctx = crate::test_context().with_http_send(http_send.clone());
             let (provider, _) = source_provider();
             let err = Granter::new(ctx, provider, granter(signing_time))
                 .grant(duration)
@@ -1033,7 +1047,7 @@ mod tests {
         ];
         for grant in invalid_grants {
             let http_send = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-            let ctx = Context::new().with_http_send(http_send.clone());
+            let ctx = crate::test_context().with_http_send(http_send.clone());
             let (provider, _) = source_provider();
             let err = Granter::new(
                 ctx,
@@ -1054,7 +1068,7 @@ mod tests {
         ];
         for source in invalid_sources {
             let http_send = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-            let ctx = Context::new().with_http_send(http_send.clone());
+            let ctx = crate::test_context().with_http_send(http_send.clone());
             let (provider, _) = FixedCredentialProvider::new(source);
             let err = Granter::new(ctx, provider, granter(signing_time))
                 .grant(None)
@@ -1067,7 +1081,7 @@ mod tests {
         let expired_source =
             source_credential().with_expires_at(signing_time + Duration::from_secs(19));
         let http_send = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let (provider, _) = FixedCredentialProvider::new(expired_source);
         let err = Granter::new(ctx, provider, granter(signing_time))
             .grant(None)
@@ -1077,7 +1091,7 @@ mod tests {
         assert_eq!(0, http_send.calls());
 
         let http_send = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let (provider, _) = source_provider();
         let err = Granter::new(
             ctx,
@@ -1105,7 +1119,7 @@ mod tests {
         }))
         .expect("error body must serialize");
         let http_send = MockHttpSend::new([response(http::StatusCode::UNAUTHORIZED, error_body)]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let (provider, _) = FixedCredentialProvider::new(
             source_credential().with_session_token(SOURCE_SESSION_TOKEN),
         );
@@ -1125,7 +1139,7 @@ mod tests {
             http::StatusCode::FORBIDDEN,
             br#"{"ResponseMetadata":{"Error":{"Code":"AccessDenied"}}}"#.as_slice(),
         )]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let (provider, _) = source_provider();
         let err = Granter::new(ctx, provider, granter(signing_time))
             .grant(None)
@@ -1138,7 +1152,7 @@ mod tests {
             http::StatusCode::INTERNAL_SERVER_ERROR,
             br#"{"ResponseMetadata":{"Error":{"Code":"InternalError"}}}"#.as_slice(),
         )]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let (provider, _) = source_provider();
         let err = Granter::new(ctx, provider, granter(signing_time))
             .grant(None)
@@ -1161,7 +1175,7 @@ mod tests {
         ];
         for body in malformed {
             let http_send = MockHttpSend::new([response(http::StatusCode::OK, body)]);
-            let ctx = Context::new().with_http_send(http_send.clone());
+            let ctx = crate::test_context().with_http_send(http_send.clone());
             let (provider, _) = source_provider();
             let err = Granter::new(ctx, provider, granter(signing_time))
                 .grant(None)
@@ -1175,7 +1189,7 @@ mod tests {
             http::StatusCode::OK,
             success_body("2030-01-02T04:04:05Z"),
         )]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let (provider, _) = source_provider();
         let err = Granter::new(
             ctx,
@@ -1198,14 +1212,14 @@ mod tests {
         let signing_time = timestamp(SIGNER_SIGNING_TIME);
         let http_send =
             MockHttpSend::new([response(http::StatusCode::OK, success_body(SIGNER_EXPIRY))]);
-        let ctx = Context::new().with_http_send(http_send);
+        let ctx = crate::test_context().with_http_send(http_send);
         let (provider, _) = source_provider();
         let granted = Granter::new(ctx, provider, granter(signing_time))
             .grant(Some(Duration::from_secs(3600)))
             .await?;
         let (provider, _) = FixedCredentialProvider::new(granted.clone());
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             provider,
             RequestSigner::new(REGION).with_time(signing_time),
         );
@@ -1246,7 +1260,7 @@ mod tests {
         let expected = direct_request.clone();
         let err = direct_signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut direct_request,
                 Some(&granted),
                 Some(Duration::from_secs(3600)),

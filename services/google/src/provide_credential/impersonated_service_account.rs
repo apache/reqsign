@@ -236,7 +236,7 @@ mod tests {
         );
 
         let credential = provider
-            .provide_credential(&Context::new().with_http_send(MockHttpSend))
+            .provide_credential(&crate::test_context().with_http_send(MockHttpSend))
             .await?
             .expect("credential must exist");
 

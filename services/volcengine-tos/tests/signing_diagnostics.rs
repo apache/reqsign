@@ -15,11 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::sync::{Mutex, Once};
 use std::time::Duration;
 
 use http::header::AUTHORIZATION;
-use reqsign_core::{Context, SignRequest};
+use reqsign_core::SignRequest;
 use reqsign_volcengine_tos::{Credential, RequestSigner};
 
 const ACCESS_KEY_ID: &str = "synthetic-volcengine-access-key-id";
@@ -93,7 +95,12 @@ async fn signing_diagnostics_redact_credential_material() -> anyhow::Result<()> 
         .into_parts()
         .0;
     signer
-        .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+        .sign_request(
+            &crate::common::test_context(),
+            &mut parts,
+            Some(&credential),
+            None,
+        )
         .await?;
 
     let authorization = parts.headers[AUTHORIZATION].to_str()?.to_string();
@@ -129,7 +136,7 @@ async fn signing_diagnostics_redact_credential_material() -> anyhow::Result<()> 
         .0;
     signer
         .sign_request(
-            &Context::new(),
+            &crate::common::test_context(),
             &mut parts,
             Some(&credential),
             Some(Duration::from_secs(3600)),

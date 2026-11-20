@@ -66,7 +66,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_credential_provider() -> anyhow::Result<()> {
-        let ctx = Context::new();
+        let ctx = crate::test_context();
 
         let provider = StaticCredentialProvider::new("test_access_key", "test_secret_key");
         let cred = provider.provide_credential(&ctx).await?;
@@ -81,7 +81,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_static_credential_provider_with_security_token() -> anyhow::Result<()> {
-        let ctx = Context::new();
+        let ctx = crate::test_context();
 
         let provider = StaticCredentialProvider::new("test_access_key", "test_secret_key")
             .with_security_token("test_security_token");

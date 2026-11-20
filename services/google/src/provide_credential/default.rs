@@ -237,7 +237,7 @@ impl DefaultCredentialProviderBuilder {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use reqsign_core::{Context, FileRead, HttpSend, StaticEnv};
+    use reqsign_core::{FileRead, HttpSend, StaticEnv};
     use std::collections::HashMap;
     use std::env;
     use std::sync::{Arc, Mutex};
@@ -298,7 +298,7 @@ mod tests {
             ),
         )]);
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(reqsign_file_read_tokio::TokioFileRead)
             .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -371,7 +371,7 @@ mod tests {
                 ),
             ]));
             let http = ExternalAccountHttpSend::default();
-            let ctx = Context::new()
+            let ctx = crate::test_context()
                 .with_file_read(file_read.clone())
                 .with_http_send(http.clone())
                 .with_env(StaticEnv {
@@ -415,7 +415,7 @@ mod tests {
         let provider = DefaultCredentialProvider::builder().build();
 
         // Even without valid credentials, this should not panic
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(reqsign_file_read_tokio::TokioFileRead)
             .with_http_send(reqsign_http_send_reqwest::ReqwestHttpSend::default());
         let _ = provider.provide_credential(&ctx).await;
@@ -432,7 +432,7 @@ mod tests {
             ))
             .to_vec(),
         )]));
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read.clone())
             .with_env(StaticEnv {
                 home_dir: None,
@@ -466,7 +466,7 @@ mod tests {
             ))
             .to_vec(),
         )]));
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read.clone())
             .with_env(StaticEnv {
                 home_dir: None,
@@ -488,7 +488,7 @@ mod tests {
     #[tokio::test]
     async fn test_default_provider_no_vm_metadata_removes_provider() -> Result<()> {
         let http = MockHttpSend::default();
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
 
         let provider = DefaultCredentialProvider::builder()
             .no_env()
@@ -505,7 +505,7 @@ mod tests {
     #[tokio::test]
     async fn test_default_provider_custom_vm_metadata_service_account() -> Result<()> {
         let http = MockHttpSend::default();
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
 
         let provider = DefaultCredentialProvider::builder()
             .no_env()

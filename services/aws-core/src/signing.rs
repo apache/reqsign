@@ -21,6 +21,7 @@ use std::time::Duration;
 use http::{HeaderValue, Uri, header};
 use log::debug;
 use percent_encoding::{AsciiSet, percent_decode_str, utf8_percent_encode};
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Result, SigningRequest};
 
@@ -303,6 +304,7 @@ pub struct SigV4SigningOptions<'a> {
 /// operation headroom.
 #[doc(hidden)]
 pub fn sign_request_parts(
+    provider: &dyn CryptoProvider,
     req: &mut http::request::Parts,
     credential: &Credential,
     expires_in: Option<Duration>,
@@ -345,7 +347,7 @@ pub fn sign_request_parts(
         &canonical_query,
         options.percent_encoding_mode,
     )?;
-    let encoded_req = reqsign_core::hash::hex_sha256(creq.as_bytes());
+    let encoded_req = reqsign_core::hash::hex_sha256(provider, creq.as_bytes())?;
 
     // Scope: "20220313/<region>/<service>/aws4_request"
     let scope = format!(
@@ -380,12 +382,14 @@ pub fn sign_request_parts(
     debug!("calculated string to sign: {string_to_sign}");
 
     let signing_key = generate_signing_key(
+        provider,
         &credential.secret_access_key,
         now,
         options.region,
         options.service,
-    );
-    let signature = reqsign_core::hash::hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
+    )?;
+    let signature =
+        reqsign_core::hash::hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())?;
 
     let final_uri = if expires_in.is_some() {
         let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
@@ -487,13 +491,29 @@ pub fn sigv4_authentication_query(
     query
 }
 
-fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &str) -> Vec<u8> {
+fn generate_signing_key(
+    provider: &dyn CryptoProvider,
+    secret: &str,
+    time: Timestamp,
+    region: &str,
+    service: &str,
+) -> Result<Vec<u8>> {
     let secret = format!("AWS4{secret}");
-    let sign_date =
-        reqsign_core::hash::hmac_sha256(secret.as_bytes(), time.format_date().as_bytes());
-    let sign_region = reqsign_core::hash::hmac_sha256(sign_date.as_slice(), region.as_bytes());
-    let sign_service = reqsign_core::hash::hmac_sha256(sign_region.as_slice(), service.as_bytes());
-    reqsign_core::hash::hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes())
+    let sign_date = reqsign_core::hash::hmac_sha256(
+        provider,
+        secret.as_bytes(),
+        time.format_date().as_bytes(),
+    )?;
+    let sign_region =
+        reqsign_core::hash::hmac_sha256(provider, sign_date.as_slice(), region.as_bytes())?;
+    let sign_service =
+        reqsign_core::hash::hmac_sha256(provider, sign_region.as_slice(), service.as_bytes())?;
+    Ok(reqsign_core::hash::hmac_sha256(
+        provider,
+        sign_service.as_slice(),
+        "aws4_request".as_bytes(),
+    )?
+    .to_vec())
 }
 
 #[cfg(test)]

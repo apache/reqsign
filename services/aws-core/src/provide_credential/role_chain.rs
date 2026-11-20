@@ -181,11 +181,13 @@ impl ProvideCredential for AssumeRoleChainCredentialProvider {
             }
         }
 
+        let crypto = ctx.crypto_provider()?;
         let mut credential = self.source_credential(ctx, &shared, &current).await?;
         for operation in operations.into_iter().rev() {
-            let request = operation.build_request()?;
+            let request = operation.build_request(crypto)?;
             let (mut parts, body) = request.into_parts();
             sign_request_parts(
+                crypto,
                 &mut parts,
                 &credential,
                 None,

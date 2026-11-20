@@ -17,6 +17,9 @@
 
 use reqsign_core::{Context, OsEnv};
 
+#[cfg(feature = "default-crypto")]
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
+
 #[cfg(not(target_arch = "wasm32"))]
 use reqsign_command_execute_tokio::TokioCommandExecute;
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,6 +33,15 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 /// - `TokioFileRead` for file reading (non-WASM only)
 /// - `ReqwestHttpSend` for HTTP requests
 /// - `OsEnv` for environment variable access
+/// - `RustCryptoProvider` bound to the context when `default-crypto` is enabled
+///   and no process-wide provider is installed at construction time
+///
+/// This makes `reqsign` examples and default signers usable without installation
+/// boilerplate. It does not touch the process-wide registration. An application
+/// that wants to choose a process-wide provider installs it before constructing
+/// facade contexts; a context that already binds RustCrypto keeps that binding.
+/// An explicit `Context::with_crypto` binding always wins. Integrating middleware
+/// must leave provider installation to the application.
 ///
 /// # Example
 ///
@@ -66,18 +78,23 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 /// ```
 pub fn default_context() -> Context {
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        Context::new()
-            .with_command_execute(TokioCommandExecute)
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv)
-    }
+    let ctx = Context::new()
+        .with_command_execute(TokioCommandExecute)
+        .with_file_read(TokioFileRead)
+        .with_http_send(ReqwestHttpSend::default())
+        .with_env(OsEnv);
 
     #[cfg(target_arch = "wasm32")]
-    {
-        Context::new()
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv)
-    }
+    let ctx = Context::new()
+        .with_http_send(ReqwestHttpSend::default())
+        .with_env(OsEnv);
+
+    #[cfg(feature = "default-crypto")]
+    let ctx = if reqsign_core::crypto::get_default().is_none() {
+        ctx.with_crypto(RustCryptoProvider::new())
+    } else {
+        ctx
+    };
+
+    ctx
 }

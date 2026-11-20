@@ -173,16 +173,16 @@
 //!
 //! The crate also provides utility modules:
 //!
-//! - [`hash`]: Cryptographic hashing utilities
+//! - [`crypto`]: Process-wide cryptographic provider
+//! - [`hash`]: Cryptographic hashing and encoding utilities
 //! - [`time`]: Time manipulation utilities
 //! - [`utils`]: General utilities including data redaction
 
 // Make sure all our public APIs have docs.
 #![warn(missing_docs)]
 
+pub mod crypto;
 pub mod hash;
-#[cfg(all(not(target_arch = "wasm32"), feature = "jwt"))]
-pub mod jwt;
 pub mod time;
 pub mod utils;
 

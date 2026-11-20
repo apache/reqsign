@@ -150,7 +150,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_file_credential_provider_file_not_found() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv)

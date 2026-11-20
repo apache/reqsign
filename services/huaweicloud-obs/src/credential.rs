@@ -91,7 +91,7 @@ mod tests {
     use std::str::FromStr;
 
     use http::Uri;
-    use reqsign_core::{Context, Result, SignRequest};
+    use reqsign_core::{Result, SignRequest};
 
     use super::*;
     use crate::RequestSigner;
@@ -163,7 +163,7 @@ mod tests {
             .into_parts()
             .0;
         signer
-            .sign_request(&Context::new(), &mut parts, Some(&active), None)
+            .sign_request(&crate::test_context(), &mut parts, Some(&active), None)
             .await?;
 
         let mut query_parts = http::Request::get(Uri::from_str(request)?)
@@ -172,7 +172,7 @@ mod tests {
             .0;
         signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut query_parts,
                 Some(&active),
                 Some(Duration::from_secs(10)),
@@ -191,7 +191,12 @@ mod tests {
             .into_parts()
             .0;
         signer
-            .sign_request(&Context::new(), &mut expired_parts, Some(&expired), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut expired_parts,
+                Some(&expired),
+                None,
+            )
             .await
             .expect_err("expired credentials must not sign headers");
 

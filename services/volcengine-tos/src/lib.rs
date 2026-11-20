@@ -32,3 +32,8 @@ mod uri;
 pub use uri::{percent_encode_path, percent_encode_query};
 
 pub use sign_request::RequestSigner;
+
+#[cfg(test)]
+pub(crate) fn test_context() -> reqsign_core::Context {
+    reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+}

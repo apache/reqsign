@@ -40,7 +40,7 @@ pub mod workload_identity;
 const EXPECTED_PROBE_BODY: &[u8] = b"reqsign-live-azure-ok\n";
 
 pub fn live_context() -> Context {
-    Context::new()
+    crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_command_execute(TokioCommandExecute)

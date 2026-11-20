@@ -19,9 +19,9 @@ use super::*;
 use crate::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
 use bytes::Bytes;
 use http::{Request, Response, StatusCode, header};
+use reqsign_core::hash::hex_sha1;
 use reqsign_core::{ErrorKind, FileRead, HttpSend, StaticEnv};
 use serde_json::json;
-use sha1::{Digest, Sha1};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -57,9 +57,10 @@ impl Files {
     }
 
     fn sso_token(&self, home: &str, session: &str) {
-        let digest = Sha1::digest(session.as_bytes());
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        let digest = hex_sha1(&provider, session.as_bytes()).expect("SSO cache key must hash");
         self.put(
-            &format!("{home}/.aws/sso/cache/{}.json", hex::encode(digest)),
+            &format!("{home}/.aws/sso/cache/{digest}.json"),
             json!({
                 "accessToken": SSO_ACCESS_TOKEN,
                 "expiresAt": "2099-01-01T00:00:00Z",
@@ -207,7 +208,7 @@ fn fixture(config: &str, envs: HashMap<String, String>) -> (Context, Arc<Http>) 
     files.put("/config", config.to_owned());
     files.sso_token("/home", "example-session");
     let http = Arc::new(Http::default());
-    let ctx = Context::new()
+    let ctx = crate::test_context()
         .with_file_read(files)
         .with_http_send(http.clone())
         .with_env(StaticEnv {
@@ -492,7 +493,7 @@ async fn sso_source_failure_is_not_swallowed() {
     files.put("/config", single_hop_sso_config());
     let http = Arc::new(Http::default());
     // No cached token exists, so the SSO source must fail before STS.
-    let ctx = Context::new()
+    let ctx = crate::test_context()
         .with_file_read(files)
         .with_http_send(http.clone())
         .with_env(StaticEnv {

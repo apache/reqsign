@@ -15,5 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 mod credential_providers;
 mod signing;

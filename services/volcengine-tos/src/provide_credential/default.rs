@@ -134,7 +134,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_loader_without_env() {
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs: HashMap::new(),
         });
@@ -147,7 +147,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_loader_with_env() {
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs: HashMap::from_iter([
                 (ENV_ACCESS_KEY_ID.to_string(), "access_key_id".to_string()),
@@ -167,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_loader_with_security_token() {
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs: HashMap::from_iter([
                 (ENV_ACCESS_KEY_ID.to_string(), "access_key_id".to_string()),
@@ -189,7 +189,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_loader_with_no_env() {
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs: HashMap::from_iter([
                 (ENV_ACCESS_KEY_ID.to_string(), "access_key_id".to_string()),

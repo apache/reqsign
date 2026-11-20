@@ -191,3 +191,8 @@ pub use reqsign_aws_core::{IMDSv2RegionProvider, Profile, SharedConfig};
 pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
 
 pub const EMPTY_STRING_SHA256: &str = reqsign_aws_core::EMPTY_STRING_SHA256;
+
+#[cfg(test)]
+pub(crate) fn test_context() -> reqsign_core::Context {
+    reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+}
