@@ -141,6 +141,33 @@ impl ClientCertificateCredentialProvider {
         Ok((cert_der, private_key_pem.into_bytes()))
     }
 
+    /// Format a JWS compact JWT using RS256 and the selected provider.
+    fn encode_rs256_jws<H, C>(
+        provider: &dyn CryptoProvider,
+        header: &H,
+        claims: &C,
+        private_key_pem: &[u8],
+    ) -> Result<String, reqsign_core::Error>
+    where
+        H: Serialize,
+        C: Serialize,
+    {
+        let encoded_header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(header).map_err(|e| {
+            reqsign_core::Error::unexpected("failed to serialize JWT JSON").with_source(e)
+        })?);
+        let encoded_claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).map_err(|e| {
+            reqsign_core::Error::unexpected("failed to serialize JWT JSON").with_source(e)
+        })?);
+        let signing_input = format!("{encoded_header}.{encoded_claims}");
+        let signature =
+            provider.rsa_pkcs1v15_sha256_sign(private_key_pem, signing_input.as_bytes())?;
+
+        Ok(format!(
+            "{signing_input}.{}",
+            URL_SAFE_NO_PAD.encode(signature)
+        ))
+    }
+
     /// Calculate certificate thumbprint (x5t)
     /// Azure AD expects SHA1 thumbprint for x5t field
     fn calculate_thumbprint(
@@ -182,7 +209,7 @@ impl ClientCertificateCredentialProvider {
             x5t: self.calculate_thumbprint(provider, cert_der)?,
         };
 
-        reqsign_core::jwt::encode_rs256_pem(provider, &header, &claims, private_key_pem)
+        Self::encode_rs256_jws(provider, &header, &claims, private_key_pem)
     }
 
     /// Exchange client assertion for access token
@@ -331,6 +358,115 @@ mod tests {
         assert!(!thumbprint.contains('+'));
         assert!(!thumbprint.contains('/'));
         assert!(!thumbprint.contains('='));
+    }
+
+    #[test]
+    fn client_assertion_is_three_unpadded_verifiable_segments_for_both_pem_formats() {
+        use rsa::RsaPrivateKey;
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        use rsa::pkcs1v15::{Signature, VerifyingKey};
+        use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+        use rsa::rand_core::OsRng;
+        use rsa::sha2::Sha256;
+        use rsa::signature::Verifier;
+
+        let key = RsaPrivateKey::new(&mut OsRng, 1024).expect("test RSA key generation must work");
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        let certificate_provider = ClientCertificateCredentialProvider::new();
+        let cert_der = b"test certificate";
+        let thumbprint = certificate_provider
+            .calculate_thumbprint(&provider, cert_der)
+            .expect("thumbprint calculation must succeed");
+        let header = ClientAssertionHeader {
+            alg: "RS256",
+            typ: "JWT",
+            x5t: thumbprint.clone(),
+        };
+        let claims = ClientAssertionClaims {
+            aud: "https://example.com/token".to_string(),
+            exp: 1,
+            iss: "client".to_string(),
+            jti: "jti".to_string(),
+            nbf: 0,
+            sub: "client".to_string(),
+        };
+
+        for pem in [
+            key.to_pkcs8_pem(LineEnding::LF)
+                .expect("test key must encode as PKCS#8"),
+            key.to_pkcs1_pem(LineEnding::LF)
+                .expect("test key must encode as PKCS#1"),
+        ] {
+            let jwt = ClientCertificateCredentialProvider::encode_rs256_jws(
+                &provider,
+                &header,
+                &claims,
+                pem.as_bytes(),
+            )
+            .expect("JWT encoding must succeed");
+            let parts = jwt.split('.').collect::<Vec<_>>();
+            assert_eq!(parts.len(), 3);
+            assert!(parts.iter().all(|part| !part.contains('=')));
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(
+                    &URL_SAFE_NO_PAD
+                        .decode(parts[0])
+                        .expect("header must decode")
+                )
+                .expect("header must be JSON"),
+                serde_json::json!({"alg": "RS256", "typ": "JWT", "x5t": thumbprint})
+            );
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(
+                    &URL_SAFE_NO_PAD
+                        .decode(parts[1])
+                        .expect("claims must decode")
+                )
+                .expect("claims must be JSON"),
+                serde_json::json!({
+                    "aud": "https://example.com/token",
+                    "exp": 1,
+                    "iss": "client",
+                    "jti": "jti",
+                    "nbf": 0,
+                    "sub": "client"
+                })
+            );
+
+            let signature = URL_SAFE_NO_PAD
+                .decode(parts[2])
+                .expect("signature must decode");
+            let signature =
+                Signature::try_from(signature.as_slice()).expect("signature must parse");
+            let verifying_key = VerifyingKey::<Sha256>::new(key.to_public_key());
+            verifying_key
+                .verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &signature)
+                .expect("signature must verify");
+        }
+    }
+
+    #[test]
+    fn malformed_client_certificate_private_key_is_credential_invalid() {
+        let crypto = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        let err = ClientCertificateCredentialProvider::encode_rs256_jws(
+            &crypto,
+            &ClientAssertionHeader {
+                alg: "RS256",
+                typ: "JWT",
+                x5t: "thumbprint".to_string(),
+            },
+            &ClientAssertionClaims {
+                aud: "aud".to_string(),
+                exp: 1,
+                iss: "iss".to_string(),
+                jti: "jti".to_string(),
+                nbf: 0,
+                sub: "sub".to_string(),
+            },
+            b"not a private key",
+        )
+        .expect_err("malformed key must fail");
+        assert_eq!(err.kind(), reqsign_core::ErrorKind::CredentialInvalid);
     }
 
     #[test]

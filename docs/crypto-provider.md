@@ -194,21 +194,12 @@ Callers with a `Context` pass `ctx.crypto_provider()?`. These helpers never
 perform a context or global lookup themselves, so they cannot silently bypass
 the caller's selected provider.
 
-`reqsign_core::jwt` no longer exposes an `rsa` type. The typed
-`encode_rs256(&H, &C, &RsaPrivateKey)` entry point is removed. The byte-based
-entry point remains and requires the selected provider:
-
-```rust
-pub fn encode_rs256_pem<H, C>(
-    provider: &dyn CryptoProvider,
-    header: &H,
-    claims: &C,
-    private_key_pem: &[u8],
-) -> Result<String>;
-```
-
-Enabling the `jwt` feature adds `serde` and `serde_json`; it does not add `rsa`
-or any other cryptographic implementation.
+`reqsign-core` has no JWT module or `jwt` feature and does not depend on
+`serde` or `serde_json` for JWT formatting. Azure client-certificate
+authentication and Google service-account exchanges format their compact RS256
+JWS in their own crates using `serde_json`, URL-safe unpadded base64, and
+`CryptoProvider::rsa_pkcs1v15_sha256_sign`. The header and claims remain
+service-local and are not part of the core API.
 
 Standalone public crypto entry points follow the same rule. For example,
 Azure Storage's `ServiceSharedAccessSignature::token` takes
@@ -308,8 +299,8 @@ compose several libraries should settle the global choice before any of them
 loads credentials.
 
 Bare `reqsign-core` users must provide a provider through the context or install
-a global one before signing. Hash and JWT helpers take the provider directly;
-there is no implicit lookup.
+a global one before signing. Hash helpers take the provider directly; service JWT formatting
+also uses the selected provider, with no implicit lookup.
 
 The generic credential chain continues past provider errors and returns
 `Ok(None)` when every source is exhausted; services that select an identity
@@ -342,18 +333,21 @@ Notable service-specific details:
   `Zeroizing<[u8; 32]>`, and performs the fixed-width range check against
   `n - 2` before incrementing. The signature is still DER-encoded hex.
 - Azure client certificate authentication keeps the certificate/key PEM
-  splitting in `azure-storage`; the thumbprint uses the provider's SHA-1 and the
-  client assertion uses `jwt::encode_rs256_pem`.
+  splitting and RS256 client-assertion formatting in `azure-storage`; the
+  thumbprint uses the provider's SHA-1.
 - Azure `ServiceSharedAccessSignature::token` takes the resolved provider.
 - Google service-account signing encodes the provider's RSA signature as hex;
-  client-side credential access boundary encryption uses AES-GCM through the
-  provider and gets its nonce from `fill_random`. Malformed service-account key
-  material returns `CredentialInvalid` while signing the exchange JWT.
+  its private JWT helper is shared by the signer and service-account token
+  provider. Client-side credential access boundary encryption uses AES-GCM
+  through the provider and gets its nonce from `fill_random`. Malformed
+  service-account key material returns `CredentialInvalid` while signing the
+  exchange JWT.
 
 ### Removed APIs
 
-- `reqsign_core::jwt::encode_rs256(&H, &C, &RsaPrivateKey)` is removed.
-  Use `encode_rs256_pem(provider, ...)` with PEM bytes.
+- The public `reqsign_core::jwt` module and `jwt` feature are removed. Azure
+  and Google own their private RS256 JWS formatting and sign through the
+  resolved provider.
 - Hash and MAC helpers take `&dyn CryptoProvider` and return `Result`.
 - `reqsign-core` no longer provides crypto implementations, so a context with no
   provider binding and no global provider fails with `ConfigInvalid` at the

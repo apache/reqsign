@@ -31,6 +31,7 @@ mod credential;
 pub use credential::{Credential, OAuth2Credentials, ServiceAccount, Token};
 
 mod credential_access_boundary;
+mod jwt;
 #[cfg(feature = "credential-access-boundary-client-side")]
 pub use credential_access_boundary::ClientSideCredentialAccessBoundaryGranter;
 pub use credential_access_boundary::{

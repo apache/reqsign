@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::{DEFAULT_SCOPE, GOOGLE_SCOPE, TOKEN_OPERATION_HEADROOM};
 use crate::credential::{Credential, ServiceAccount, Token};
+use crate::jwt::encode_rs256;
 
 use super::oauth::{OAUTH_TOKEN_ENDPOINT, checked_expiration, oauth_error, validate_token_uri};
 const JWT_BEARER_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
@@ -304,7 +305,7 @@ fn build_token_request(
     token_uri: &str,
     now: Timestamp,
 ) -> Result<http::Request<bytes::Bytes>> {
-    let jwt = reqsign_core::jwt::encode_rs256_pem(
+    let jwt = encode_rs256(
         provider,
         &JwtHeader::rs256(),
         &Claims::new(&service_account.client_email, scope, token_uri, now)?,

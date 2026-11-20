@@ -183,13 +183,8 @@
 
 pub mod crypto;
 pub mod hash;
-#[cfg(feature = "jwt")]
-pub mod jwt;
 pub mod time;
 pub mod utils;
-
-#[cfg(all(test, feature = "jwt"))]
-mod test_support;
 
 mod api;
 pub use self::api::GrantCredential;

@@ -36,6 +36,7 @@ use crate::constants::{
     TOKEN_OPERATION_HEADROOM,
 };
 use crate::credential::{Credential, ServiceAccount, Token};
+use crate::jwt::encode_rs256;
 use crate::provide_credential::oauth::oauth_error;
 
 /// Claims is used to build JWT for Google Cloud.
@@ -340,7 +341,7 @@ impl RequestSigner {
         debug!("exchanging service account for token with scope: {scope}");
         let provider = ctx.crypto_provider()?;
 
-        let jwt = reqsign_core::jwt::encode_rs256_pem(
+        let jwt = encode_rs256(
             provider,
             &JwtHeader::rs256(),
             &Claims::new(&sa.client_email, scope),

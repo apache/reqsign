@@ -41,7 +41,6 @@ serde_json = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pem = { workspace = true }
-reqsign-core = { workspace = true, features = ["jwt"] }
 
 [dev-dependencies]
 reqsign-crypto-rustcrypto = { workspace = true }
@@ -51,4 +50,5 @@ reqsign-command-execute-tokio = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 reqwest = { workspace = true, features = ["default-tls"] }
+rsa = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
