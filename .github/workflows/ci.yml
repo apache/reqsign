@@ -148,7 +148,7 @@ jobs:
       - name: Facade crypto feature tests
         run: |
           cargo test --package reqsign --all-features --test crypto --test default_signer
-          cargo test -p reqsign --no-default-features --features default-context --test crypto_without_default_crypto
+          cargo test --package reqsign --no-default-features --features default-context --test crypto_without_default_crypto
       - name: Doc Test
         run: cargo +nightly test --doc --all-features --workspace
         env:

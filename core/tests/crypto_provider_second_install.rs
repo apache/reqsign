@@ -17,27 +17,36 @@
 
 mod support;
 
-use std::sync::Arc;
-
 use reqsign_core::crypto::{get_default, install_default};
-use support::TestProvider;
+use support::ByteProvider;
 
 #[test]
 fn second_installation_returns_the_rejected_provider_without_replacing_first() {
-    install_default(TestProvider::new("first")).expect("first install must succeed");
-    let installed = Arc::as_ptr(get_default().expect("provider must be installed"));
+    install_default(ByteProvider(1)).expect("first install must succeed");
+    let installed = get_default().expect("provider must be installed");
+    assert_eq!(
+        installed
+            .sha256(b"probe")
+            .expect("installed provider hashing must succeed"),
+        [1; 32],
+        "the first provider must be installed"
+    );
 
-    let rejected =
-        install_default(TestProvider::new("second")).expect_err("second install must be rejected");
+    let rejected = install_default(ByteProvider(2)).expect_err("second install must be rejected");
 
     assert_eq!(
-        Arc::as_ptr(get_default().expect("provider must stay installed")),
-        installed,
-        "the first provider must remain installed"
-    );
-    assert_ne!(
-        Arc::as_ptr(&rejected),
-        installed,
+        rejected
+            .sha256(b"probe")
+            .expect("rejected provider hashing must succeed"),
+        [2; 32],
         "the error must return the provider that was not installed"
+    );
+    assert_eq!(
+        get_default()
+            .expect("provider must stay installed")
+            .sha256(b"probe")
+            .expect("installed provider hashing must succeed"),
+        [1; 32],
+        "the first provider must remain installed"
     );
 }

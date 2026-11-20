@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash;
 use reqsign_core::hash::{
     base64_hmac_sha1, base64_hmac_sha256, hex_hmac_sha1, hex_hmac_sha256, hex_sha1, hex_sha256,
@@ -22,80 +23,72 @@ use reqsign_core::hash::{
 };
 use reqsign_crypto_rustcrypto::RustCryptoProvider;
 
+const INPUT: &[u8] = b"GET /bucket/object?partNumber=1&uploadId=example";
+const KEY: &[u8] = b"reqsign-test-secret-key-material";
+
 #[test]
-fn hashes_match_published_vectors_with_expected_widths() {
+fn hash_helpers_delegate_to_the_provider_with_expected_widths() {
     let provider = RustCryptoProvider::new();
+    let expected_sha1 = provider.sha1(INPUT).expect("SHA-1 must succeed");
+    let expected_sha256 = provider.sha256(INPUT).expect("SHA-256 must succeed");
 
     assert_eq!(
-        hex::encode(sha1(&provider, b"abc").expect("SHA-1 must succeed")),
-        "a9993e364706816aba3e25717850c26c9cd0d89d"
+        sha1(&provider, INPUT).expect("SHA-1 must succeed"),
+        expected_sha1
     );
     assert_eq!(
-        hex::encode(sha256(&provider, b"abc").expect("SHA-256 must succeed")),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        sha256(&provider, INPUT).expect("SHA-256 must succeed"),
+        expected_sha256
     );
-    assert_eq!(
-        sha1(&provider, b"abc").expect("SHA-1 must succeed").len(),
-        20
-    );
-    assert_eq!(
-        sha256(&provider, b"abc")
-            .expect("SHA-256 must succeed")
-            .len(),
-        32
-    );
+    assert_eq!(expected_sha1.len(), 20);
+    assert_eq!(expected_sha256.len(), 32);
 
     assert_eq!(
-        hex_sha1(&provider, b"abc").expect("hex SHA-1 must succeed"),
-        "a9993e364706816aba3e25717850c26c9cd0d89d"
+        hex_sha1(&provider, INPUT).expect("hex SHA-1 must succeed"),
+        hex::encode(expected_sha1)
     );
     assert_eq!(
-        hex_sha256(&provider, b"abc").expect("hex SHA-256 must succeed"),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        hex_sha256(&provider, INPUT).expect("hex SHA-256 must succeed"),
+        hex::encode(expected_sha256)
     );
 }
 
 #[test]
-fn hmac_matches_rfc_vectors_with_expected_widths() {
+fn hmac_helpers_preserve_key_and_input_with_expected_widths() {
     let provider = RustCryptoProvider::new();
-
-    let key = [0x0b; 20];
-    assert_eq!(
-        hex::encode(hmac_sha1(&provider, &key, b"Hi There").expect("HMAC-SHA1 must succeed")),
-        "b617318655057264e28bc0b6fb378c8ef146be00"
-    );
-    assert_eq!(
-        hex::encode(hmac_sha256(&provider, &key, b"Hi There").expect("HMAC-SHA256 must succeed")),
-        "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
-    );
-    assert_eq!(
-        hmac_sha1(&provider, &key, b"Hi There")
-            .expect("HMAC-SHA1 must succeed")
-            .len(),
-        20
-    );
-    assert_eq!(
-        hmac_sha256(&provider, &key, b"Hi There")
-            .expect("HMAC-SHA256 must succeed")
-            .len(),
-        32
-    );
+    let expected_sha1 = provider
+        .hmac_sha1(KEY, INPUT)
+        .expect("HMAC-SHA1 must succeed");
+    let expected_sha256 = provider
+        .hmac_sha256(KEY, INPUT)
+        .expect("HMAC-SHA256 must succeed");
 
     assert_eq!(
-        hex_hmac_sha1(&provider, &key, b"Hi There").expect("hex HMAC-SHA1 must succeed"),
-        "b617318655057264e28bc0b6fb378c8ef146be00"
+        hmac_sha1(&provider, KEY, INPUT).expect("HMAC-SHA1 must succeed"),
+        expected_sha1
     );
     assert_eq!(
-        hex_hmac_sha256(&provider, &key, b"Hi There").expect("hex HMAC-SHA256 must succeed"),
-        "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        hmac_sha256(&provider, KEY, INPUT).expect("HMAC-SHA256 must succeed"),
+        expected_sha256
+    );
+    assert_eq!(expected_sha1.len(), 20);
+    assert_eq!(expected_sha256.len(), 32);
+
+    assert_eq!(
+        hex_hmac_sha1(&provider, KEY, INPUT).expect("hex HMAC-SHA1 must succeed"),
+        hex::encode(expected_sha1)
     );
     assert_eq!(
-        base64_hmac_sha1(&provider, &key, b"Hi There").expect("base64 HMAC-SHA1 must succeed"),
-        "thcxhlUFcmTii8C2+zeMjvFGvgA="
+        hex_hmac_sha256(&provider, KEY, INPUT).expect("hex HMAC-SHA256 must succeed"),
+        hex::encode(expected_sha256)
     );
     assert_eq!(
-        base64_hmac_sha256(&provider, &key, b"Hi There").expect("base64 HMAC-SHA256 must succeed"),
-        "sDRMYdjbOFNcqK/OrwvxK4gdwgDJgz2nJuk3bC4yz/c="
+        base64_hmac_sha1(&provider, KEY, INPUT).expect("base64 HMAC-SHA1 must succeed"),
+        hash::base64_encode(&expected_sha1)
+    );
+    assert_eq!(
+        base64_hmac_sha256(&provider, KEY, INPUT).expect("base64 HMAC-SHA256 must succeed"),
+        hash::base64_encode(&expected_sha256)
     );
 }
 

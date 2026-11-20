@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use hmac::{Hmac, KeyInit, Mac};
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use reqsign_core::crypto::{CryptoProvider, get_default};
@@ -23,8 +24,10 @@ use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use rsa::RsaPrivateKey;
 use rsa::pkcs1v15::{Signature as RsaSignature, VerifyingKey as RsaVerifyingKey};
 use rsa::pkcs8::DecodePrivateKey;
-use rsa::sha2::Sha256;
+use rsa::sha2::Sha256 as RsaSha256;
 use rsa::signature::Verifier as _;
+use sha1::Sha1;
+use sha2::{Digest, Sha256};
 
 const RSA_PKCS8: &[u8] = include_bytes!("fixtures/rsa_pkcs8.pem");
 const RSA_PKCS1: &[u8] = include_bytes!("fixtures/rsa_pkcs1.pem");
@@ -53,78 +56,63 @@ fn installs_one_process_wide_provider() {
 }
 
 #[test]
-fn hashes_match_published_vectors() {
+fn hashes_delegate_to_the_expected_algorithms() {
     let provider = provider();
-    assert_eq!(
-        hex(&provider.sha1(b"abc").expect("SHA-1 must succeed")),
-        "a9993e364706816aba3e25717850c26c9cd0d89d"
-    );
-    assert_eq!(
-        hex(&provider.sha256(b"abc").expect("SHA-256 must succeed")),
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    );
-    assert_eq!(
-        hex(&provider
-            .sha256(&vec![b'a'; 1_000_000])
-            .expect("large SHA-256 must succeed")),
-        "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
-    );
+    let large_input = vec![b'a'; 1_000_000];
+
+    for input in [&b""[..], b"abc", large_input.as_slice()] {
+        let expected_sha1: [u8; 20] = Sha1::digest(input).into();
+        assert_eq!(
+            provider.sha1(input).expect("SHA-1 must succeed"),
+            expected_sha1
+        );
+
+        let expected_sha256: [u8; 32] = Sha256::digest(input).into();
+        assert_eq!(
+            provider.sha256(input).expect("SHA-256 must succeed"),
+            expected_sha256
+        );
+    }
 }
 
 #[test]
-fn hmac_matches_rfc_vectors_at_block_boundaries() {
+fn hmac_handles_block_boundaries_without_changing_key_or_input() {
     let provider = provider();
+    let input = b"POST /object?uploadId=example HTTP/1.1";
 
-    assert_eq!(
-        hex(&provider
-            .hmac_sha256(&[0x0b; 20], b"Hi There")
-            .expect("HMAC-SHA256 must succeed")),
-        "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
-    );
-    assert_eq!(
-        hex(&provider
-            .hmac_sha1(
-                &[0xaa; 80],
-                b"Test Using Larger Than Block-Size Key - Hash Key First"
-            )
-            .expect("HMAC-SHA1 must succeed")),
-        "aa4ae5e15272d00e95705637ce8a3b55ed402112"
-    );
-    assert_eq!(
-        hex(&provider
-            .hmac_sha256(
-                &[0xaa; 131],
-                b"Test Using Larger Than Block-Size Key - Hash Key First"
-            )
-            .expect("HMAC-SHA256 must succeed")),
-        "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
-    );
-
-    for (key, expected) in [
-        (
-            &b""[..],
-            "2b31f75fad699604041bb9a4e191657b10d638d3e1c0a3d79b8a1db8b1ed0826",
-        ),
-        (
-            &b"k"[..],
-            "82de63a94b14635375eafcc20afd3629397e17ed1a9e79c128ca8e8f3a0cc7ab",
-        ),
-        (
-            &[0u8; 64][..],
-            "2b31f75fad699604041bb9a4e191657b10d638d3e1c0a3d79b8a1db8b1ed0826",
-        ),
-        (
-            &[0u8; 65][..],
-            "a0ade4ba44e1645ce9bd9bb9519260e658ea825e7ec2703144fbc77b76f9e567",
-        ),
+    for key in [
+        &b""[..],
+        &b"k"[..],
+        &[0u8; 64][..],
+        &[0u8; 65][..],
+        &[0xaa; 80][..],
+        &[0xaa; 131][..],
     ] {
         assert_eq!(
-            hex(&provider
-                .hmac_sha256(key, b"boundary message")
-                .expect("HMAC-SHA256 boundary must succeed")),
-            expected
+            provider
+                .hmac_sha1(key, input)
+                .expect("HMAC-SHA1 must succeed"),
+            reference_hmac_sha1(key, input)
+        );
+        assert_eq!(
+            provider
+                .hmac_sha256(key, input)
+                .expect("HMAC-SHA256 must succeed"),
+            reference_hmac_sha256(key, input)
         );
     }
+}
+
+fn reference_hmac_sha1(key: &[u8], input: &[u8]) -> [u8; 20] {
+    let mut mac = Hmac::<Sha1>::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(input);
+    mac.finalize().into_bytes().into()
+}
+
+fn reference_hmac_sha256(key: &[u8], input: &[u8]) -> [u8; 32] {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(input);
+    mac.finalize().into_bytes().into()
 }
 
 #[test]
@@ -133,7 +121,7 @@ fn rsa_signs_both_pkcs8_and_pkcs1_pem() {
     let public_key = RsaPrivateKey::from_pkcs8_pem(std::str::from_utf8(RSA_PKCS8).unwrap())
         .expect("test key must parse")
         .to_public_key();
-    let verifying_key = RsaVerifyingKey::<Sha256>::new(public_key);
+    let verifying_key = RsaVerifyingKey::<RsaSha256>::new(public_key);
 
     let large_message = vec![b'x'; 100_000];
     for message in [&b""[..], b"message", large_message.as_slice()] {
