@@ -43,11 +43,11 @@ impl ProvideCredential for EnvCredentialProvider {
         let secret_access_key = envs.get(HUAWEI_CLOUD_SECRET_ACCESS_KEY);
 
         match (access_key_id, secret_access_key) {
-            (Some(ak), Some(sk)) => Ok(Some(Credential {
-                access_key_id: ak.clone(),
-                secret_access_key: sk.clone(),
-                security_token: envs.get(HUAWEI_CLOUD_SECURITY_TOKEN).cloned(),
-            })),
+            (Some(ak), Some(sk)) => Ok(Some(Credential::new(
+                ak.clone(),
+                sk.clone(),
+                envs.get(HUAWEI_CLOUD_SECURITY_TOKEN).cloned(),
+            ))),
             _ => Ok(None),
         }
     }

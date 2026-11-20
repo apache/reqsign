@@ -33,6 +33,7 @@ use super::constants::*;
 use super::credential::Credential;
 use reqsign_core::hash::base64_hmac_sha1;
 use reqsign_core::time::Timestamp;
+use reqsign_core::utils::Redact;
 use reqsign_core::{SignRequest, SigningCredential, SigningMethod, SigningRequest};
 
 static OBS_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
@@ -224,7 +225,18 @@ fn string_to_sign(
     }
     write!(&mut s, "{}", canonicalize_resource(ctx, bucket))?;
 
-    debug!("string to sign: {}", s);
+    if let Some(token) = cred
+        .security_token
+        .as_deref()
+        .filter(|token| !token.is_empty())
+    {
+        debug!(
+            "string to sign: {}",
+            s.replace(token, &format!("{:?}", Redact::from(token)))
+        );
+    } else {
+        debug!("string to sign: {}", s);
+    }
     Ok(s)
 }
 
@@ -239,7 +251,9 @@ fn canonicalize_header(
     if method == SigningMethod::Header {
         // Insert security token
         if let Some(token) = &cred.security_token {
-            ctx.headers.insert("x-obs-security-token", token.parse()?);
+            let mut value: HeaderValue = token.parse()?;
+            value.set_sensitive(true);
+            ctx.headers.insert("x-obs-security-token", value);
         }
     }
 
@@ -341,6 +355,7 @@ static SUBRESOURCES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
+    use std::sync::{Mutex, OnceLock};
 
     use http::Uri;
     use http::header::HeaderName;
@@ -352,7 +367,91 @@ mod tests {
     use super::super::provide_credential::StaticCredentialProvider;
     use super::*;
 
+    static CAPTURED_LOGS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+    struct CapturingLogger;
+
+    impl log::Log for CapturingLogger {
+        fn enabled(&self, _: &log::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if let Some(logs) = CAPTURED_LOGS.get() {
+                logs.lock()
+                    .expect("captured logs lock poisoned")
+                    .push(record.args().to_string());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn start_log_capture() {
+        CAPTURED_LOGS.get_or_init(|| {
+            log::set_boxed_logger(Box::new(CapturingLogger))
+                .expect("test logger must be installed once");
+            log::set_max_level(log::LevelFilter::Debug);
+            Mutex::new(Vec::new())
+        });
+        CAPTURED_LOGS
+            .get()
+            .expect("captured logs are initialized")
+            .lock()
+            .expect("captured logs lock poisoned")
+            .clear();
+    }
+
+    fn captured_logs() -> String {
+        CAPTURED_LOGS
+            .get()
+            .expect("captured logs are initialized")
+            .lock()
+            .expect("captured logs lock poisoned")
+            .join("\n")
+    }
+
     const RAW_QUERY: &str = "versionId=a%2Bb%3Dc%2525%26e&slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
+
+    #[tokio::test]
+    async fn security_token_is_redacted_from_signing_logs_and_request_debug() -> Result<()> {
+        const TOKEN: &str = "synthetic-obs-security-token";
+
+        let now = Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?;
+        let credential = Credential::new(
+            "access_key".to_string(),
+            "123456".to_string(),
+            Some(TOKEN.to_string()),
+        );
+        let signer = RequestSigner::new("bucket").with_time(now);
+        let mut parts =
+            http::Request::get("http://bucket.obs.cn-north-4.myhuaweicloud.com/object.txt")
+                .body(())?
+                .into_parts()
+                .0;
+
+        let mut signing_request = SigningRequest::build(&mut parts)?;
+        let string = string_to_sign(
+            &mut signing_request,
+            &credential,
+            now,
+            SigningMethod::Header,
+            "bucket",
+        )?;
+        assert!(string.contains(TOKEN));
+
+        start_log_capture();
+        signer
+            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+            .await?;
+
+        assert!(!captured_logs().contains(TOKEN));
+        assert!(parts.headers["x-obs-security-token"].is_sensitive());
+        assert_eq!(parts.headers["x-obs-security-token"].to_str()?, TOKEN);
+        assert!(!format!("{parts:?}").contains(TOKEN));
+
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_sign() -> Result<()> {

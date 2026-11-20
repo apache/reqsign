@@ -21,6 +21,7 @@ use log::debug;
 use percent_encoding::percent_decode_str;
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
+use reqsign_core::utils::Redact;
 use reqsign_core::{Context, Result, SignRequest, SigningCredential, SigningRequest};
 use std::fmt::Write;
 use std::sync::LazyLock;
@@ -83,6 +84,14 @@ impl RequestSigner {
     fn get_time(&self) -> Timestamp {
         self.time.unwrap_or_else(Timestamp::now)
     }
+
+    fn required_valid_until_at(
+        &self,
+        signing_time: Timestamp,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        signing_time + expires_in.unwrap_or_default()
+    }
 }
 impl SignRequest for RequestSigner {
     type Credential = Credential;
@@ -90,9 +99,9 @@ impl SignRequest for RequestSigner {
     fn required_valid_until(
         &self,
         _credential: &Self::Credential,
-        _expires_in: Option<std::time::Duration>,
+        expires_in: Option<std::time::Duration>,
     ) -> Timestamp {
-        self.get_time()
+        self.required_valid_until_at(self.get_time(), expires_in)
     }
 
     async fn sign_request(
@@ -107,7 +116,8 @@ impl SignRequest for RequestSigner {
         };
 
         let now = self.get_time();
-        if !cred.is_valid_at(now) {
+        let required_until = self.required_valid_until_at(now, expires_in);
+        if !cred.is_valid_at(required_until) {
             return Err(reqsign_core::Error::credential_invalid(
                 "credential expires before the requested signing operation deadline",
             ));
@@ -185,7 +195,13 @@ impl SignRequest for RequestSigner {
                 cred.access_key_id, credential_scope, signed_headers_str, signature
             );
 
-            debug!("authorization: {}", authorization);
+            debug!(
+                "authorization: {TOS_ALGORITHM} Credential={:?}/{}, SignedHeaders={}, Signature={:?}",
+                Redact::from(&cred.access_key_id),
+                credential_scope,
+                signed_headers_str,
+                Redact::from(&signature),
+            );
 
             let mut auth_value: HeaderValue = authorization.parse()?;
             auth_value.set_sensitive(true);
