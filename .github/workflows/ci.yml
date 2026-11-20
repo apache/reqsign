@@ -64,7 +64,7 @@ jobs:
           # not unified into the roots. --all-features covers every optional
           # path; --target all also covers target-specific dependencies.
           for package in "${packages[@]}"; do
-            if cargo tree -p "$package" --all-features --target all --edges normal --prefix none \
+            if cargo tree --package "$package" --all-features --target all --edges normal --prefix none \
               | grep -Eq '^(sha1|sha2|hmac|rsa|p256|aes-gcm) v'; then
               echo "production cryptographic dependency found in $package"
               exit 1
@@ -125,8 +125,8 @@ jobs:
       - name: Check
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo check -p reqsign-core --target wasm32-unknown-unknown
-          cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown
+          cargo check --package reqsign-core --target wasm32-unknown-unknown
+          cargo check --package reqsign-crypto-rustcrypto --target wasm32-unknown-unknown
           cargo check -p reqsign-aws-core --target wasm32-unknown-unknown
           cargo check -p reqsign-aws-v4a --target wasm32-unknown-unknown
           cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent
@@ -147,7 +147,7 @@ jobs:
           RUST_BACKTRACE: full
       - name: Facade crypto feature tests
         run: |
-          cargo test -p reqsign --all-features --test crypto --test default_signer
+          cargo test --package reqsign --all-features --test crypto --test default_signer
           cargo test -p reqsign --no-default-features --features default-context --test crypto_without_default_crypto
       - name: Doc Test
         run: cargo +nightly test --doc --all-features --workspace
