@@ -34,11 +34,12 @@ cargo add reqsign --features azure
 ```
 
 ```rust
-use reqsign::azure;
+use reqsign::{azure, default_context};
 
 // Shared key, SAS, or Entra ID (client secrets, workload identity,
 // managed identity, Azure CLI) — resolved by the default chain.
-let signer = azure::default_signer();
+let ctx = default_context();
+let signer = azure::default_signer(ctx);
 
 let mut req = http::Request::builder()
     .method(http::Method::GET)

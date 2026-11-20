@@ -136,7 +136,8 @@ impl TokenCache {
 
 #[derive(Default)]
 struct TokenState {
-    cache: Mutex<TokenCache>,
+    // Cache operations never await; a synchronous mutex preserves unwind safety.
+    cache: SyncMutex<TokenCache>,
     refresh_locks: RefreshLockRegistry,
 }
 
@@ -283,8 +284,12 @@ impl RequestSigner {
     }
 
     #[cfg(test)]
-    async fn cache_len(&self) -> usize {
-        self.token_state.cache.lock().await.len()
+    fn cache_len(&self) -> usize {
+        self.token_state
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     #[cfg(test)]
@@ -302,13 +307,25 @@ impl RequestSigner {
             scope: scope.clone(),
         };
 
-        if let Some(token) = self.token_state.cache.lock().await.find(&key) {
+        if let Some(token) = self
+            .token_state
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .find(&key)
+        {
             return Ok(token);
         }
 
         let refresh_lock = self.token_state.refresh_lock(&key);
         let _refresh_guard = refresh_lock.lock.lock().await;
-        if let Some(token) = self.token_state.cache.lock().await.find(&key) {
+        if let Some(token) = self
+            .token_state
+            .cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .find(&key)
+        {
             return Ok(token);
         }
 
@@ -322,7 +339,7 @@ impl RequestSigner {
             self.token_state
                 .cache
                 .lock()
-                .await
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(key, token.clone());
         }
         Ok(token)
@@ -896,6 +913,12 @@ mod tests {
     use rsa::rand_core::OsRng;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+
+    // Preserve compatibility with callers that capture a signer across catch_unwind.
+    const _: fn() = || {
+        fn assert_unwind_safe<T: std::panic::UnwindSafe + std::panic::RefUnwindSafe>() {}
+        assert_unwind_safe::<RequestSigner>();
+    };
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -1635,7 +1658,7 @@ mod tests {
                 .sign_request(&ctx, &mut parts, Some(&credential), None)
                 .await?;
             assert_eq!(parts.headers[header::AUTHORIZATION], expected);
-            assert_eq!(signer.cache_len().await, 0);
+            assert_eq!(signer.cache_len(), 0);
         }
 
         assert_eq!(http.calls.load(Ordering::SeqCst), 2);
@@ -1661,7 +1684,7 @@ mod tests {
             .sign_request(&ctx, &mut parts, Some(&credential), None)
             .await?;
         assert_eq!(parts.headers[header::AUTHORIZATION], "Bearer short-lived");
-        assert_eq!(signer.cache_len().await, 0);
+        assert_eq!(signer.cache_len(), 0);
         assert_eq!(http.calls.load(Ordering::SeqCst), 1);
         Ok(())
     }
@@ -1687,7 +1710,7 @@ mod tests {
             .await
             .expect_err("token shorter than operation headroom must be rejected");
         assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
-        assert_eq!(signer.cache_len().await, 0);
+        assert_eq!(signer.cache_len(), 0);
         assert_eq!(http.calls.load(Ordering::SeqCst), 1);
         Ok(())
     }
@@ -1770,7 +1793,7 @@ mod tests {
         first.await.expect("first task must not panic")?;
         second.await.expect("second task must not panic")?;
         assert_eq!(http.calls.load(Ordering::SeqCst), 2);
-        assert_eq!(signer.cache_len().await, 2);
+        assert_eq!(signer.cache_len(), 2);
         assert_eq!(signer.refresh_lock_len(), 0);
         Ok(())
     }
@@ -1803,7 +1826,7 @@ mod tests {
         assert_eq!(err.kind(), ErrorKind::Unexpected);
         assert!(err.is_retryable());
         assert!(!format!("{err:?}").contains("sensitive-body"));
-        assert_eq!(signer.cache_len().await, 0);
+        assert_eq!(signer.cache_len(), 0);
         assert_eq!(signer.refresh_lock_len(), 0);
 
         signer
@@ -1813,7 +1836,7 @@ mod tests {
             parts.headers[header::AUTHORIZATION],
             "Bearer recovered-token"
         );
-        assert_eq!(signer.cache_len().await, 1);
+        assert_eq!(signer.cache_len(), 1);
         assert_eq!(http.calls.load(Ordering::SeqCst), 2);
         Ok(())
     }
@@ -1873,7 +1896,7 @@ mod tests {
                 .expect_err("task must be cancelled")
                 .is_cancelled()
         );
-        assert_eq!(signer.cache_len().await, 0);
+        assert_eq!(signer.cache_len(), 0);
         assert_eq!(signer.refresh_lock_len(), 0);
 
         http.release.release(1);
@@ -1891,7 +1914,7 @@ mod tests {
             parts.headers[header::AUTHORIZATION],
             "Bearer after-cancel-token"
         );
-        assert_eq!(signer.cache_len().await, 1);
+        assert_eq!(signer.cache_len(), 1);
         assert_eq!(signer.refresh_lock_len(), 0);
         Ok(())
     }
@@ -1983,7 +2006,7 @@ mod tests {
         }
 
         assert_eq!(http.calls.load(Ordering::SeqCst), 1);
-        assert_eq!(signer.cache_len().await, 1);
+        assert_eq!(signer.cache_len(), 1);
         Ok(())
     }
 
@@ -2018,7 +2041,7 @@ mod tests {
                 .contains("X-Goog-Signature=")
         );
         assert_eq!(http.calls.load(Ordering::SeqCst), 0);
-        assert_eq!(signer.cache_len().await, 0);
+        assert_eq!(signer.cache_len(), 0);
         Ok(())
     }
 

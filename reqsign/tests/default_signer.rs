@@ -19,6 +19,8 @@
 
 use reqsign::aws::{StaticCredentialProvider, default_signer};
 use reqsign::crypto::CryptoProvider;
+#[cfg(feature = "default-context")]
+use reqsign::default_context;
 use reqsign::{Context, ErrorKind, Result};
 
 #[derive(Debug)]
@@ -42,9 +44,10 @@ impl CryptoProvider for UnsupportedProvider {
     }
 }
 
+#[cfg(feature = "default-context")]
 #[tokio::test]
 async fn default_signer_signs_with_the_context_provider() {
-    let signer = default_signer("s3", "test-region")
+    let signer = default_signer(default_context(), "s3", "test-region")
         .with_credential_provider(StaticCredentialProvider::new("access-key", "secret-key"));
     let mut parts = http::Request::get("https://example.amazonaws.com/object")
         .body(())
@@ -67,8 +70,7 @@ async fn default_signer_signs_with_the_context_provider() {
 #[tokio::test]
 async fn default_signer_uses_an_explicitly_selected_context_provider() {
     let context = Context::new().with_crypto(UnsupportedProvider);
-    let signer = default_signer("s3", "test-region")
-        .with_context(context)
+    let signer = default_signer(context, "s3", "test-region")
         .with_credential_provider(StaticCredentialProvider::new("access-key", "secret-key"));
     let mut parts = http::Request::get("https://example.amazonaws.com/object")
         .body(())

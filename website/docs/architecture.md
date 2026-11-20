@@ -66,7 +66,7 @@ Builders swap any component while keeping the others:
 
 ```rust
 let signer = signer
-    .with_context(custom_ctx)
+    .with_context(custom_ctx) // clears the credential cache
     .with_credential_provider(static_provider) // clears the credential cache
     .with_request_signer(other_signer);
 ```
@@ -239,9 +239,9 @@ The reuse rule on every `sign` or `grant`:
    reuse of the previous cached credential. A configured provider chain can
    handle errors internally by trying its next source, as described above.
 
-Replacing a signer's credential provider — or a granter's context or source
-provider — clears the cache: a credential loaded under one configuration is
-never reused under another.
+Replacing a signer's or granter's context or credential provider clears the
+cache: a credential loaded under one configuration is never reused under
+another.
 
 ## Granter and GrantCredential
 
@@ -298,8 +298,10 @@ The same components are reachable at three levels — pick by how much you
 want to control:
 
 **The facade** (`reqsign` crate) — one dependency, feature flags per
-provider, `default_signer` entries that wire everything. Best for
-applications; still customizable through `with_*` builders.
+provider, `default_context()` for the standard runtime, and `default_signer`
+entries that wire each provider's credential chain and request signer with
+your supplied `Context`. Best for applications; still customizable through
+`with_*` builders.
 
 **Custom assembly** — the same components, wired explicitly. What
 `default_signer` does for you, written out:

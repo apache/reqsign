@@ -56,7 +56,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::aws::default_signer(service, region)"
+        "entry": "reqsign::aws::default_signer(ctx, service, region)"
       },
       "credential_sources": [
         {
@@ -172,7 +172,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::aws::v4a::default_signer(service, region_set)"
+        "entry": "reqsign::aws::v4a::default_signer(ctx, service, region_set)"
       },
       "credential_sources": [
         {
@@ -274,7 +274,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::azure::default_signer()"
+        "entry": "reqsign::azure::default_signer(ctx)"
       },
       "credential_sources": [
         {
@@ -376,7 +376,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::google::default_signer(service)"
+        "entry": "reqsign::google::default_signer(ctx, service)"
       },
       "credential_sources": [
         {
@@ -492,7 +492,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::aliyun::default_signer(bucket)"
+        "entry": "reqsign::aliyun::default_signer(ctx, bucket)"
       },
       "credential_sources": [
         {
@@ -586,7 +586,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::huaweicloud::default_signer(bucket)"
+        "entry": "reqsign::huaweicloud::default_signer(ctx, bucket)"
       },
       "credential_sources": [
         {
@@ -650,7 +650,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::oracle::default_signer()"
+        "entry": "reqsign::oracle::default_signer(ctx)"
       },
       "credential_sources": [
         {
@@ -719,7 +719,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::tencent::default_signer()"
+        "entry": "reqsign::tencent::default_signer(ctx)"
       },
       "credential_sources": [
         {
@@ -788,7 +788,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::volcengine::default_signer(region)"
+        "entry": "reqsign::volcengine::default_signer(ctx, region)"
       },
       "credential_sources": [
         {
@@ -847,7 +847,7 @@
       ],
       "default_signer": {
         "available": true,
-        "entry": "reqsign::openstack::default_signer()"
+        "entry": "reqsign::openstack::default_signer(ctx)"
       },
       "credential_sources": [
         {

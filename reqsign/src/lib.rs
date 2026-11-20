@@ -21,8 +21,8 @@
 // Re-export core types
 pub use reqsign_core::*;
 
-// The default cryptographic backend. Applications install it at startup; neither
-// this facade nor `default_context` installs a provider implicitly.
+// The default cryptographic backend. Applications may install it process-wide;
+// `default_context` binds it conditionally when no global provider is installed.
 #[cfg(feature = "default-crypto")]
 pub use reqsign_crypto_rustcrypto::RustCryptoProvider;
 
@@ -59,3 +59,57 @@ pub mod tencent;
 
 #[cfg(feature = "volcengine")]
 pub mod volcengine;
+
+#[cfg(all(test, feature = "aws-v4"))]
+mod tests {
+    use crate::crypto::CryptoProvider;
+    use crate::{Context, Result, StaticEnv, aws};
+    use std::collections::HashMap;
+
+    #[derive(Debug)]
+    struct TestCryptoProvider;
+
+    impl CryptoProvider for TestCryptoProvider {
+        fn sha1(&self, _: &[u8]) -> Result<[u8; 20]> {
+            Ok([1; 20])
+        }
+
+        fn sha256(&self, _: &[u8]) -> Result<[u8; 32]> {
+            Ok([2; 32])
+        }
+
+        fn hmac_sha1(&self, _: &[u8], _: &[u8]) -> Result<[u8; 20]> {
+            Ok([3; 20])
+        }
+
+        fn hmac_sha256(&self, _: &[u8], _: &[u8]) -> Result<[u8; 32]> {
+            Ok([4; 32])
+        }
+    }
+
+    #[tokio::test]
+    async fn default_signer_works_without_default_context_feature() {
+        let ctx = Context::new()
+            .with_crypto(TestCryptoProvider)
+            .with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([
+                    ("AWS_ACCESS_KEY_ID".to_string(), "AKIDEXAMPLE".to_string()),
+                    (
+                        "AWS_SECRET_ACCESS_KEY".to_string(),
+                        "example-secret-key".to_string(),
+                    ),
+                ]),
+            });
+        let signer = aws::default_signer(ctx, "s3", "us-east-1");
+
+        let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/my-object")
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+
+        signer.sign(&mut req, None).await.unwrap();
+        assert!(req.headers.contains_key("authorization"));
+    }
+}

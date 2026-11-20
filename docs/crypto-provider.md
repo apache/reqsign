@@ -262,10 +262,12 @@ Without `default-crypto`, `default_context()` resolves a provider only from an
 explicit binding or a process-wide installation. `Context::new()` starts
 unbound.
 
-The facade's per-service `default_signer(...)` helpers use `default_context()`,
-so they inherit the same behavior. Explicit `with_crypto` bindings always win;
-a global provider is used when it was installed before the context was
-constructed.
+The facade's per-service `default_signer(...)` helpers take the caller-supplied
+`Context` as their first argument. Passing `default_context()` inherits the
+conditional RustCrypto binding described above; passing a custom context keeps
+that context's explicit or global provider selection. The signer owns the
+context, and replacing it with `Signer::with_context` also isolates the
+credential cache.
 
 Applications that select a different backend disable `default-crypto` and take
 the backend crate directly. Applications that use only hashing can provide
@@ -275,10 +277,10 @@ their own minimal `CryptoProvider`.
 
 ### Applications and bare core users
 
-Facade users can keep using `default_context()` or a per-service
-`default_signer(...)` without installing anything. To select one provider for
-the whole application, install it once before constructing facade contexts;
-contexts that were already bound to RustCrypto keep their binding:
+Facade users can construct a context with `default_context()` and pass it to a
+per-service `default_signer(...)` without installing anything. To select one
+provider for the whole application, install it once before constructing facade
+contexts; contexts that were already bound to RustCrypto keep their binding:
 
 ```rust
 use reqsign::RustCryptoProvider;

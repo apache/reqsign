@@ -77,8 +77,9 @@ injects keys — skip chains entirely:
 ```rust file=reqsign/examples/static_credentials.rs region=static
 ```
 
-Replacing a signer's credential provider clears its credential cache, so a
-credential from the old chain is never reused with the new configuration.
+Replacing a signer's context or credential provider clears its credential
+cache, so a credential from the old configuration is never reused with the
+new one.
 
 ## Implement your own source
 
@@ -161,5 +162,6 @@ a custom `Signer::new`.
 The credential type you return implements `SigningCredential`; set its
 expiration so
 [caching](/docs/architecture/#credential-caching-and-validity) refreshes it
-on time. Credentials without an expiration are cached until the provider is
-replaced.
+on time. Credentials without an expiration are cached by the signer until
+its credential provider is replaced. Replacing the signer's `Context` also
+clears the signer's credential cache.

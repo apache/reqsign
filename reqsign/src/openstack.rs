@@ -23,17 +23,15 @@
 // Re-export all OpenStack Keystone types
 pub use reqsign_openstack_keystone::*;
 
-#[cfg(feature = "default-context")]
-use crate::{Signer, default_context};
+use crate::{Context, Signer};
 
 /// Default OpenStack Signer type with commonly used components
-#[cfg(feature = "default-context")]
 pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default OpenStack signer with standard configuration
+/// Create a default OpenStack signer with the supplied runtime context.
 ///
 /// This function creates a signer with:
-/// - Default context (with Tokio file reader, reqwest HTTP client, OS environment)
+/// - The caller-supplied [`Context`] (for example `reqsign::default_context()` when `default-context` is enabled)
 /// - Default credential provider (reads the standard `OS_AUTH_URL`,
 ///   `OS_USERNAME`, and `OS_PASSWORD` environment variables)
 /// - Request signer that inserts `X-Auth-Token` header
@@ -41,9 +39,10 @@ pub type DefaultSigner = Signer<Credential>;
 /// # Example
 ///
 /// ```no_run
-/// # #[tokio::main]
-/// # async fn main() -> reqsign_core::Result<()> {
-/// let signer = reqsign::openstack::default_signer();
+/// # #[cfg(feature = "default-context")]
+/// # async fn example() -> reqsign_core::Result<()> {
+/// let ctx = reqsign::default_context();
+/// let signer = reqsign::openstack::default_signer(ctx);
 ///
 /// let mut req = http::Request::builder()
 ///     .method("GET")
@@ -57,9 +56,7 @@ pub type DefaultSigner = Signer<Credential>;
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(feature = "default-context")]
-pub fn default_signer() -> DefaultSigner {
-    let ctx = default_context();
+pub fn default_signer(ctx: Context) -> DefaultSigner {
     let provider = DefaultCredentialProvider::new();
     let signer = RequestSigner;
     Signer::new(ctx, provider, signer)

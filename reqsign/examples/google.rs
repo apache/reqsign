@@ -20,9 +20,10 @@ use anyhow::Result;
 #[tokio::main]
 async fn main() -> Result<()> {
     // ANCHOR: quickstart
-    use reqsign::google;
+    use reqsign::{default_context, google};
     // Create a default signer for Google Cloud Storage
-    let signer = google::default_signer("storage.googleapis.com");
+    let ctx = default_context();
+    let signer = google::default_signer(ctx, "storage.googleapis.com");
 
     // Build a request
     let mut req = http::Request::builder()

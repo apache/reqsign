@@ -20,9 +20,10 @@ use anyhow::Result;
 #[tokio::main]
 async fn main() -> Result<()> {
     // ANCHOR: quickstart
-    use reqsign::azure;
+    use reqsign::{azure, default_context};
     // Create a default signer for Azure Storage
-    let signer = azure::default_signer();
+    let ctx = default_context();
+    let signer = azure::default_signer(ctx);
 
     // Build a request
     let mut req = http::Request::builder()

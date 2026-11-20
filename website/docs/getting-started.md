@@ -52,10 +52,12 @@ cargo add http anyhow
 | `volcengine` | Volcengine TOS |
 | `full` | Everything above |
 
-The default `default-context` feature wires a ready-to-use runtime (Tokio
-file reading, reqwest HTTP, Tokio command execution). Keep it unless you are
-[bringing your own runtime](/docs/guides/custom-runtimes/). Requires
-Rust 1.86.0+.
+The default features include `default-context`, which wires a ready-to-use
+runtime (Tokio file reading, reqwest HTTP, Tokio command execution), and
+`default-crypto`, which lets `default_context()` bind RustCrypto when no
+process-wide provider is installed. Keep `default-context` unless you are
+[bringing your own runtime](/docs/guides/custom-runtimes/); a custom context
+must bind a `CryptoProvider` explicitly. Requires Rust 1.86.0+.
 
 ## 2. Sign your first request
 
@@ -66,10 +68,11 @@ This is the repository's compiled example — CI builds it on every commit:
 
 Three things happen here:
 
-1. `aws::default_signer("s3", "us-east-1")` composes the default runtime
-   context with AWS's full credential chain — environment variables, shared
-   profiles, SSO, ECS, IMDS, and more. See
-   [Loading credentials](/docs/guides/credentials/).
+1. `default_context()` builds the default runtime context, and
+   `aws::default_signer(ctx, "s3", "us-east-1")` composes it with AWS's full
+   credential chain — environment variables, shared profiles, SSO, ECS, IMDS,
+   and more. Reuse the same `Context` across multiple signers by cloning it.
+   See [Loading credentials](/docs/guides/credentials/).
 2. The request is built with the plain `http` crate. Reqsign signs
    `http::request::Parts` directly — there is no wrapper client to adopt.
 3. `signer.sign(&mut req, None).await?` mutates the request head in place,
@@ -97,16 +100,16 @@ composes that provider's own credential chain — the
 
 | Provider | Entry |
 | --- | --- |
-| [AWS SigV4](/docs/providers/aws-sigv4/) | `aws::default_signer(service, region)` |
-| [AWS SigV4a](/docs/providers/aws-sigv4a/) | `aws::v4a::default_signer(service, region_set)` |
-| [Azure Storage](/docs/providers/azure-storage/) | `azure::default_signer()` |
-| [Google Cloud](/docs/providers/google/) | `google::default_signer(service)` |
-| [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(bucket)` |
-| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | `huaweicloud::default_signer(bucket)` |
-| [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer()` |
-| [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer()` |
-| [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer()` |
-| [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(region)` |
+| [AWS SigV4](/docs/providers/aws-sigv4/) | `aws::default_signer(ctx, service, region)` |
+| [AWS SigV4a](/docs/providers/aws-sigv4a/) | `aws::v4a::default_signer(ctx, service, region_set)` |
+| [Azure Storage](/docs/providers/azure-storage/) | `azure::default_signer(ctx)` |
+| [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |
+| [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |
+| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | `huaweicloud::default_signer(ctx, bucket)` |
+| [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer(ctx)` |
+| [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer(ctx)` |
+| [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |
+| [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
 
 A default signer is an ordinary `Signer`: replace any component and keep the
 rest —
