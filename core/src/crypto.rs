@@ -34,6 +34,14 @@ use crate::{Error, Result};
 
 /// Cryptographic operations required by reqsign.
 ///
+/// The trait deliberately exposes only the digest, HMAC, signature, encryption,
+/// and random-generation operations needed by reqsign's signing and credential
+/// flows. Keeping this byte-oriented surface small lets different backend
+/// crates implement it without exposing their own key, digest, or signature
+/// types. A context or the process-wide registration selects one provider for
+/// all of these operations; callers do not compose individual algorithms from
+/// different providers at runtime.
+///
 /// The first four methods are mandatory. A provider implements the remaining
 /// methods when it supports the corresponding operation; the default
 /// implementations return [`crate::ErrorKind::ConfigInvalid`] so that a minimal
