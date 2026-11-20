@@ -162,5 +162,6 @@ a custom `Signer::new`.
 The credential type you return implements `SigningCredential`; set its
 expiration so
 [caching](/docs/architecture/#credential-caching-and-validity) refreshes it
-on time. Credentials without an expiration are cached until the provider is
-replaced.
+on time. Credentials without an expiration are cached by the signer until
+its credential provider is replaced. Replacing the signer's `Context` also
+clears the signer's credential cache.

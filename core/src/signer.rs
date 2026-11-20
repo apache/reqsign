@@ -83,7 +83,8 @@ impl<K: SigningCredential> Signer<K> {
         self
     }
 
-    /// Replace the request signer while keeping context and credential provider.
+    /// Replace only the request signer, retaining the context, credential provider,
+    /// and shared credential cache.
     pub fn with_request_signer(mut self, signer: impl SignRequest<Credential = K>) -> Self {
         self.builder = Arc::new(signer);
         self
