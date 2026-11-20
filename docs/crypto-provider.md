@@ -23,6 +23,9 @@ Two provider crates ship with this design:
 - `reqsign-crypto-boring`, an independent, native-only crate built on
   BoringSSL and excluded from the main workspace.
 
+Both provider crates start at `1.0.0` and version independently from the core
+and service lockstep line and from each other.
+
 ## Provider Contract
 
 ```rust
@@ -215,8 +218,8 @@ Azure Storage's `ServiceSharedAccessSignature::token` takes
 
 ### `reqsign-crypto-rustcrypto`
 
-Location: `crypto/rustcrypto`. Workspace member. Version follows the core
-crate's lockstep line.
+Location: `crypto/rustcrypto`. Workspace member. It has its own independent
+version line, starting at `1.0.0`.
 
 `RustCryptoProvider::new()`, `Default`, and
 `RustCryptoProvider::install_default()` are the public entry points.
@@ -245,7 +248,7 @@ provider implements all eight operations through safe, stateless BoringSSL
 calls and contains no `unsafe` code. The optional `fips` feature forwards to
 `boring/fips`.
 
-The crate has an independent version cadence (`0.1.0` initially), is verified by
+The crate has an independent version cadence (`1.0.0` initially), is verified by
 `.github/workflows/crypto_boring.yml`, and is not published by
 `cargo publish --workspace`.
 

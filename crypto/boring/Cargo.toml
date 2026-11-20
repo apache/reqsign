@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-crypto-boring"
-version = "0.1.0"
+version = "1.0.0"
 
 categories = ["authentication", "cryptography"]
 description = "BoringSSL backend for reqsign."
@@ -41,6 +41,6 @@ http = "1"
 p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
 reqsign-aws-core = { version = "3.3.1", path = "../../services/aws-core" }
 reqsign-aws-v4 = { version = "3.4.1", path = "../../services/aws-v4" }
-reqsign-crypto-rustcrypto = { version = "3.3.4", path = "../rustcrypto" }
+reqsign-crypto-rustcrypto = { version = "1.0.0", path = "../rustcrypto" }
 sha2 = "0.11"
 tokio = { version = "1", features = ["macros", "rt"] }

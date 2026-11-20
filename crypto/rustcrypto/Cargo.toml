@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-crypto-rustcrypto"
-version = "3.3.4"
+version = "1.0.0"
 
 categories = ["authentication", "cryptography"]
 description = "RustCrypto backend for reqsign."

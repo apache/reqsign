@@ -86,6 +86,8 @@ this supported subset.
 
 - Service crates and core share a lockstep major version (`3.0.0`).
 - `reqsign-http-send-reqwest` has its own major (`4.0.0`).
+- `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
+  version lines, starting at `1.0.0`.
 - The facade `reqsign` crate follows an independent scheme (`0.20.0`).
 - Release is triggered by pushing a `v*.*.*` tag; `cargo publish --workspace`
   publishes everything.
