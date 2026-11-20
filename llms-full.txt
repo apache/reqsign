@@ -429,6 +429,8 @@ fn main() {
 
     let ctx = Context::new()
 
+        .with_crypto(reqsign::RustCryptoProvider::new())
+
         .with_file_read(TokioFileRead)
 
         .with_http_send(ReqwestHttpSend::default())
@@ -455,6 +457,31 @@ fn main() {
 This explicit assembly also needs `reqsign-file-read-tokio`,`reqsign-command-execute-tokio`, and `reqsign-http-send-reqwest` as direct dependencies; `default_context()` supplies the same components through the facade.
 
 Why traits instead of feature flags: tests inject static env maps and canned HTTP responses without process-global mutation; sandboxes withhold capabilities by simply not providing them; and WASM targets provide browser-backed implementations. See[Custom runtimes & WASM](/docs/guides/custom-runtimes/).
+
+## Crypto provider[​](#crypto-provider "Direct link to Crypto provider")
+
+Cryptography is resolved through `Context`. Every hash, MAC, asymmetric signature, AES-GCM operation, and random draw calls`ctx.crypto_provider()`, which prefers an explicit`Context::with_crypto` binding, then the process-wide provider installed with`RustCryptoProvider::install_default()`:
+
+```
+
+use reqsign::{Context, RustCryptoProvider, Signer};
+
+
+// Explicit provider for this context.
+
+let ctx = Context::new().with_crypto(RustCryptoProvider::new());
+
+
+// Or install before constructing facade contexts to select one provider.
+
+RustCryptoProvider::install_default()
+
+    .map_err(|_| "a CryptoProvider is already installed")?;
+
+
+```
+
+`reqsign-core` and the service crates contain no cryptographic implementation. A bare `Context::new()` starts unbound and returns `ConfigInvalid` when signing needs crypto without a global provider. The facade's `default-crypto` feature makes `default_context()` bind RustCrypto only when the process-wide slot is empty at construction; it never writes the slot. A context that already binds RustCrypto keeps it, and an explicit `with_crypto` binding always wins. Applications choose the provider, and integrating middleware such as OpenDAL must not install a global default. See[CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md)for the full contract and error semantics.
 
 ## ProvideCredential[​](#providecredential "Direct link to ProvideCredential")
 
@@ -652,6 +679,8 @@ fn main() {
 
     let ctx = Context::new()
 
+        .with_crypto(reqsign::RustCryptoProvider::new())
+
         .with_file_read(TokioFileRead)
 
         .with_http_send(ReqwestHttpSend::default())
@@ -771,7 +800,7 @@ cargo add http anyhow
 | volcengine                                    | Volcengine TOS                               |
 | full                                          | Everything above                             |
 
-The default `default-context` feature wires a ready-to-use runtime (Tokio file reading, reqwest HTTP, Tokio command execution). Keep it unless you are[bringing your own runtime](/docs/guides/custom-runtimes/). Requires Rust 1.86.0+.
+The default features include `default-context`, which wires a ready-to-use runtime (Tokio file reading, reqwest HTTP, Tokio command execution), and`default-crypto`, which lets `default_context()` bind RustCrypto when no process-wide provider is installed. Keep `default-context` unless you are[bringing your own runtime](/docs/guides/custom-runtimes/); a custom context must bind a `CryptoProvider` explicitly. Requires Rust 1.86.0+.
 
 ## 2\. Sign your first request[​](#2-sign-your-first-request "Direct link to 2. Sign your first request")
 
@@ -1638,14 +1667,16 @@ Use fixed credentials to check signing without credential-source I/O. Signing st
 
 ```
 
-use reqsign::{Context, Signer};
+use reqsign::{Context, RustCryptoProvider, Signer};
 
 use reqsign::aws::{RequestSigner, StaticCredentialProvider};
 
 
 let signer = Signer::new(
 
-    Context::new(), // no I/O needed with static credentials
+    // No I/O needed with static credentials; bind crypto locally.
+
+    Context::new().with_crypto(RustCryptoProvider::new()),
 
     StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
 
@@ -2566,7 +2597,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 
 ## Core[​](#core "Direct link to Core")
 
-* [reqsign-core](https://docs.rs/reqsign-core) — `Context`, `Signer`,`Granter`, and the `ProvideCredential` / `SignRequest` /`GrantCredential` / `SigningCredential` traits.
+* [reqsign-core](https://docs.rs/reqsign-core) — `Context`, `Signer`,`Granter`, the `ProvideCredential` / `SignRequest` / `GrantCredential` /`SigningCredential` traits, and the `crypto::CryptoProvider` contract.
 
 ## Service crates[​](#service-crates "Direct link to Service crates")
 
@@ -2581,6 +2612,11 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-oracle](https://docs.rs/reqsign-oracle)
 * [reqsign-tencent-cos](https://docs.rs/reqsign-tencent-cos)
 * [reqsign-volcengine-tos](https://docs.rs/reqsign-volcengine-tos)
+
+## Crypto providers[​](#crypto-providers "Direct link to Crypto providers")
+
+* [reqsign-crypto-rustcrypto](https://docs.rs/reqsign-crypto-rustcrypto) — pure-Rust provider, including the supported WASM subset
+* [reqsign-crypto-boring](https://docs.rs/reqsign-crypto-boring) — native BoringSSL provider, built outside the main workspace
 
 ## Context components[​](#context-components "Direct link to Context components")
 
