@@ -20,9 +20,10 @@ use anyhow::Result;
 #[tokio::main]
 async fn main() -> Result<()> {
     // ANCHOR: quickstart
-    use reqsign::aws;
+    use reqsign::{aws, default_context};
     // Create a default signer for S3 in us-east-1
-    let signer = aws::default_signer("s3", "us-east-1");
+    let ctx = default_context();
+    let signer = aws::default_signer(ctx, "s3", "us-east-1");
 
     // Build a request
     let mut req = http::Request::builder()

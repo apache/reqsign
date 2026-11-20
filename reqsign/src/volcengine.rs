@@ -23,27 +23,25 @@
 // Re-export all Volcengine TOS signing types
 pub use reqsign_volcengine_tos::*;
 
-#[cfg(feature = "default-context")]
-use crate::{Signer, default_context};
+use crate::{Context, Signer};
 
 /// Default Volcengine TOS Signer type with commonly used components
-#[cfg(feature = "default-context")]
 pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default Volcengine TOS signer with standard configuration
+/// Create a default Volcengine TOS signer with the supplied runtime context.
 ///
 /// This function creates a signer with:
-/// - Default context (with Tokio file reader, reqwest HTTP client, OS environment)
+/// - The caller-supplied [`Context`] (for example `reqsign::default_context()` when `default-context` is enabled)
 /// - Default credential provider (reads from env vars)
 /// - Request signer for the specified region
 ///
 /// # Example
 ///
 /// ```no_run
-/// # #[tokio::main]
-/// # async fn main() -> reqsign_core::Result<()> {
-/// // Create a signer for Volcengine TOS in cn-beijing region
-/// let signer = reqsign::volcengine::default_signer("cn-beijing");
+/// # #[cfg(feature = "default-context")]
+/// # async fn example() -> reqsign_core::Result<()> {
+/// let ctx = reqsign::default_context();
+/// let signer = reqsign::volcengine::default_signer(ctx, "cn-beijing");
 ///
 /// // Sign a request
 /// let mut req = http::Request::builder()
@@ -53,14 +51,12 @@ pub type DefaultSigner = Signer<Credential>;
 ///     .unwrap()
 ///     .into_parts()
 ///     .0;
-///     
+///
 /// signer.sign(&mut req, None).await?;
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(feature = "default-context")]
-pub fn default_signer(region: &str) -> DefaultSigner {
-    let ctx = default_context();
+pub fn default_signer(ctx: Context, region: &str) -> DefaultSigner {
     let provider = DefaultCredentialProvider::new();
     let signer = RequestSigner::new(region);
     Signer::new(ctx, provider, signer)

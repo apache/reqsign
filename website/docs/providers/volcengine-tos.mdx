@@ -34,10 +34,11 @@ cargo add reqsign --features volcengine
 ```
 
 ```rust
-use reqsign::volcengine;
+use reqsign::{default_context, volcengine};
 
 // Environment variables — resolved by the default chain.
-let signer = volcengine::default_signer("cn-beijing");
+let ctx = default_context();
+let signer = volcengine::default_signer(ctx, "cn-beijing");
 
 let mut req = http::Request::builder()
     .method(http::Method::GET)

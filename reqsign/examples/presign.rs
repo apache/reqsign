@@ -15,12 +15,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use reqsign::aws;
+use reqsign::{aws, default_context};
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let signer = aws::default_signer("s3", "us-east-1");
+    let ctx = default_context();
+    let signer = aws::default_signer(ctx, "s3", "us-east-1");
     let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/report.csv")
         .body(())?
         .into_parts()

@@ -34,10 +34,11 @@ cargo add reqsign --features tencent
 ```
 
 ```rust
-use reqsign::tencent;
+use reqsign::{default_context, tencent};
 
 // Env, config, OIDC federation — resolved by the default chain.
-let signer = tencent::default_signer();
+let ctx = default_context();
+let signer = tencent::default_signer(ctx);
 
 let mut req = http::Request::builder()
     .method(http::Method::GET)

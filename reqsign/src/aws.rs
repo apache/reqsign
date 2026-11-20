@@ -25,20 +25,17 @@
 pub mod v4 {
     pub use reqsign_aws_v4::*;
 
-    #[cfg(feature = "default-context")]
-    use crate::{Signer, default_context};
+    use crate::{Context, Signer};
 
     /// Default SigV4 signer type.
-    #[cfg(feature = "default-context")]
     pub type DefaultSigner = Signer<Credential>;
 
-    /// Create a default SigV4 signer for an AWS service and region.
+    /// Create a default SigV4 signer for an AWS service and region using the supplied context.
     ///
-    /// The signer uses the default context and AWS credential provider chain.
-    #[cfg(feature = "default-context")]
-    pub fn default_signer(service: &str, region: &str) -> DefaultSigner {
+    /// The signer uses the caller-supplied [`Context`] and AWS credential provider chain.
+    pub fn default_signer(ctx: Context, service: &str, region: &str) -> DefaultSigner {
         Signer::new(
-            default_context(),
+            ctx,
             DefaultCredentialProvider::new(),
             RequestSigner::new(service, region),
         )
@@ -54,20 +51,21 @@ pub use v4::*;
 pub mod v4a {
     pub use reqsign_aws_v4a::*;
 
-    #[cfg(feature = "default-context")]
-    use crate::{Signer, default_context};
+    use crate::{Context, Signer};
 
     /// Default SigV4a signer type.
-    #[cfg(feature = "default-context")]
     pub type DefaultSigner = Signer<Credential>;
 
-    /// Create a default SigV4a signer for an AWS service and signing region set.
+    /// Create a default SigV4a signer for an AWS service and signing region set using the supplied context.
     ///
-    /// The signer uses the default context and AWS credential provider chain.
-    #[cfg(feature = "default-context")]
-    pub fn default_signer(service: &str, region_set: SigningRegionSet) -> DefaultSigner {
+    /// The signer uses the caller-supplied [`Context`] and AWS credential provider chain.
+    pub fn default_signer(
+        ctx: Context,
+        service: &str,
+        region_set: SigningRegionSet,
+    ) -> DefaultSigner {
         Signer::new(
-            default_context(),
+            ctx,
             DefaultCredentialProvider::new(),
             RequestSigner::new(service, region_set),
         )

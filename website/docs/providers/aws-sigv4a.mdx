@@ -35,11 +35,13 @@ cargo add reqsign --features aws-v4a
 
 ```rust
 use reqsign::aws::v4a::{default_signer, SigningRegionSet};
+use reqsign::default_context;
 
 // Same credential chain as SigV4; the signature covers a region set —
 // built for multi-region endpoints like S3 Multi-Region Access Points.
+let ctx = default_context();
 let region_set = SigningRegionSet::new("us-east-1,us-west-2")?;
-let signer = default_signer("s3", region_set);
+let signer = default_signer(ctx, "s3", region_set);
 
 let mut req = http::Request::builder()
     .method(http::Method::GET)

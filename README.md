@@ -22,15 +22,14 @@ The simplest way to use `reqsign` is with the default signers provided by each s
 
 ```rust
 use anyhow::Result;
-use reqsign::aws;
+use reqsign::{aws, default_context};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Create a default signer for S3 in us-east-1
-    // This will automatically:
-    // - Load credentials from environment variables, config files, or IAM roles
-    // - Set up the default HTTP client and file reader
-    let signer = aws::default_signer("s3", "us-east-1");
+    // Create a default runtime context (HTTP client, file reader, OS env, command execution)
+    let ctx = default_context();
+    // Create a default signer for S3 in us-east-1 using the supplied context
+    let signer = aws::default_signer(ctx, "s3", "us-east-1");
     
     // Build your request
     let mut req = http::Request::builder()
@@ -100,15 +99,15 @@ async fn main() -> Result<()> {
 You can also customize the default signers using the `with_*` methods:
 
 ```rust
-use reqsign::aws;
+use reqsign::{aws, default_context};
 use reqsign_aws_v4::StaticCredentialProvider;
 
 // Start with default signer and customize specific components
-let signer = aws::default_signer("s3", "us-east-1")
+let ctx = default_context();
+let signer = aws::default_signer(ctx, "s3", "us-east-1")
     .with_credential_provider(StaticCredentialProvider::new(
         "my-access-key",
         "my-secret-key",
-        None,  // Optional session token
     ));
 ```
 
@@ -121,24 +120,28 @@ For server applications that already hold an OIDC assertion, see
 
 ```rust
 use reqsign::aws::v4a::{SigningRegionSet, default_signer};
+use reqsign::default_context;
 
+let ctx = default_context();
 let region_set = SigningRegionSet::new("us-east-1,us-west-2")?;
-let signer = default_signer("s3", region_set);
+let signer = default_signer(ctx, "s3", region_set);
 # Ok::<(), reqsign_core::Error>(())
 ```
 
 #### Azure Storage
 
 ```rust
-use reqsign::azure;
+use reqsign::{azure, default_context};
+
+let ctx = default_context();
 
 // Default signer for Azure Storage
-let signer = azure::default_signer();
+let signer = azure::default_signer(ctx.clone());
 
 // With custom credentials
 use reqsign_azure_storage::StaticCredentialProvider;
-let signer = azure::default_signer()
-    .with_credential_provider(StaticCredentialProvider::new(
+let signer = azure::default_signer(ctx)
+    .with_credential_provider(StaticCredentialProvider::new_shared_key(
         "account-name",
         "account-key",
     ));
@@ -147,19 +150,21 @@ let signer = azure::default_signer()
 #### Google Cloud
 
 ```rust
-use reqsign::google;
+use reqsign::{default_context, google};
 
 // Default signer for Google Cloud Storage
-let signer = google::default_signer("storage.googleapis.com");
+let ctx = default_context();
+let signer = google::default_signer(ctx, "storage.googleapis.com");
 ```
 
 #### Aliyun OSS
 
 ```rust
-use reqsign::aliyun;
+use reqsign::{aliyun, default_context};
 
 // Default signer for Aliyun OSS
-let signer = aliyun::default_signer("mybucket");
+let ctx = default_context();
+let signer = aliyun::default_signer(ctx, "mybucket");
 ```
 
 ## Features

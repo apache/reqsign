@@ -19,7 +19,8 @@
 async fn main() -> anyhow::Result<()> {
     // ANCHOR: static
     use reqsign::aws::{self, StaticCredentialProvider};
-    let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
+    let ctx = reqsign::default_context();
+    let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential_provider(
         StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
     );
     // ANCHOR_END: static
@@ -30,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     );
     // ANCHOR_END: chain
     let _custom_chain_signer =
-        aws::default_signer("s3", "us-east-1").with_credential_provider(provider);
+        aws::default_signer(ctx, "s3", "us-east-1").with_credential_provider(provider);
 
     let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/my-object")
         .body(())?

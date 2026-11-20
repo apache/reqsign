@@ -39,10 +39,11 @@ Everything else stays yours: the HTTP client, retries, connection pooling, and
 the runtime. Reqsign never sends your requests.
 
 ```rust
-use reqsign::aws;
+use reqsign::{aws, default_context};
 
 // Credentials load from env, profiles, SSO, IMDS — the default chain.
-let signer = aws::default_signer("s3", "us-east-1");
+let ctx = default_context();
+let signer = aws::default_signer(ctx, "s3", "us-east-1");
 
 // Build the request with plain http types.
 let mut req = http::Request::builder()
