@@ -23,27 +23,25 @@
 // Re-export all Oracle Cloud signing types
 pub use reqsign_oracle::*;
 
-#[cfg(feature = "default-context")]
-use crate::{Signer, default_context};
+use crate::{Context, Signer};
 
 /// Default Oracle Cloud Signer type with commonly used components
-#[cfg(feature = "default-context")]
 pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default Oracle Cloud signer with standard configuration
+/// Create a default Oracle Cloud signer with the supplied runtime context.
 ///
 /// This function creates a signer with:
-/// - Default context (with Tokio file reader, reqwest HTTP client, OS environment)
+/// - The caller-supplied [`Context`] (for example `reqsign::default_context()` when `default-context` is enabled)
 /// - Default credential provider (reads from config file)
 /// - Request signer for Oracle Cloud
 ///
 /// # Example
 ///
 /// ```no_run
-/// # #[tokio::main]
-/// # async fn main() -> reqsign_core::Result<()> {
-/// // Create a signer for Oracle Cloud
-/// let signer = reqsign::oracle::default_signer();
+/// # #[cfg(feature = "default-context")]
+/// # async fn example() -> reqsign_core::Result<()> {
+/// let ctx = reqsign::default_context();
+/// let signer = reqsign::oracle::default_signer(ctx);
 ///
 /// // Sign a request
 /// let mut req = http::Request::builder()
@@ -53,14 +51,12 @@ pub type DefaultSigner = Signer<Credential>;
 ///     .unwrap()
 ///     .into_parts()
 ///     .0;
-///     
+///
 /// signer.sign(&mut req, None).await?;
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(feature = "default-context")]
-pub fn default_signer() -> DefaultSigner {
-    let ctx = default_context();
+pub fn default_signer(ctx: Context) -> DefaultSigner {
     let provider = DefaultCredentialProvider::new();
     let signer = RequestSigner::new();
     Signer::new(ctx, provider, signer)

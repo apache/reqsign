@@ -23,27 +23,25 @@
 // Re-export all Aliyun OSS signing types
 pub use reqsign_aliyun_oss::*;
 
-#[cfg(feature = "default-context")]
-use crate::{Signer, default_context};
+use crate::{Context, Signer};
 
 /// Default Aliyun OSS Signer type with commonly used components
-#[cfg(feature = "default-context")]
 pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default Aliyun OSS signer with standard configuration
+/// Create a default Aliyun OSS signer with the supplied runtime context.
 ///
 /// This function creates a signer with:
-/// - Default context (with Tokio file reader, reqwest HTTP client, OS environment)
+/// - The caller-supplied [`Context`] (for example `reqsign::default_context()` when `default-context` is enabled)
 /// - Default credential provider (reads from env vars, config files, ECS metadata, etc.)
 /// - Request signer for the specified bucket
 ///
 /// # Example
 ///
 /// ```no_run
-/// # #[tokio::main]
-/// # async fn main() -> reqsign_core::Result<()> {
-/// // Create a signer for Aliyun OSS bucket
-/// let signer = reqsign::aliyun::default_signer("mybucket");
+/// # #[cfg(feature = "default-context")]
+/// # async fn example() -> reqsign_core::Result<()> {
+/// let ctx = reqsign::default_context();
+/// let signer = reqsign::aliyun::default_signer(ctx, "mybucket");
 ///
 /// // Sign a request
 /// let mut req = http::Request::builder()
@@ -53,14 +51,12 @@ pub type DefaultSigner = Signer<Credential>;
 ///     .unwrap()
 ///     .into_parts()
 ///     .0;
-///     
+///
 /// signer.sign(&mut req, None).await?;
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(feature = "default-context")]
-pub fn default_signer(bucket: &str) -> DefaultSigner {
-    let ctx = default_context();
+pub fn default_signer(ctx: Context, bucket: &str) -> DefaultSigner {
     let provider = DefaultCredentialProvider::new();
     let signer = RequestSigner::new(bucket);
     Signer::new(ctx, provider, signer)

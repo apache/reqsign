@@ -19,6 +19,7 @@ use reqsign::aws::{
     self, DefaultCredentialProvider, S3ExpressSessionGrant, S3ExpressSessionMode,
     S3ExpressSessionProvider,
 };
+use reqsign::default_context;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,7 +29,8 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_region("us-west-2")
     .with_grant(S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly));
-    let signer = aws::default_signer("s3express", "us-west-2").with_credential_provider(provider);
+    let signer = aws::default_signer(default_context(), "s3express", "us-west-2")
+        .with_credential_provider(provider);
     let mut req = http::Request::get(
         "https://my-bucket--usw2-az1--x-s3.s3express-usw2-az1.us-west-2.amazonaws.com/object",
     )

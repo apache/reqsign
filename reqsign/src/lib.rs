@@ -54,3 +54,33 @@ pub mod tencent;
 
 #[cfg(feature = "volcengine")]
 pub mod volcengine;
+
+#[cfg(all(test, feature = "aws-v4"))]
+mod tests {
+    use crate::{Context, StaticEnv, aws};
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn default_signer_works_without_default_context_feature() {
+        let ctx = Context::new().with_env(StaticEnv {
+            home_dir: None,
+            envs: HashMap::from([
+                ("AWS_ACCESS_KEY_ID".to_string(), "AKIDEXAMPLE".to_string()),
+                (
+                    "AWS_SECRET_ACCESS_KEY".to_string(),
+                    "example-secret-key".to_string(),
+                ),
+            ]),
+        });
+        let signer = aws::default_signer(ctx, "s3", "us-east-1");
+
+        let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/my-object")
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+
+        signer.sign(&mut req, None).await.unwrap();
+        assert!(req.headers.contains_key("authorization"));
+    }
+}

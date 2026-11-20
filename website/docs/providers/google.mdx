@@ -34,11 +34,12 @@ cargo add reqsign --features google
 ```
 
 ```rust
-use reqsign::google;
+use reqsign::{default_context, google};
 
 // Service account files, workload identity federation, VM metadata —
 // resolved by the default chain.
-let signer = google::default_signer("storage.googleapis.com");
+let ctx = default_context();
+let signer = google::default_signer(ctx, "storage.googleapis.com");
 
 let mut req = http::Request::builder()
     .method(http::Method::GET)
