@@ -49,11 +49,13 @@ AWSAzureGoogle
 
 ```
 
-use reqsign::aws;
+use reqsign::{aws, default_context};
 
 // Create a default signer for S3 in us-east-1
 
-let signer = aws::default_signer("s3", "us-east-1");
+let ctx = default_context();
+
+let signer = aws::default_signer(ctx, "s3", "us-east-1");
 
 
 // Build a request
@@ -150,7 +152,9 @@ Default signer
 
 use reqsign::aws::{self, StaticCredentialProvider};
 
-let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
+let ctx = reqsign::default_context();
+
+let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential_provider(
 
     StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
 
@@ -386,7 +390,7 @@ Builders swap any component while keeping the others:
 
 let signer = signer
 
-    .with_context(custom_ctx)
+    .with_context(custom_ctx) // clears the credential cache
 
     .with_credential_provider(static_provider) // clears the credential cache
 
@@ -561,7 +565,7 @@ The reuse rule on every `sign` or `grant`:
 2. Otherwise the provider is asked for a fresh credential, which only needs to satisfy the exact deadline.
 3. Errors returned by the configured provider are propagated without retry or reuse of the previous cached credential. A configured provider chain can handle errors internally by trying its next source, as described above.
 
-Replacing a signer's credential provider — or a granter's context or source provider — clears the cache: a credential loaded under one configuration is never reused under another.
+Replacing a signer's or granter's context or credential provider clears the cache: a credential loaded under one configuration is never reused under another.
 
 ## Granter and GrantCredential[​](#granter-and-grantcredential "Direct link to Granter and GrantCredential")
 
@@ -627,7 +631,7 @@ Two mechanics keep this composition model portable:
 
 The same components are reachable at three levels — pick by how much you want to control:
 
-**The facade** (`reqsign` crate) — one dependency, feature flags per provider, `default_signer` entries that wire everything. Best for applications; still customizable through `with_*` builders.
+**The facade** (`reqsign` crate) — one dependency, feature flags per provider, `default_context()` for the standard runtime, and `default_signer`entries that wire each provider's credential chain and request signer with your supplied `Context`. Best for applications; still customizable through`with_*` builders.
 
 **Custom assembly** — the same components, wired explicitly. What`default_signer` does for you, written out:
 
@@ -782,11 +786,13 @@ use anyhow::Result;
 
 async fn main() -> Result<()> {
 
-    use reqsign::aws;
+    use reqsign::{aws, default_context};
 
     // Create a default signer for S3 in us-east-1
 
-    let signer = aws::default_signer("s3", "us-east-1");
+    let ctx = default_context();
+
+    let signer = aws::default_signer(ctx, "s3", "us-east-1");
 
 
     // Build a request
@@ -827,7 +833,7 @@ async fn main() -> Result<()> {
 
 Three things happen here:
 
-1. `aws::default_signer("s3", "us-east-1")` composes the default runtime context with AWS's full credential chain — environment variables, shared profiles, SSO, ECS, IMDS, and more. See[Loading credentials](/docs/guides/credentials/).
+1. `default_context()` builds the default runtime context, and`aws::default_signer(ctx, "s3", "us-east-1")` composes it with AWS's full credential chain — environment variables, shared profiles, SSO, ECS, IMDS, and more. Reuse the same `Context` across multiple signers by cloning it. See [Loading credentials](/docs/guides/credentials/).
 2. The request is built with the plain `http` crate. Reqsign signs`http::request::Parts` directly — there is no wrapper client to adopt.
 3. `signer.sign(&mut req, None).await?` mutates the request head in place, adding the `Authorization` header and companions. Passing`Some(duration)` instead selects query authentication where the provider supports it — see [Presigning](/docs/guides/presigning/).
 
@@ -850,18 +856,18 @@ The example signs the request and prints a confirmation; sending it is your HTTP
 
 Swap the entry point and the rest of the code stays the same. Each entry composes that provider's own credential chain — the[provider pages](/docs/providers/) document exactly which sources:
 
-| Provider                                                  | Entry                                           |
-| --------------------------------------------------------- | ----------------------------------------------- |
-| [AWS SigV4](/docs/providers/aws-sigv4/)                   | aws::default\_signer(service, region)           |
-| [AWS SigV4a](/docs/providers/aws-sigv4a/)                 | aws::v4a::default\_signer(service, region\_set) |
-| [Azure Storage](/docs/providers/azure-storage/)           | azure::default\_signer()                        |
-| [Google Cloud](/docs/providers/google/)                   | google::default\_signer(service)                |
-| [Aliyun OSS](/docs/providers/aliyun-oss/)                 | aliyun::default\_signer(bucket)                 |
-| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)      | huaweicloud::default\_signer(bucket)            |
-| [OpenStack Keystone](/docs/providers/openstack-keystone/) | openstack::default\_signer()                    |
-| [Oracle Cloud](/docs/providers/oracle/)                   | oracle::default\_signer()                       |
-| [Tencent COS](/docs/providers/tencent-cos/)               | tencent::default\_signer()                      |
-| [Volcengine TOS](/docs/providers/volcengine-tos/)         | volcengine::default\_signer(region)             |
+| Provider                                                  | Entry                                                |
+| --------------------------------------------------------- | ---------------------------------------------------- |
+| [AWS SigV4](/docs/providers/aws-sigv4/)                   | aws::default\_signer(ctx, service, region)           |
+| [AWS SigV4a](/docs/providers/aws-sigv4a/)                 | aws::v4a::default\_signer(ctx, service, region\_set) |
+| [Azure Storage](/docs/providers/azure-storage/)           | azure::default\_signer(ctx)                          |
+| [Google Cloud](/docs/providers/google/)                   | google::default\_signer(ctx, service)                |
+| [Aliyun OSS](/docs/providers/aliyun-oss/)                 | aliyun::default\_signer(ctx, bucket)                 |
+| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)      | huaweicloud::default\_signer(ctx, bucket)            |
+| [OpenStack Keystone](/docs/providers/openstack-keystone/) | openstack::default\_signer(ctx)                      |
+| [Oracle Cloud](/docs/providers/oracle/)                   | oracle::default\_signer(ctx)                         |
+| [Tencent COS](/docs/providers/tencent-cos/)               | tencent::default\_signer(ctx)                        |
+| [Volcengine TOS](/docs/providers/volcengine-tos/)         | volcengine::default\_signer(ctx, region)             |
 
 A default signer is an ordinary `Signer`: replace any component and keep the rest —
 
@@ -871,7 +877,9 @@ async fn main() -> anyhow::Result<()> {
 
     use reqsign::aws::{self, StaticCredentialProvider};
 
-    let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
+    let ctx = reqsign::default_context();
+
+    let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential_provider(
 
         StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
 
@@ -886,7 +894,7 @@ async fn main() -> anyhow::Result<()> {
 
     let _custom_chain_signer =
 
-        aws::default_signer("s3", "us-east-1").with_credential_provider(provider);
+        aws::default_signer(ctx, "s3", "us-east-1").with_credential_provider(provider);
 
 
     let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/my-object")
@@ -982,12 +990,14 @@ Everything else stays yours: the HTTP client, retries, connection pooling, and t
 
 ```
 
-use reqsign::aws;
+use reqsign::{aws, default_context};
 
 
 // Credentials load from env, profiles, SSO, IMDS — the default chain.
 
-let signer = aws::default_signer("s3", "us-east-1");
+let ctx = default_context();
+
+let signer = aws::default_signer(ctx, "s3", "us-east-1");
 
 
 // Build the request with plain http types.
@@ -1108,7 +1118,9 @@ When the credential is decided elsewhere — tests, WASM, a control plane that i
 
 use reqsign::aws::{self, StaticCredentialProvider};
 
-let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
+let ctx = reqsign::default_context();
+
+let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential_provider(
 
     StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
 
@@ -1117,7 +1129,7 @@ let signer = aws::default_signer("s3", "us-east-1").with_credential_provider(
 
 ```
 
-Replacing a signer's credential provider clears its credential cache, so a credential from the old chain is never reused with the new configuration.
+Replacing a signer's context or credential provider clears its credential cache, so a credential from the old configuration is never reused with the new one.
 
 ## Implement your own source[​](#implement-your-own-source "Direct link to Implement your own source")
 
@@ -1227,7 +1239,7 @@ Then hand it to a default signer (`.with_credential_provider(provider)`) or a cu
 
 ## Freshness[​](#freshness "Direct link to Freshness")
 
-The credential type you return implements `SigningCredential`; set its expiration so[caching](/docs/architecture/#credential-caching-and-validity) refreshes it on time. Credentials without an expiration are cached until the provider is replaced.
+The credential type you return implements `SigningCredential`; set its expiration so[caching](/docs/architecture/#credential-caching-and-validity) refreshes it on time. Credentials without an expiration are cached by the signer until its credential provider is replaced. Replacing the signer's `Context` also clears the signer's credential cache.
 
 ---
 
@@ -1460,6 +1472,8 @@ use reqsign::aws::{
 
 };
 
+use reqsign::default_context;
+
 
 #[tokio::main]
 
@@ -1477,7 +1491,9 @@ async fn main() -> anyhow::Result<()> {
 
     .with_grant(S3ExpressSessionGrant::new(S3ExpressSessionMode::ReadOnly));
 
-    let signer = aws::default_signer("s3express", "us-west-2").with_credential_provider(provider);
+    let signer = aws::default_signer(default_context(), "s3express", "us-west-2")
+
+        .with_credential_provider(provider);
 
     let mut req = http::Request::get(
 
@@ -1547,7 +1563,7 @@ signer.sign(&mut req, Some(Duration::from_secs(3600))).await?;
 
 ```
 
-use reqsign::aws;
+use reqsign::{aws, default_context};
 
 use std::time::Duration;
 
@@ -1556,7 +1572,9 @@ use std::time::Duration;
 
 async fn main() -> anyhow::Result<()> {
 
-    let signer = aws::default_signer("s3", "us-east-1");
+    let ctx = default_context();
+
+    let signer = aws::default_signer(ctx, "s3", "us-east-1");
 
     let mut req = http::Request::get("https://s3.amazonaws.com/my-bucket/report.csv")
 
@@ -1730,12 +1748,14 @@ cargo add reqsign --features aliyun
 
 ```
 
-use reqsign::aliyun;
+use reqsign::{aliyun, default_context};
 
 
 // Env, config files, ECS RAM roles, OIDC — resolved by the default chain.
 
-let signer = aliyun::default_signer("my-bucket");
+let ctx = default_context();
+
+let signer = aliyun::default_signer(ctx, "my-bucket");
 
 
 let mut req = http::Request::builder()
@@ -1813,14 +1833,16 @@ cargo add reqsign --features aws
 
 ```
 
-use reqsign::aws;
+use reqsign::{aws, default_context};
 
 
 // Credentials resolve through the default chain:
 
 // env → profiles (including assume-role chains) → SSO → OIDC → process → ECS → IMDS.
 
-let signer = aws::default_signer("s3", "us-east-1");
+let ctx = default_context();
+
+let signer = aws::default_signer(ctx, "s3", "us-east-1");
 
 
 let mut req = http::Request::builder()
@@ -1907,14 +1929,18 @@ cargo add reqsign --features aws-v4a
 
 use reqsign::aws::v4a::{default_signer, SigningRegionSet};
 
+use reqsign::default_context;
+
 
 // Same credential chain as SigV4; the signature covers a region set —
 
 // built for multi-region endpoints like S3 Multi-Region Access Points.
 
+let ctx = default_context();
+
 let region_set = SigningRegionSet::new("us-east-1,us-west-2")?;
 
-let signer = default_signer("s3", region_set);
+let signer = default_signer(ctx, "s3", region_set);
 
 
 let mut req = http::Request::builder()
@@ -1992,14 +2018,16 @@ cargo add reqsign --features azure
 
 ```
 
-use reqsign::azure;
+use reqsign::{azure, default_context};
 
 
 // Shared key, SAS, or Entra ID (client secrets, workload identity,
 
 // managed identity, Azure CLI) — resolved by the default chain.
 
-let signer = azure::default_signer();
+let ctx = default_context();
+
+let signer = azure::default_signer(ctx);
 
 
 let mut req = http::Request::builder()
@@ -2081,14 +2109,16 @@ cargo add reqsign --features google
 
 ```
 
-use reqsign::google;
+use reqsign::{default_context, google};
 
 
 // Service account files, workload identity federation, VM metadata —
 
 // resolved by the default chain.
 
-let signer = google::default_signer("storage.googleapis.com");
+let ctx = default_context();
+
+let signer = google::default_signer(ctx, "storage.googleapis.com");
 
 
 let mut req = http::Request::builder()
@@ -2169,12 +2199,14 @@ cargo add reqsign --features huaweicloud
 
 ```
 
-use reqsign::huaweicloud;
+use reqsign::{default_context, huaweicloud};
 
 
 // Environment credentials — resolved by the default chain.
 
-let signer = huaweicloud::default_signer("my-bucket");
+let ctx = default_context();
+
+let signer = huaweicloud::default_signer(ctx, "my-bucket");
 
 
 let mut req = http::Request::builder()
@@ -2245,12 +2277,14 @@ cargo add reqsign --features openstack
 
 ```
 
-use reqsign::openstack;
+use reqsign::{default_context, openstack};
 
 
 // Environment variables — resolved by the default chain.
 
-let signer = openstack::default_signer();
+let ctx = default_context();
+
+let signer = openstack::default_signer(ctx);
 
 
 let mut req = http::Request::builder()
@@ -2316,12 +2350,14 @@ cargo add reqsign --features oracle
 
 ```
 
-use reqsign::oracle;
+use reqsign::{default_context, oracle};
 
 
 // Env and the OCI config file (~/.oci/config) — resolved by the default chain.
 
-let signer = oracle::default_signer();
+let ctx = default_context();
+
+let signer = oracle::default_signer(ctx);
 
 
 let mut req = http::Request::builder()
@@ -2394,12 +2430,14 @@ cargo add reqsign --features tencent
 
 ```
 
-use reqsign::tencent;
+use reqsign::{default_context, tencent};
 
 
 // Env, config, OIDC federation — resolved by the default chain.
 
-let signer = tencent::default_signer();
+let ctx = default_context();
+
+let signer = tencent::default_signer(ctx);
 
 
 let mut req = http::Request::builder()
@@ -2466,12 +2504,14 @@ cargo add reqsign --features volcengine
 
 ```
 
-use reqsign::volcengine;
+use reqsign::{default_context, volcengine};
 
 
 // Environment variables — resolved by the default chain.
 
-let signer = volcengine::default_signer("cn-beijing");
+let ctx = default_context();
+
+let signer = volcengine::default_signer(ctx, "cn-beijing");
 
 
 let mut req = http::Request::builder()
