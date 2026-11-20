@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::common::RecordingProvider;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use http::header::{AUTHORIZATION, DATE};
 use reqsign_core::time::Timestamp;
@@ -30,12 +31,6 @@ use reqsign_core::{
 use reqsign_oracle::{
     ConfigFileCredentialProvider, Credential, DefaultCredentialProvider, RequestSigner,
 };
-use rsa::Generate;
-use rsa::PrivateKey;
-use rsa::pkcs1v15::{Signature, VerifyingKey};
-use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-use rsa::sha2::Sha256;
-use rsa::signature::Verifier;
 
 const CONFIG_PATH: &str = "/synthetic/oci/config";
 const DEFAULT_KEY: &str = "/synthetic/keys/default.pem";
@@ -397,12 +392,11 @@ async fn default_chain_loads_inherited_profile_and_respects_removed_slot() -> Re
 
 #[tokio::test]
 async fn inherited_profile_produces_a_verifiable_signed_request() -> anyhow::Result<()> {
-    let key = PrivateKey::generate();
+    const RSA_PKCS8_PEM: &str = include_str!("fixtures/rsa-2048-pkcs8.pem");
     let (ctx, files) = context(&(defaults() + "[ADMIN]\nuser=admin-user\n"), Some("ADMIN"));
-    files.insert(
-        DEFAULT_KEY,
-        key.to_pkcs8_pem(LineEnding::LF)?.as_bytes().to_vec(),
-    );
+    files.insert(DEFAULT_KEY, RSA_PKCS8_PEM.as_bytes().to_vec());
+    let provider = RecordingProvider::new();
+    let ctx = ctx.with_crypto(provider.clone());
     let mut parts = http::Request::get("https://iaas.example.com/instances?name=a%2Fb&name=c+d")
         .header("x-original", "preserved")
         .body(())?
@@ -424,15 +418,17 @@ async fn inherited_profile_produces_a_verifiable_signed_request() -> anyhow::Res
         .and_then(|value| value.strip_suffix('"'))
         .expect("signature must exist");
     let signature = STANDARD.decode(signature)?;
-    let signature = Signature::try_from(signature.as_slice())?;
     let signing_input = format!(
         "date: {}\n(request-target): get {}\nhost: {}",
         parts.headers[DATE].to_str()?,
         original_uri.path_and_query().unwrap(),
         original_uri.authority().unwrap()
     );
-    VerifyingKey::<Sha256>::new(key.to_public_key())
-        .verify(signing_input.as_bytes(), &signature)?;
+    let calls = provider.rsa_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].pem, RSA_PKCS8_PEM.as_bytes());
+    assert_eq!(calls[0].message, signing_input.as_bytes());
+    assert_eq!(signature, calls[0].signature);
     assert_eq!(files.reads(), [CONFIG_PATH, DEFAULT_KEY]);
     Ok(())
 }

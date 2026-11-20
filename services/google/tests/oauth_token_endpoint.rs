@@ -17,7 +17,7 @@
 
 mod common;
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use http::{Request, Response, StatusCode};
@@ -29,9 +29,6 @@ use reqsign_google::{
     ServerSideCredentialAccessBoundaryGranter, ServiceAccount,
     ServiceAccountTokenCredentialProvider, StaticCredentialProvider,
 };
-use rsa::Generate;
-use rsa::PrivateKey;
-use rsa::pkcs8::{EncodePrivateKey, LineEnding};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -63,16 +60,8 @@ impl HttpSend for MockHttp {
 }
 
 fn service_account() -> ServiceAccount {
-    static KEY: OnceLock<String> = OnceLock::new();
     ServiceAccount {
-        private_key: KEY
-            .get_or_init(|| {
-                PrivateKey::generate()
-                    .to_pkcs8_pem(LineEnding::LF)
-                    .unwrap()
-                    .to_string()
-            })
-            .clone(),
+        private_key: include_str!("fixtures/rsa_pkcs8.pem").into(),
         client_email: "test@example.iam.gserviceaccount.com".into(),
     }
 }

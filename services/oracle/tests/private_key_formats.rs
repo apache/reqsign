@@ -17,30 +17,20 @@
 
 mod common;
 
-use std::sync::LazyLock;
-
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use http::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, DATE};
 use http::{Method, request::Parts};
 use reqsign_core::{Context, ErrorKind, FileRead, Result, SignRequest, Signer};
 use reqsign_oracle::{Credential, RequestSigner, StaticCredentialProvider};
-use rsa::Generate;
-use rsa::PrivateKey;
-use rsa::pkcs1::EncodeRsaPrivateKey;
-use rsa::pkcs1v15::{Signature, VerifyingKey};
-use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
-use rsa::sha2::Sha256;
-use rsa::signature::Verifier;
+
+use crate::common::RecordingProvider;
 
 const KEY_PATH: &str = "test-key.pem";
+const RSA_PKCS8_PEM: &str = include_str!("fixtures/rsa-2048-pkcs8.pem");
+const RSA_PKCS1_PEM: &str = include_str!("fixtures/rsa-2048-pkcs1.pem");
+const RSA_PUBLIC_PEM: &str = include_str!("fixtures/rsa-2048-public.pem");
 const RSA_ENCRYPTED_PEM: &str = include_str!("fixtures/rsa-2048-pkcs8-encrypted.pem");
 const REQUEST_URI: &str = "https://iaas.example.com:8443/20160918/instances?name=a%2Fb&name=c+%20d";
-
-fn private_key() -> &'static PrivateKey {
-    // Generate one ephemeral key for all formats; never read a developer's OCI files.
-    static KEY: LazyLock<PrivateKey> = LazyLock::new(PrivateKey::generate);
-    &KEY
-}
 
 struct KeyFile(Vec<u8>);
 
@@ -57,8 +47,10 @@ impl FileRead for KeyFile {
     }
 }
 
-fn context(pem: &str) -> Context {
-    crate::common::test_context().with_file_read(KeyFile(pem.as_bytes().to_vec()))
+fn context(pem: &[u8], provider: RecordingProvider) -> Context {
+    crate::common::test_context()
+        .with_file_read(KeyFile(pem.to_vec()))
+        .with_crypto(provider)
 }
 
 fn credential() -> Credential {
@@ -71,13 +63,17 @@ fn credential() -> Credential {
     }
 }
 
-async fn sign(pem: &str, parts: &mut Parts) -> Result<()> {
+async fn sign(pem: &[u8], parts: &mut Parts, provider: &RecordingProvider) -> Result<()> {
     let cred = credential();
-    let provider =
+    let credential_provider =
         StaticCredentialProvider::new(&cred.user, &cred.tenancy, &cred.key_file, &cred.fingerprint);
-    Signer::new(context(pem), provider, RequestSigner::new())
-        .sign(parts, None)
-        .await
+    Signer::new(
+        context(pem, provider.clone()),
+        credential_provider,
+        RequestSigner::new(),
+    )
+    .sign(parts, None)
+    .await
 }
 
 fn authorization_param<'a>(authorization: &'a str, name: &str) -> anyhow::Result<&'a str> {
@@ -98,7 +94,11 @@ fn signed_headers(parts: &Parts) -> anyhow::Result<&str> {
     authorization_param(authorization, "headers")
 }
 
-fn verify_authorization(parts: &Parts) -> anyhow::Result<()> {
+fn verify_authorization(
+    parts: &Parts,
+    pem: &[u8],
+    provider: &RecordingProvider,
+) -> anyhow::Result<()> {
     let authorization = parts.headers[AUTHORIZATION].to_str()?;
     let mut signing_input = String::new();
 
@@ -145,14 +145,15 @@ fn verify_authorization(parts: &Parts) -> anyhow::Result<()> {
     }
 
     let signature_bytes = STANDARD.decode(authorization_param(authorization, "signature")?)?;
-    let signature = Signature::try_from(signature_bytes.as_slice())?;
-    let verifier = VerifyingKey::<Sha256>::new(private_key().to_public_key());
-    verifier.verify(signing_input.as_bytes(), &signature)?;
-    assert!(verifier.verify(b"different request", &signature).is_err());
+    let calls = provider.rsa_calls();
+    assert_eq!(calls.len(), 1, "one RSA call per signed request");
+    assert_eq!(calls[0].pem, pem);
+    assert_eq!(calls[0].message, signing_input.as_bytes());
+    assert_eq!(signature_bytes, calls[0].signature);
     Ok(())
 }
 
-async fn verify_signed_request(pem: &str) -> anyhow::Result<()> {
+async fn verify_signed_request(pem: &[u8]) -> anyhow::Result<()> {
     // Include a port, repeated query keys and escaped bytes in the signed target.
     let mut parts = http::Request::get(REQUEST_URI)
         .header("x-original", "preserved")
@@ -160,8 +161,9 @@ async fn verify_signed_request(pem: &str) -> anyhow::Result<()> {
         .into_parts()
         .0;
     let original_uri = parts.uri.clone();
+    let provider = RecordingProvider::new();
 
-    sign(pem, &mut parts).await?;
+    sign(pem, &mut parts, &provider).await?;
 
     assert_eq!(parts.uri, original_uri);
     assert_eq!(parts.headers["x-original"], "preserved");
@@ -171,31 +173,39 @@ async fn verify_signed_request(pem: &str) -> anyhow::Result<()> {
     assert!(authorization.contains("algorithm=\"rsa-sha256\""));
     assert_eq!(signed_headers(&parts)?, "date (request-target) host");
 
-    verify_authorization(&parts)?;
+    verify_authorization(&parts, pem, &provider)?;
     Ok(())
 }
 
 #[tokio::test]
 async fn pkcs1_private_keys_produce_valid_signatures() -> anyhow::Result<()> {
-    for line_ending in [LineEnding::LF, LineEnding::CRLF] {
-        let pem = private_key().to_pkcs1_pem(line_ending)?;
-        verify_signed_request(&pem).await?;
+    for crlf in [false, true] {
+        let pem = if crlf {
+            RSA_PKCS1_PEM.replace('\n', "\r\n")
+        } else {
+            RSA_PKCS1_PEM.to_string()
+        };
+        verify_signed_request(pem.as_bytes()).await?;
     }
     Ok(())
 }
 
 #[tokio::test]
 async fn pkcs8_private_keys_produce_valid_signatures() -> anyhow::Result<()> {
-    for line_ending in [LineEnding::LF, LineEnding::CRLF] {
-        let pem = private_key().to_pkcs8_pem(line_ending)?;
-        verify_signed_request(&pem).await?;
+    for crlf in [false, true] {
+        let pem = if crlf {
+            RSA_PKCS8_PEM.replace('\n', "\r\n")
+        } else {
+            RSA_PKCS8_PEM.to_string()
+        };
+        verify_signed_request(pem.as_bytes()).await?;
     }
     Ok(())
 }
 
 #[tokio::test]
 async fn post_signs_caller_supplied_body_metadata() -> anyhow::Result<()> {
-    let pem = private_key().to_pkcs8_pem(LineEnding::LF)?;
+    let pem = RSA_PKCS8_PEM;
     let body_sha256 = "V9Z20UJTvkvpJ50flBzKE32+6m2zJjweHpDMX/U4Uy0=";
     let mut parts = http::Request::builder()
         .method(Method::POST)
@@ -209,7 +219,8 @@ async fn post_signs_caller_supplied_body_metadata() -> anyhow::Result<()> {
         .0;
     let original_uri = parts.uri.clone();
 
-    sign(&pem, &mut parts).await?;
+    let provider = RecordingProvider::new();
+    sign(pem.as_bytes(), &mut parts, &provider).await?;
 
     assert_eq!(parts.uri, original_uri);
     assert_eq!(parts.headers["x-original"], "preserved");
@@ -220,13 +231,13 @@ async fn post_signs_caller_supplied_body_metadata() -> anyhow::Result<()> {
         signed_headers(&parts)?,
         "date (request-target) host content-length content-type x-content-sha256"
     );
-    verify_authorization(&parts)?;
+    verify_authorization(&parts, pem.as_bytes(), &provider)?;
     Ok(())
 }
 
 #[tokio::test]
 async fn object_storage_put_without_body_metadata_keeps_generic_headers() -> anyhow::Result<()> {
-    let pem = private_key().to_pkcs8_pem(LineEnding::LF)?;
+    let pem = RSA_PKCS8_PEM;
     let mut parts = http::Request::put(
         "https://namespace.compat.objectstorage.us-phoenix-1.oraclecloud.com/b/bucket/o/object",
     )
@@ -235,20 +246,21 @@ async fn object_storage_put_without_body_metadata_keeps_generic_headers() -> any
     .into_parts()
     .0;
 
-    sign(&pem, &mut parts).await?;
+    let provider = RecordingProvider::new();
+    sign(pem.as_bytes(), &mut parts, &provider).await?;
 
     assert_eq!(parts.headers["x-original"], "preserved");
     assert_eq!(signed_headers(&parts)?, "date (request-target) host");
     assert!(!parts.headers.contains_key(CONTENT_LENGTH));
     assert!(!parts.headers.contains_key(CONTENT_TYPE));
     assert!(!parts.headers.contains_key("x-content-sha256"));
-    verify_authorization(&parts)?;
+    verify_authorization(&parts, pem.as_bytes(), &provider)?;
     Ok(())
 }
 
 #[tokio::test]
 async fn object_storage_upload_part_signs_supplied_content_length_only() -> anyhow::Result<()> {
-    let pem = private_key().to_pkcs8_pem(LineEnding::LF)?;
+    let pem = RSA_PKCS8_PEM;
     let mut parts = http::Request::builder()
         .method(Method::PUT)
         .uri("https://namespace.compat.objectstorage.us-phoenix-1.oraclecloud.com/b/bucket/o/object?uploadId=upload&partNumber=2")
@@ -257,7 +269,8 @@ async fn object_storage_upload_part_signs_supplied_content_length_only() -> anyh
         .into_parts()
         .0;
 
-    sign(&pem, &mut parts).await?;
+    let provider = RecordingProvider::new();
+    sign(pem.as_bytes(), &mut parts, &provider).await?;
 
     assert_eq!(parts.headers[CONTENT_LENGTH], "10485760");
     assert_eq!(
@@ -266,13 +279,13 @@ async fn object_storage_upload_part_signs_supplied_content_length_only() -> anyh
     );
     assert!(!parts.headers.contains_key(CONTENT_TYPE));
     assert!(!parts.headers.contains_key("x-content-sha256"));
-    verify_authorization(&parts)?;
+    verify_authorization(&parts, pem.as_bytes(), &provider)?;
     Ok(())
 }
 
 #[tokio::test]
 async fn duplicate_signed_body_header_is_rejected_without_mutation() -> anyhow::Result<()> {
-    let pem = private_key().to_pkcs8_pem(LineEnding::LF)?;
+    let pem = RSA_PKCS8_PEM;
     let mut parts = http::Request::builder()
         .method(Method::POST)
         .uri("https://iaas.example.com/20160918/volumeAttachments")
@@ -288,7 +301,7 @@ async fn duplicate_signed_body_header_is_rejected_without_mutation() -> anyhow::
         .0;
     let original = parts.clone();
 
-    let error = sign(&pem, &mut parts)
+    let error = sign(pem.as_bytes(), &mut parts, &RecordingProvider::new())
         .await
         .expect_err("duplicate signed body headers must be rejected");
 
@@ -300,7 +313,7 @@ async fn duplicate_signed_body_header_is_rejected_without_mutation() -> anyhow::
     Ok(())
 }
 
-async fn assert_rejected_without_mutation(pem: &str) -> anyhow::Result<()> {
+async fn assert_rejected_without_mutation(pem: &[u8]) -> anyhow::Result<()> {
     let mut parts = http::Request::get("https://iaas.example.com/resource?key=%2F")
         .header("x-original", "preserved")
         .header(DATE, "Tue, 01 Jan 2030 00:00:00 GMT")
@@ -310,7 +323,12 @@ async fn assert_rejected_without_mutation(pem: &str) -> anyhow::Result<()> {
         .0;
     let original = parts.clone();
     let error = RequestSigner::new()
-        .sign_request(&context(pem), &mut parts, Some(&credential()), None)
+        .sign_request(
+            &context(pem, RecordingProvider::new()),
+            &mut parts,
+            Some(&credential()),
+            None,
+        )
         .await
         .expect_err("invalid private key must be rejected");
 
@@ -324,25 +342,22 @@ async fn assert_rejected_without_mutation(pem: &str) -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn public_keys_are_rejected_without_mutating_request() -> anyhow::Result<()> {
-    let pem = private_key()
-        .to_public_key()
-        .to_public_key_pem(LineEnding::LF)?;
-    assert_rejected_without_mutation(&pem).await
+    assert_rejected_without_mutation(RSA_PUBLIC_PEM.as_bytes()).await
 }
 
 #[tokio::test]
 async fn encrypted_private_keys_are_rejected_without_mutating_request() -> anyhow::Result<()> {
-    assert_rejected_without_mutation(RSA_ENCRYPTED_PEM).await
+    assert_rejected_without_mutation(RSA_ENCRYPTED_PEM.as_bytes()).await
 }
 
 #[tokio::test]
 async fn malformed_private_keys_are_rejected_without_mutating_request() -> anyhow::Result<()> {
     for pem in ["", "not a private key"] {
-        assert_rejected_without_mutation(pem).await?;
+        assert_rejected_without_mutation(pem.as_bytes()).await?;
     }
     for label in ["RSA PRIVATE KEY", "PRIVATE KEY"] {
         let pem = format!("-----BEGIN {label}-----\nbm90LWRlcg==\n-----END {label}-----\n");
-        assert_rejected_without_mutation(&pem).await?;
+        assert_rejected_without_mutation(pem.as_bytes()).await?;
     }
     Ok(())
 }

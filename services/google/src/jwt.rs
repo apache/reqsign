@@ -61,14 +61,13 @@ mod tests {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use reqsign_core::ErrorKind;
     use reqsign_crypto_rustcrypto::RustCryptoProvider;
-    use rsa::Generate;
-    use rsa::PrivateKey;
-    use rsa::pkcs1::EncodeRsaPrivateKey;
-    use rsa::pkcs1v15::{Signature, VerifyingKey};
-    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-    use rsa::sha2::Sha256;
-    use rsa::signature::Verifier;
     use serde::Serialize;
+
+    const RSA_PKCS8: &[u8] = include_bytes!("../tests/fixtures/rsa_pkcs8.pem");
+    const RSA_PKCS1: &[u8] = include_bytes!("../tests/fixtures/rsa_pkcs1.pem");
+    // Fixed RS256 vector for the fixture key. The signature was cross-checked
+    // with an independent RSA implementation before being recorded here.
+    const EXPECTED_JWT: &str = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzaWduZXJAZXhhbXBsZS5jb20iLCJzY29wZSI6Imh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL2F1dGgvZGV2c3RvcmFnZS5yZWFkX3dyaXRlIiwiYXVkIjoiaHR0cHM6Ly9vYXV0aDIuZ29vZ2xlYXBpcy5jb20vdG9rZW4iLCJleHAiOjEsImlhdCI6MH0.dbgmn-wCYhHG77IXPjkokZQ6c5zh9d5aZNm9x7VuBYKh3xHNyg33416VjStvOu9f5dFgJOar_V6PR_zkdP7uEUz9ZY_sd1G6Yz3bomInSYpHm05dHRr-b5Sa0MiqWusmfl-8LYJQe_hVi6PXPM0cMFUi1OyAQslUm74_HbJGnsTtrUb7hdsX6KBfDzaUB414sMjYoai8rsyqbqUrq1-7aDnmAVzPmMtBzANdncj3the_yD_-r1hPK5cbj0roz-DtrDHzrIacikeYnu26-RY2xLNB-qiwzlHbGuMAOTLfBsnu3t9-E-aFO9bf8pkKLWl38vsAhHqMxcYo6BxbQpkghg";
 
     #[derive(Serialize)]
     struct Header<'a> {
@@ -85,10 +84,6 @@ mod tests {
         iat: u64,
     }
 
-    fn private_key() -> PrivateKey {
-        PrivateKey::generate()
-    }
-
     fn decode_json(segment: &str) -> serde_json::Value {
         serde_json::from_slice(
             &URL_SAFE_NO_PAD
@@ -100,7 +95,6 @@ mod tests {
 
     #[test]
     fn formats_three_unpadded_verifiable_segments_for_both_pem_formats() {
-        let key = private_key();
         let provider = RustCryptoProvider::new();
         let header = Header {
             alg: "RS256",
@@ -114,14 +108,10 @@ mod tests {
             iat: 0,
         };
 
-        for pem in [
-            key.to_pkcs8_pem(LineEnding::LF)
-                .expect("test key must encode as PKCS#8"),
-            key.to_pkcs1_pem(LineEnding::LF)
-                .expect("test key must encode as PKCS#1"),
-        ] {
-            let jwt = encode_rs256(&provider, &header, &claims, pem.as_bytes())
-                .expect("JWT encoding must succeed");
+        for pem in [RSA_PKCS8, RSA_PKCS1] {
+            let jwt =
+                encode_rs256(&provider, &header, &claims, pem).expect("JWT encoding must succeed");
+            assert_eq!(jwt, EXPECTED_JWT);
             let parts = jwt.split('.').collect::<Vec<_>>();
             assert_eq!(parts.len(), 3);
             assert!(parts.iter().all(|part| !part.contains('=')));
@@ -139,16 +129,6 @@ mod tests {
                     "iat": 0
                 })
             );
-
-            let signature = URL_SAFE_NO_PAD
-                .decode(parts[2])
-                .expect("signature must decode");
-            let signature =
-                Signature::try_from(signature.as_slice()).expect("signature must parse");
-            let verifying_key = VerifyingKey::<Sha256>::new(key.to_public_key());
-            verifying_key
-                .verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &signature)
-                .expect("signature must verify");
         }
     }
 
