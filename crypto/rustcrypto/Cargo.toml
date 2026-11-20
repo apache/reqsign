@@ -35,7 +35,7 @@ sha1 = { workspace = true }
 sha2 = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-aes-gcm = { workspace = true, default-features = false, features = ["aes", "alloc"] }
+aes-gcm = { workspace = true }
 getrandom = { workspace = true }
 rsa = { workspace = true }
 

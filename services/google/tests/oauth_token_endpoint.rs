@@ -29,9 +29,9 @@ use reqsign_google::{
     ServerSideCredentialAccessBoundaryGranter, ServiceAccount,
     ServiceAccountTokenCredentialProvider, StaticCredentialProvider,
 };
-use rsa::RsaPrivateKey;
+use rsa::Generate;
+use rsa::PrivateKey;
 use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-use rsa::rand_core::OsRng;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -67,8 +67,7 @@ fn service_account() -> ServiceAccount {
     ServiceAccount {
         private_key: KEY
             .get_or_init(|| {
-                RsaPrivateKey::new(&mut OsRng, 1024)
-                    .unwrap()
+                PrivateKey::generate()
                     .to_pkcs8_pem(LineEnding::LF)
                     .unwrap()
                     .to_string()

@@ -362,15 +362,15 @@ mod tests {
 
     #[test]
     fn client_assertion_is_three_unpadded_verifiable_segments_for_both_pem_formats() {
-        use rsa::RsaPrivateKey;
+        use rsa::Generate;
+        use rsa::PrivateKey;
         use rsa::pkcs1::EncodeRsaPrivateKey;
         use rsa::pkcs1v15::{Signature, VerifyingKey};
         use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-        use rsa::rand_core::OsRng;
         use rsa::sha2::Sha256;
         use rsa::signature::Verifier;
 
-        let key = RsaPrivateKey::new(&mut OsRng, 1024).expect("test RSA key generation must work");
+        let key = PrivateKey::generate();
         let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
         let certificate_provider = ClientCertificateCredentialProvider::new();
         let cert_der = b"test certificate";

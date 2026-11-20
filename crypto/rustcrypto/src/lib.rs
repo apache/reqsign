@@ -76,28 +76,26 @@ impl CryptoProvider for RustCryptoProvider {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn rsa_pkcs1v15_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
+        use rsa::PrivateKey;
         use rsa::pkcs1::DecodeRsaPrivateKey;
         use rsa::pkcs1v15::SigningKey as RsaSigningKey;
         use rsa::pkcs8::DecodePrivateKey;
-        use rsa::rand_core::OsRng;
         use rsa::sha2::Sha256 as RsaSha256;
-        use rsa::signature::{RandomizedSigner, SignatureEncoding};
+        use rsa::signature::{SignatureEncoding, Signer};
 
         let pem = std::str::from_utf8(private_key_pem).map_err(|e| {
             Error::credential_invalid("RSA private key PEM is not valid UTF-8").with_source(e)
         })?;
-        let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(pem)
-            .or_else(|_| rsa::RsaPrivateKey::from_pkcs1_pem(pem))
+        let private_key = PrivateKey::from_pkcs8_pem(pem)
+            .or_else(|_| PrivateKey::from_pkcs1_pem(pem))
             .map_err(|e| {
                 Error::credential_invalid("failed to parse RSA private key PEM").with_source(e)
             })?;
 
         let signing_key = RsaSigningKey::<RsaSha256>::new(private_key);
-        let signature = signing_key
-            .try_sign_with_rng(&mut OsRng, message)
-            .map_err(|e| {
-                Error::unexpected("RSA PKCS#1 v1.5 SHA-256 signing failed").with_source(e)
-            })?;
+        let signature = signing_key.try_sign(message).map_err(|e| {
+            Error::unexpected("RSA PKCS#1 v1.5 SHA-256 signing failed").with_source(e)
+        })?;
         Ok(signature.to_bytes().to_vec())
     }
 

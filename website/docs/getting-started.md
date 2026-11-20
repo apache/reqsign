@@ -57,7 +57,7 @@ runtime (Tokio file reading, reqwest HTTP, Tokio command execution), and
 `default-crypto`, which lets `default_context()` bind RustCrypto when no
 process-wide provider is installed. Keep `default-context` unless you are
 [bringing your own runtime](/docs/guides/custom-runtimes/); a custom context
-must bind a `CryptoProvider` explicitly. Requires Rust 1.86.0+.
+must bind a `CryptoProvider` explicitly. Requires Rust 1.87.0+.
 
 ## 2. Sign your first request
 
