@@ -34,3 +34,8 @@ pub use reqsign_aws_core::{IMDSv2RegionProvider, Profile, SharedConfig};
 #[cfg(not(target_arch = "wasm32"))]
 pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
 pub use sign_request::RequestSigner;
+
+#[cfg(test)]
+pub(crate) fn test_context() -> reqsign_core::Context {
+    reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+}

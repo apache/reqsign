@@ -71,27 +71,25 @@
 // Re-export all Google Cloud signing types
 pub use reqsign_google::*;
 
-#[cfg(feature = "default-context")]
-use crate::{Signer, default_context};
+use crate::{Context, Signer};
 
 /// Default Google Cloud Signer type with commonly used components
-#[cfg(feature = "default-context")]
 pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default Google Cloud signer with standard configuration
+/// Create a default Google Cloud signer with the supplied runtime context.
 ///
 /// This function creates a signer with:
-/// - Default context (with Tokio file reader, reqwest HTTP client, OS environment)
+/// - The caller-supplied [`Context`] (for example `reqsign::default_context()` when `default-context` is enabled)
 /// - Default credential provider (reads from env vars, service account, metadata server, etc.)
 /// - Request signer for the specified service
 ///
 /// # Example
 ///
 /// ```no_run
-/// # #[tokio::main]
-/// # async fn main() -> reqsign_core::Result<()> {
-/// // Create a signer for Google Cloud Storage
-/// let signer = reqsign::google::default_signer("storage.googleapis.com");
+/// # #[cfg(feature = "default-context")]
+/// # async fn example() -> reqsign_core::Result<()> {
+/// let ctx = reqsign::default_context();
+/// let signer = reqsign::google::default_signer(ctx, "storage.googleapis.com");
 ///
 /// // Sign a request
 /// let mut req = http::Request::builder()
@@ -101,7 +99,7 @@ pub type DefaultSigner = Signer<Credential>;
 ///     .unwrap()
 ///     .into_parts()
 ///     .0;
-///     
+///
 /// signer.sign(&mut req, None).await?;
 /// # Ok(())
 /// # }
@@ -112,6 +110,7 @@ pub type DefaultSigner = Signer<Credential>;
 /// You can customize the signer using the `with_*` methods:
 ///
 /// ```no_run
+/// # #[cfg(feature = "default-context")]
 /// # async fn example() -> reqsign_core::Result<()> {
 /// use reqsign::google::{default_signer, StaticCredentialProvider};
 ///
@@ -127,14 +126,13 @@ pub type DefaultSigner = Signer<Credential>;
 ///     "token_uri": "https://oauth2.googleapis.com/token"
 /// }"#;
 ///
-/// let signer = default_signer("storage.googleapis.com")
+/// let ctx = reqsign::default_context();
+/// let signer = default_signer(ctx, "storage.googleapis.com")
 ///     .with_credential_provider(StaticCredentialProvider::new(service_account_json));
 /// # Ok(())
 /// # }
 /// ```
-#[cfg(feature = "default-context")]
-pub fn default_signer(service: &str) -> DefaultSigner {
-    let ctx = default_context();
+pub fn default_signer(ctx: Context, service: &str) -> DefaultSigner {
     let provider = DefaultCredentialProvider::new();
     let signer = RequestSigner::new(service);
     Signer::new(ctx, provider, signer)

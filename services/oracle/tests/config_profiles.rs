@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,15 +30,15 @@ use reqsign_core::{
 use reqsign_oracle::{
     ConfigFileCredentialProvider, Credential, DefaultCredentialProvider, RequestSigner,
 };
+use rsa::Generate;
 use rsa::PrivateKey;
 use rsa::pkcs1v15::{Signature, VerifyingKey};
-use rsa::pkcs8::DecodePrivateKey;
+use rsa::pkcs8::{EncodePrivateKey, LineEnding};
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
 
 const CONFIG_PATH: &str = "/synthetic/oci/config";
 const DEFAULT_KEY: &str = "/synthetic/keys/default.pem";
-const RSA_PKCS8_PEM: &str = include_str!("fixtures/rsa-2048-pkcs8.pem");
 const FIELDS: [&str; 4] = ["tenancy", "user", "key_file", "fingerprint"];
 const DEFAULT_VALUES: [&str; 4] = [
     "default-tenancy",
@@ -104,7 +106,7 @@ fn context(config: &str, profile: Option<&str>) -> (Context, Files) {
     if let Some(profile) = profile {
         envs.insert("OCI_PROFILE".into(), profile.into());
     }
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(files.clone())
         .with_env(StaticEnv {
             home_dir: Some("/synthetic/home".into()),
@@ -330,7 +332,7 @@ async fn malformed_config_remains_a_configuration_error() {
 async fn home_directory_is_only_required_for_tilde_paths() -> Result<()> {
     let files = Files::default();
     files.insert(CONFIG_PATH, defaults().into_bytes());
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(files.clone())
         .with_env(StaticEnv {
             home_dir: None,
@@ -395,9 +397,12 @@ async fn default_chain_loads_inherited_profile_and_respects_removed_slot() -> Re
 
 #[tokio::test]
 async fn inherited_profile_produces_a_verifiable_signed_request() -> anyhow::Result<()> {
-    let key = PrivateKey::from_pkcs8_pem(RSA_PKCS8_PEM)?;
+    let key = PrivateKey::generate();
     let (ctx, files) = context(&(defaults() + "[ADMIN]\nuser=admin-user\n"), Some("ADMIN"));
-    files.insert(DEFAULT_KEY, RSA_PKCS8_PEM.as_bytes().to_vec());
+    files.insert(
+        DEFAULT_KEY,
+        key.to_pkcs8_pem(LineEnding::LF)?.as_bytes().to_vec(),
+    );
     let mut parts = http::Request::get("https://iaas.example.com/instances?name=a%2Fb&name=c+d")
         .header("x-original", "preserved")
         .body(())?

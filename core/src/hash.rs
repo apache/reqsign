@@ -16,16 +16,18 @@
 // under the License.
 
 //! Hash related utils.
+//!
+//! Encoding helpers are pure functions. Digest and MAC helpers require a
+//! [`CryptoProvider`] selected by the caller. Callers with a
+//! [`Context`](crate::Context) resolve it with
+//! [`Context::crypto_provider`](crate::Context::crypto_provider); helpers never
+//! fall back to the process-wide registration on their own.
 
 use crate::Error;
+use crate::Result;
+use crate::crypto::CryptoProvider;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
-use hmac::Hmac;
-use hmac::KeyInit;
-use hmac::Mac;
-use sha1::Sha1;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// Base64 encode
 pub fn base64_encode(content: &[u8]) -> String {
@@ -39,69 +41,64 @@ pub fn base64_decode(content: &str) -> crate::Result<Vec<u8>> {
         .map_err(|e| Error::unexpected("base64 decode failed").with_source(e))
 }
 
-/// Hex encoded SHA1 hash.
-///
-/// Use this function instead of `hex::encode(sha1(content))` can reduce
-/// extra copy.
-pub fn hex_sha1(content: &[u8]) -> String {
-    hex::encode(Sha1::digest(content))
+/// SHA1 digest.
+pub fn sha1(provider: &dyn CryptoProvider, content: &[u8]) -> Result<[u8; 20]> {
+    provider.sha1(content)
 }
 
-/// Hex encoded SHA256 hash.
-///
-/// Use this function instead of `hex::encode(sha256(content))` can reduce
-/// extra copy.
-pub fn hex_sha256(content: &[u8]) -> String {
-    hex::encode(Sha256::digest(content))
+/// SHA256 digest.
+pub fn sha256(provider: &dyn CryptoProvider, content: &[u8]) -> Result<[u8; 32]> {
+    provider.sha256(content)
+}
+
+/// HMAC with SHA1 hash.
+pub fn hmac_sha1(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<[u8; 20]> {
+    provider.hmac_sha1(key, content)
 }
 
 /// HMAC with SHA256 hash.
-pub fn hmac_sha256(key: &[u8], content: &[u8]) -> Vec<u8> {
-    // SAFETY: HMAC's new_from_slice always returns Ok - it handles any key length
-    let mut h = Hmac::<Sha256>::new_from_slice(key).unwrap();
-    h.update(content);
+pub fn hmac_sha256(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<[u8; 32]> {
+    provider.hmac_sha256(key, content)
+}
 
-    h.finalize().into_bytes().to_vec()
+/// Hex encoded SHA1 hash.
+pub fn hex_sha1(provider: &dyn CryptoProvider, content: &[u8]) -> Result<String> {
+    Ok(hex::encode(sha1(provider, content)?))
+}
+
+/// Hex encoded SHA256 hash.
+pub fn hex_sha256(provider: &dyn CryptoProvider, content: &[u8]) -> Result<String> {
+    Ok(hex::encode(sha256(provider, content)?))
 }
 
 /// Base64 encoded HMAC with SHA256 hash.
-pub fn base64_hmac_sha256(key: &[u8], content: &[u8]) -> String {
-    // SAFETY: HMAC's new_from_slice always returns Ok - it handles any key length
-    let mut h = Hmac::<Sha256>::new_from_slice(key).unwrap();
-    h.update(content);
-
-    base64_encode(&h.finalize().into_bytes())
+pub fn base64_hmac_sha256(
+    provider: &dyn CryptoProvider,
+    key: &[u8],
+    content: &[u8],
+) -> Result<String> {
+    Ok(base64_encode(&hmac_sha256(provider, key, content)?))
 }
 
 /// Hex encoded HMAC with SHA1 hash.
-///
-/// Use this function instead of `hex::encode(hmac_sha1(key, content))` can
-/// reduce extra copy.
-pub fn hex_hmac_sha1(key: &[u8], content: &[u8]) -> String {
-    // SAFETY: HMAC's new_from_slice always returns Ok - it handles any key length
-    let mut h = Hmac::<Sha1>::new_from_slice(key).unwrap();
-    h.update(content);
-
-    hex::encode(h.finalize().into_bytes())
+pub fn hex_hmac_sha1(provider: &dyn CryptoProvider, key: &[u8], content: &[u8]) -> Result<String> {
+    Ok(hex::encode(hmac_sha1(provider, key, content)?))
 }
 
 /// Hex encoded HMAC with SHA256 hash.
-///
-/// Use this function instead of `hex::encode(hmac_sha256(key, content))` can
-/// reduce extra copy.
-pub fn hex_hmac_sha256(key: &[u8], content: &[u8]) -> String {
-    // SAFETY: HMAC's new_from_slice always returns Ok - it handles any key length
-    let mut h = Hmac::<Sha256>::new_from_slice(key).unwrap();
-    h.update(content);
-
-    hex::encode(h.finalize().into_bytes())
+pub fn hex_hmac_sha256(
+    provider: &dyn CryptoProvider,
+    key: &[u8],
+    content: &[u8],
+) -> Result<String> {
+    Ok(hex::encode(hmac_sha256(provider, key, content)?))
 }
 
 /// Base64 encoded HMAC with SHA1 hash.
-pub fn base64_hmac_sha1(key: &[u8], content: &[u8]) -> String {
-    // SAFETY: HMAC's new_from_slice always returns Ok - it handles any key length
-    let mut h = Hmac::<Sha1>::new_from_slice(key).unwrap();
-    h.update(content);
-
-    base64_encode(&h.finalize().into_bytes())
+pub fn base64_hmac_sha1(
+    provider: &dyn CryptoProvider,
+    key: &[u8],
+    content: &[u8],
+) -> Result<String> {
+    Ok(base64_encode(&hmac_sha1(provider, key, content)?))
 }

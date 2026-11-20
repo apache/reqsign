@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-oracle"
-version = "3.0.8"
+version = "3.1.0"
 
 description = "Oracle Cloud signing implementation for reqsign."
 
@@ -32,11 +32,12 @@ base64 = { workspace = true }
 http = { workspace = true }
 log = { workspace = true }
 reqsign-core = { workspace = true }
-rsa = { workspace = true }
 rust-ini = { workspace = true }
 
 [dev-dependencies]
 env_logger = "0.11"
+reqsign-crypto-rustcrypto = { workspace = true }
+rsa = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 tokio = { version = "1", features = ["test-util", "macros", "rt-multi-thread"] }

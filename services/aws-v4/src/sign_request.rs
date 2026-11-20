@@ -17,17 +17,9 @@
 
 use crate::{Credential, PercentEncodingMode};
 use http::request::Parts;
-use http::{HeaderValue, header};
-use log::debug;
-use reqsign_aws_core::constants::{X_AMZ_S3_SESSION_TOKEN, X_AMZ_SECURITY_TOKEN};
-use reqsign_aws_core::signing::{
-    append_query_fragment, append_query_pairs, canonical_request_string_with_encoding,
-    canonicalize_headers, canonicalize_query,
-};
-use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
+use reqsign_aws_core::signing::{SigV4SigningOptions, sign_request_parts};
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Result, SignRequest, SigningCredential, SigningRequest};
-use std::fmt::Write;
+use reqsign_core::{Context, Result, SignRequest};
 use std::time::Duration;
 
 const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
@@ -58,11 +50,12 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 /// use reqsign_aws_v4::EMPTY_STRING_SHA256;
 /// use reqsign_core::hash::hex_sha256;
 ///
+/// let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
 /// let body: &[u8] = b"Hello, World!";
 /// let payload_hash = if body.is_empty() {
 ///     EMPTY_STRING_SHA256.to_string()
 /// } else {
-///     hex_sha256(body)
+///     hex_sha256(&provider, body).expect("SHA-256 must succeed")
 /// };
 ///
 /// let request = http::Request::put("https://s3.amazonaws.com/mybucket/hello.txt")
@@ -202,203 +195,30 @@ impl SignRequest for RequestSigner {
 
     async fn sign_request(
         &self,
-        _: &Context,
+        ctx: &Context,
         req: &mut Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
     ) -> Result<()> {
-        let Some(cred) = credential else {
+        let Some(credential) = credential else {
             return Ok(());
         };
+        let crypto = ctx.crypto_provider()?;
 
-        let now = self.get_time();
-        let required_until = self.required_valid_until_at(now, expires_in);
-        if !cred.is_valid_at(required_until) {
-            return Err(reqsign_core::Error::credential_invalid(
-                "credential expires before the requested signing operation deadline",
-            ));
-        }
-
-        let original_uri = req.uri.clone();
-        let mut signed_req = SigningRequest::build(req)?;
-
-        // canonicalize context
-        let uses_s3_express_session_token = self.uses_s3_express_session_token();
-        canonicalize_signing_headers(
-            &mut signed_req,
-            cred,
+        sign_request_parts(
+            crypto,
+            req,
+            credential,
             expires_in,
-            now,
-            uses_s3_express_session_token,
-        )?;
-        let authentication_query = authentication_query(
-            &signed_req,
-            cred,
-            expires_in,
-            now,
-            &self.service,
-            &self.region,
-            uses_s3_express_session_token,
-        );
-        let canonical_query = canonicalize_query(&signed_req, &authentication_query);
-
-        // build canonical request and string to sign.
-        let creq = canonical_request_string_with_encoding(
-            &signed_req,
-            &canonical_query,
-            self.percent_encoding_mode,
-        )?;
-        let encoded_req = hex_sha256(creq.as_bytes());
-
-        // Scope: "20220313/<region>/<service>/aws4_request"
-        let scope = format!(
-            "{}/{}/{}/aws4_request",
-            now.format_date(),
-            self.region,
-            self.service
-        );
-        debug!("calculated scope: {scope}");
-
-        // StringToSign:
-        //
-        // AWS4-HMAC-SHA256
-        // 20220313T072004Z
-        // 20220313/<region>/<service>/aws4_request
-        // <hashed_canonical_request>
-        let string_to_sign = {
-            let mut f = String::new();
-            writeln!(f, "AWS4-HMAC-SHA256").map_err(|e| {
-                reqsign_core::Error::unexpected(format!("failed to write algorithm: {e}"))
-            })?;
-            writeln!(f, "{}", now.format_iso8601()).map_err(|e| {
-                reqsign_core::Error::unexpected(format!("failed to write timestamp: {e}"))
-            })?;
-            writeln!(f, "{}", scope).map_err(|e| {
-                reqsign_core::Error::unexpected(format!("failed to write scope: {e}"))
-            })?;
-            write!(f, "{}", encoded_req).map_err(|e| {
-                reqsign_core::Error::unexpected(format!("failed to write encoded request: {e}"))
-            })?;
-            f
-        };
-        debug!("calculated string to sign: {string_to_sign}");
-
-        let signing_key =
-            generate_signing_key(&cred.secret_access_key, now, &self.region, &self.service);
-        let signature = hex_hmac_sha256(&signing_key, string_to_sign.as_bytes());
-
-        let final_uri = if expires_in.is_some() {
-            let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
-            Some(append_query_fragment(
-                &unsigned_uri,
-                &format!("X-Amz-Signature={signature}"),
-            )?)
-        } else {
-            let mut authorization = HeaderValue::from_str(&format!(
-                "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
-                cred.access_key_id,
-                scope,
-                signed_req.header_name_to_vec_sorted().join(";"),
-                signature
-            ))
-            .map_err(|e| {
-                reqsign_core::Error::unexpected(format!(
-                    "failed to create authorization header: {e}"
-                ))
-            })?;
-            authorization.set_sensitive(true);
-
-            signed_req
-                .headers
-                .insert(header::AUTHORIZATION, authorization);
-            None
-        };
-
-        // Apply to the request.
-        signed_req.apply(req)?;
-        if let Some(uri) = final_uri {
-            req.uri = uri;
-        }
-        Ok(())
+            self.get_time(),
+            SigV4SigningOptions {
+                service: &self.service,
+                region: &self.region,
+                percent_encoding_mode: self.percent_encoding_mode,
+                uses_s3_express_session_token: self.uses_s3_express_session_token(),
+            },
+        )
     }
-}
-
-fn canonicalize_signing_headers(
-    request: &mut SigningRequest,
-    credential: &Credential,
-    expires_in: Option<Duration>,
-    now: Timestamp,
-    uses_s3_express_session_token: bool,
-) -> Result<()> {
-    canonicalize_headers(request, credential, expires_in, now)?;
-
-    if !uses_s3_express_session_token || expires_in.is_some() || credential.session_token.is_none()
-    {
-        return Ok(());
-    }
-
-    // Shared canonicalization writes the standard header. S3 Express selects
-    // its representation from the signing service, so move the same sensitive
-    // header value before the canonical request is built.
-    if let Some(value) = request.headers.remove(X_AMZ_SECURITY_TOKEN) {
-        request.headers.insert(X_AMZ_S3_SESSION_TOKEN, value);
-    }
-
-    Ok(())
-}
-
-fn authentication_query(
-    ctx: &SigningRequest,
-    cred: &Credential,
-    expires_in: Option<Duration>,
-    now: Timestamp,
-    service: &str,
-    region: &str,
-    uses_s3_express_session_token: bool,
-) -> Vec<(String, String)> {
-    let mut query = Vec::new();
-    if let Some(expire) = expires_in {
-        query.push(("X-Amz-Algorithm".into(), "AWS4-HMAC-SHA256".into()));
-        query.push((
-            "X-Amz-Credential".into(),
-            format!(
-                "{}/{}/{}/{}/aws4_request",
-                cred.access_key_id,
-                now.format_date(),
-                region,
-                service
-            ),
-        ));
-        query.push(("X-Amz-Date".into(), now.format_iso8601()));
-        query.push(("X-Amz-Expires".into(), expire.as_secs().to_string()));
-        query.push((
-            "X-Amz-SignedHeaders".into(),
-            ctx.header_name_to_vec_sorted().join(";"),
-        ));
-
-        if let Some(token) = &cred.session_token {
-            let name = if uses_s3_express_session_token {
-                "X-Amz-S3session-Token"
-            } else {
-                "X-Amz-Security-Token"
-            };
-            query.push((name.into(), token.into()));
-        }
-    }
-    query
-}
-
-fn generate_signing_key(secret: &str, time: Timestamp, region: &str, service: &str) -> Vec<u8> {
-    // Sign secret
-    let secret = format!("AWS4{secret}");
-    // Sign date
-    let sign_date = hmac_sha256(secret.as_bytes(), time.format_date().as_bytes());
-    // Sign region
-    let sign_region = hmac_sha256(sign_date.as_slice(), region.as_bytes());
-    // Sign service
-    let sign_service = hmac_sha256(sign_region.as_slice(), service.as_bytes());
-    // Sign request
-    hmac_sha256(sign_service.as_slice(), "aws4_request".as_bytes())
 }
 
 #[cfg(test)]
@@ -416,11 +236,18 @@ mod tests {
     use aws_sigv4::http_request::SigningSettings;
     use aws_sigv4::http_request::UriPathNormalizationMode;
     use aws_sigv4::sign::v4;
+    use http::HeaderValue;
     use http::Request;
     use http::header;
-    use reqsign_aws_core::constants::X_AMZ_CONTENT_SHA_256;
-    use reqsign_aws_core::signing::{canonical_request_string, canonical_uri};
-    use reqsign_core::{ErrorKind, ProvideCredential, Signer};
+    use reqsign_aws_core::constants::{
+        X_AMZ_CONTENT_SHA_256, X_AMZ_S3_SESSION_TOKEN, X_AMZ_SECURITY_TOKEN,
+    };
+    use reqsign_aws_core::signing::{
+        canonical_request_string, canonical_uri, canonicalize_query, canonicalize_signing_headers,
+        sigv4_authentication_query,
+    };
+    use reqsign_core::hash::hex_sha256;
+    use reqsign_core::{ErrorKind, ProvideCredential, Signer, SigningRequest};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::collections::VecDeque;
@@ -510,7 +337,7 @@ mod tests {
             now,
             !use_standard_session_token,
         )?;
-        let authentication_query = authentication_query(
+        let authentication_query = sigv4_authentication_query(
             &signing_request,
             &credential,
             expires_in,
@@ -573,7 +400,12 @@ mod tests {
         let (mut session_parts, body) = Request::get(S3_EXPRESS_URI).body("")?.into_parts();
         RequestSigner::new("s3express", S3_EXPRESS_REGION)
             .with_time(now)
-            .sign_request(&Context::new(), &mut session_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut session_parts,
+                Some(&credential),
+                None,
+            )
             .await?;
         let actual_session = Request::from_parts(session_parts, body);
         compare_request(
@@ -602,7 +434,12 @@ mod tests {
         RequestSigner::new("s3express", S3_EXPRESS_REGION)
             .with_standard_session_token()
             .with_time(now)
-            .sign_request(&Context::new(), &mut iam_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut iam_parts,
+                Some(&credential),
+                None,
+            )
             .await?;
         let actual_iam = Request::from_parts(iam_parts, body);
         compare_request("S3 Express IAM header mode", &expected_iam, &actual_iam);
@@ -658,7 +495,7 @@ mod tests {
         RequestSigner::new("s3express", S3_EXPRESS_REGION)
             .with_time(now)
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut session_parts,
                 Some(&credential),
                 expires_in,
@@ -678,7 +515,7 @@ mod tests {
             .with_standard_session_token()
             .with_time(now)
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut iam_parts,
                 Some(&credential),
                 expires_in,
@@ -750,7 +587,7 @@ mod tests {
             RequestSigner::new("s3express", S3_EXPRESS_REGION)
                 .with_time(now)
                 .sign_request(
-                    &Context::new(),
+                    &crate::test_context(),
                     &mut session_parts,
                     Some(&credential),
                     expires_in,
@@ -774,7 +611,7 @@ mod tests {
                 .with_standard_session_token()
                 .with_time(now)
                 .sign_request(
-                    &Context::new(),
+                    &crate::test_context(),
                     &mut iam_parts,
                     Some(&credential),
                     expires_in,
@@ -825,7 +662,12 @@ mod tests {
                 let (mut parts, _body) = Request::get(uri).body("")?.into_parts();
                 RequestSigner::new("s3", S3_EXPRESS_REGION)
                     .with_time(now)
-                    .sign_request(&Context::new(), &mut parts, Some(&credential), expires_in)
+                    .sign_request(
+                        &crate::test_context(),
+                        &mut parts,
+                        Some(&credential),
+                        expires_in,
+                    )
                     .await?;
 
                 if presigned {
@@ -868,7 +710,7 @@ mod tests {
                 let mut parts = Request::get(uri).body(())?.into_parts().0;
                 let original = parts.clone();
                 let error = signer
-                    .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+                    .sign_request(&crate::test_context(), &mut parts, Some(&credential), None)
                     .await
                     .expect_err("invalid session token must be rejected");
 
@@ -907,7 +749,7 @@ mod tests {
             calls: calls.clone(),
         };
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             provider,
             RequestSigner::new("s3", "test").with_time(now),
         );
@@ -952,7 +794,7 @@ mod tests {
             calls: calls.clone(),
         };
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             provider,
             RequestSigner::new("s3", "test").with_time(now),
         );
@@ -1110,7 +952,8 @@ mod tests {
             HeaderValue::from_str(&content.len().to_string()).expect("must be valid"),
         );
 
-        let body = hex_sha256(content.as_bytes());
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        let body = hex_sha256(&provider, content.as_bytes()).expect("SHA-256 must succeed");
         req.headers_mut().insert(
             "x-amz-content-sha256",
             HeaderValue::from_str(&body).expect("must be valid"),
@@ -1255,7 +1098,7 @@ mod tests {
         let (mut parts, body) = encoding_request(uri)?.into_parts();
         signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut parts,
                 Some(&credential),
                 presigned.then_some(Duration::from_secs(60)),
@@ -1459,7 +1302,7 @@ mod tests {
             let original = parts.clone();
             let error = signer
                 .sign_request(
-                    &Context::new(),
+                    &crate::test_context(),
                     &mut parts,
                     Some(&credential),
                     presigned.then_some(Duration::from_secs(60)),
@@ -1493,7 +1336,7 @@ mod tests {
             now,
             false,
         )?;
-        let auth_query = authentication_query(
+        let auth_query = sigv4_authentication_query(
             &signing_req,
             &credential,
             Some(Duration::from_secs(60)),
@@ -1516,7 +1359,12 @@ mod tests {
             .into_parts()
             .0;
         signer
-            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut header_parts,
+                Some(&credential),
+                None,
+            )
             .await?;
         assert_eq!(header_parts.uri.to_string(), original_uri);
         assert_eq!(header_parts.headers["x-custom"], " value ");
@@ -1524,7 +1372,7 @@ mod tests {
         let mut query_parts = Request::get(&original_uri).body(())?.into_parts().0;
         signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut query_parts,
                 Some(&credential),
                 Some(Duration::from_secs(60)),
@@ -1624,7 +1472,7 @@ mod tests {
         let req = req_fn();
         let (mut parts, body) = req.into_parts();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let loader = StaticCredentialProvider::new("access_key_id", "secret_access_key");
@@ -1702,7 +1550,7 @@ mod tests {
         let req = req_fn();
         let (mut parts, body) = req.into_parts();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let loader = StaticCredentialProvider::new("access_key_id", "secret_access_key");
@@ -1782,7 +1630,7 @@ mod tests {
         let req = req_fn();
         let (mut parts, body) = req.into_parts();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let loader = StaticCredentialProvider::new("access_key_id", "secret_access_key")
@@ -1863,7 +1711,7 @@ mod tests {
         let req = req_fn();
         let (mut parts, body) = req.into_parts();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
         let loader = StaticCredentialProvider::new("access_key_id", "secret_access_key")

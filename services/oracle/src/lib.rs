@@ -37,3 +37,8 @@ pub use provide_credential::{
     ConfigFileCredentialProvider, DefaultCredentialProvider, DefaultCredentialProviderBuilder,
     EnvCredentialProvider, StaticCredentialProvider,
 };
+
+#[cfg(test)]
+pub(crate) fn test_context() -> reqsign_core::Context {
+    reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+}

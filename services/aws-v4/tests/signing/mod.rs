@@ -59,7 +59,7 @@ pub fn init_signing_test() -> Option<(Context, RequestSigner, String)> {
     let service = env::var("REQSIGN_AWS_V4_SERVICE").unwrap_or_else(|_| "s3".to_string());
     let url = env::var("REQSIGN_AWS_V4_URL").expect("REQSIGN_AWS_V4_URL must be set");
 
-    let context = Context::new()
+    let context = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default());
     let signer = RequestSigner::new(&service, &region);

@@ -1,0 +1,126 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+name: Tencent COS Live Test
+
+# Live coverage only runs from the trusted main branch. Pull requests never
+# execute this workflow. Independently of this file, the CAM role trusts only
+# the GitHub OIDC subject for refs/heads/main, so a workflow file in a pull
+# request cannot obtain cloud credentials even if it requests an OIDC token.
+on:
+  push:
+    branches:
+      - main
+    # Live coverage needs this service and the shared workspace crates. Keep
+    # unrelated changes out of the hosted runner queue and the cloud quota.
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "core/**"
+      - "context/**"
+      - "reqsign/**"
+      - "services/tencent-cos/**"
+      - ".github/workflows/tencent_cos_live.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  check_live_config:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check live Web Identity configuration
+        id: check
+        env:
+          ROLE_ARN: ${{ vars.REQSIGN_TENCENT_LIVE_ROLE_ARN }}
+          PROVIDER_ID: ${{ vars.REQSIGN_TENCENT_LIVE_PROVIDER_ID }}
+          REGION: ${{ vars.REQSIGN_TENCENT_LIVE_REGION }}
+          OBJECT_URL: ${{ vars.REQSIGN_TENCENT_LIVE_OBJECT_URL }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+          for name in ROLE_ARN PROVIDER_ID REGION OBJECT_URL; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("REQSIGN_TENCENT_LIVE_${name}")
+            fi
+          done
+
+          if (( ${#missing[@]} == 4 )); then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Tencent COS live test skipped: REQSIGN_TENCENT_LIVE_* is not configured, so no STS exchange or COS read ran"
+          elif (( ${#missing[@]} != 0 )); then
+            echo "::error::Tencent COS live test cannot run: partially configured; missing ${missing[*]}"
+            exit 1
+          elif [[ "$ROLE_ARN" != qcs::cam::uin/*:roleName/* ]]; then
+            echo "::error::REQSIGN_TENCENT_LIVE_ROLE_ARN must be a CAM role ARN of the form qcs::cam::uin/<uin>:roleName/<name>"
+            exit 1
+          elif [[ "$OBJECT_URL" != https://* ]]; then
+            echo "::error::REQSIGN_TENCENT_LIVE_OBJECT_URL must be an https:// URL so the signed request and temporary credential are not sent in cleartext"
+            exit 1
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tencent COS live test will exchange a GitHub OIDC token at sts.tencentcloudapi.com and read the configured private object"
+          fi
+
+  test_web_identity_provider:
+    needs: check_live_config
+    if: needs.check_live_config.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Mint a GitHub OIDC token for Tencent Cloud STS
+        id: idtoken
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const audience = 'sts.tencentcloudapi.com'
+            const idToken = await core.getIDToken(audience)
+            core.setSecret(idToken)
+            require('fs').writeFileSync(
+              `${process.env.RUNNER_TEMP}/tencent-web-identity-token`,
+              idToken,
+              { mode: 0o600 }
+            )
+      - name: Test AssumeRoleWithWebIdentityCredentialProvider against a private COS object
+        working-directory: ./services/tencent-cos
+        env:
+          RUST_LOG: DEBUG
+          RUST_BACKTRACE: full
+          REQSIGN_TENCENT_COS_TEST_WEB_IDENTITY: "on"
+          TENCENTCLOUD_REGION: ${{ vars.REQSIGN_TENCENT_LIVE_REGION }}
+          TENCENTCLOUD_ROLE_ARN: ${{ vars.REQSIGN_TENCENT_LIVE_ROLE_ARN }}
+          TENCENTCLOUD_PROVIDER_ID: ${{ vars.REQSIGN_TENCENT_LIVE_PROVIDER_ID }}
+          TENCENTCLOUD_WEB_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/tencent-web-identity-token
+          REQSIGN_TENCENT_COS_OBJECT_URL: ${{ vars.REQSIGN_TENCENT_LIVE_OBJECT_URL }}
+        run: cargo test --test web_identity_live --no-fail-fast -- --no-capture
+      - name: Remove the OIDC token file
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/tencent-web-identity-token"

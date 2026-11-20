@@ -1173,7 +1173,7 @@ mod tests {
             "granted-session-token",
             RESPONSE_EXPIRATION,
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let grant = S3AccessGrantsGrant::new(
             S3AccessGrantsTarget::for_object("example-bucket", "customer/%tenant/file name.txt"),
             S3AccessGrantsPermission::ReadWrite,
@@ -1362,7 +1362,7 @@ mod tests {
                 "granted-token",
                 RESPONSE_EXPIRATION,
             )]);
-            let ctx = Context::new().with_http_send(http.clone());
+            let ctx = crate::test_context().with_http_send(http.clone());
             operation(grant)
                 .grant_credential(&ctx, &source_credential(), duration)
                 .await
@@ -1405,7 +1405,7 @@ mod tests {
                 "granted-token",
                 RESPONSE_EXPIRATION,
             )]);
-            let ctx = Context::new().with_http_send(http.clone());
+            let ctx = crate::test_context().with_http_send(http.clone());
             let granter = S3AccessGrantsGranter::new(
                 config().with_trusted_endpoint(endpoint),
                 minimal_read_grant(S3AccessGrantsTarget::for_bucket("example-bucket")),
@@ -1439,7 +1439,7 @@ mod tests {
             "granted-token",
             RESPONSE_EXPIRATION,
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let source = Credential {
             access_key_id: SOURCE_ACCESS_KEY.to_string(),
             secret_access_key: SOURCE_SECRET_KEY.to_string(),
@@ -1504,7 +1504,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_instance_configuration_before_io() {
         let http = MockHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let grant = minimal_read_grant(S3AccessGrantsTarget::for_bucket("example-bucket"));
         let configs = [
             S3AccessGrantsConfig::new("111", REGION),
@@ -1699,7 +1699,7 @@ mod tests {
             "granted-token",
             RESPONSE_EXPIRATION,
         )]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         operation(minimal_read_grant(S3AccessGrantsTarget::for_prefix(
             "example-bucket",
             "customer/",
@@ -1815,7 +1815,7 @@ mod tests {
             "granted-token",
             authoritative,
         )]);
-        let ctx = Context::new().with_http_send(http);
+        let ctx = crate::test_context().with_http_send(http);
         let output = operation(minimal_read_grant(S3AccessGrantsTarget::for_bucket(
             "example-bucket",
         )))
@@ -1830,7 +1830,7 @@ mod tests {
             "granted-token",
             "2099-01-01T00:00:10Z",
         )]);
-        let ctx = Context::new().with_http_send(http);
+        let ctx = crate::test_context().with_http_send(http);
         let error = operation(minimal_read_grant(S3AccessGrantsTarget::for_bucket(
             "example-bucket",
         )))
@@ -1844,7 +1844,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_source_and_grant_before_io() {
         let http = MockHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let valid_grant = minimal_read_grant(S3AccessGrantsTarget::for_bucket("example-bucket"));
 
         let mut sources = Vec::new();
@@ -1891,7 +1891,7 @@ mod tests {
             (ErrorKind::ConfigInvalid, false),
             (ErrorKind::Unexpected, true),
         ] {
-            let ctx = Context::new().with_http_send(FailingHttpSend { kind, retryable });
+            let ctx = crate::test_context().with_http_send(FailingHttpSend { kind, retryable });
             let error = operation(minimal_read_grant(S3AccessGrantsTarget::for_bucket(
                 "example-bucket",
             )))
@@ -1918,7 +1918,7 @@ mod tests {
             ))
             .expect("response must build");
         let http = MockHttpSend::new([response]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let error = operation(minimal_read_grant(S3AccessGrantsTarget::for_bucket(
             "example-bucket",
         )))
@@ -1948,7 +1948,7 @@ mod tests {
   </Credentials>
 </GetDataAccessResult>"#;
         let http = MockHttpSend::new([response(StatusCode::OK, &body[..])]);
-        let ctx = Context::new().with_http_send(http);
+        let ctx = crate::test_context().with_http_send(http);
         let error = operation(minimal_read_grant(S3AccessGrantsTarget::for_bucket(
             "example-bucket",
         )))
@@ -2030,7 +2030,7 @@ mod tests {
             "granted-session-token",
             RESPONSE_EXPIRATION,
         )]);
-        let ctx = Context::new().with_http_send(http);
+        let ctx = crate::test_context().with_http_send(http);
         let (source_provider, _) = FixedCredentialProvider::new(source_credential());
         let granted = Granter::new(
             ctx,
@@ -2046,7 +2046,7 @@ mod tests {
 
         let (granted_provider, _) = FixedCredentialProvider::new(granted.clone());
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             granted_provider,
             RequestSigner::new("s3", REGION).with_time(timestamp("2099-01-01T00:01:00Z")),
         );
@@ -2090,7 +2090,7 @@ mod tests {
                 RESPONSE_EXPIRATION,
             ),
         ]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let granter = Granter::new(
             ctx,

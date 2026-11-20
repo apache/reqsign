@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-volcengine-tos"
-version = "3.1.4"
+version = "3.2.0"
 
 description = "Volcengine TOS signing implementation for reqsign."
 
@@ -32,9 +32,13 @@ http = { workspace = true }
 log = { workspace = true }
 percent-encoding = { workspace = true }
 reqsign-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
+reqsign-crypto-rustcrypto = { workspace = true }
 anyhow = { workspace = true }
+bytes = { workspace = true }
 env_logger = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }

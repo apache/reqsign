@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::constants::{DEFAULT_SCOPE, GOOGLE_SCOPE, TOKEN_OPERATION_HEADROOM};
 use crate::credential::{Credential, ServiceAccount, Token};
+use crate::jwt::encode_rs256;
 
 use super::oauth::{OAUTH_TOKEN_ENDPOINT, checked_expiration, oauth_error, validate_token_uri};
 const JWT_BEARER_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
@@ -270,7 +271,13 @@ async fn exchange_service_account_token(
 
     let scope = resolve_scope(ctx, scope);
     debug!("exchanging service account for token with scope: {scope}");
-    let request = build_token_request(service_account, &scope, token_uri, Timestamp::now())?;
+    let request = build_token_request(
+        ctx.crypto_provider()?,
+        service_account,
+        &scope,
+        token_uri,
+        Timestamp::now(),
+    )?;
     let request_started_at = Timestamp::now();
     let response = ctx.http_send(request).await.map_err(|err| {
         Error::new(err.kind(), "service account OAuth token request failed")
@@ -292,12 +299,14 @@ async fn exchange_service_account_token(
 }
 
 fn build_token_request(
+    provider: &dyn reqsign_core::crypto::CryptoProvider,
     service_account: &ServiceAccount,
     scope: &str,
     token_uri: &str,
     now: Timestamp,
 ) -> Result<http::Request<bytes::Bytes>> {
-    let jwt = reqsign_core::jwt::encode_rs256_pem(
+    let jwt = encode_rs256(
+        provider,
         &JwtHeader::rs256(),
         &Claims::new(&service_account.client_email, scope, token_uri, now)?,
         service_account.private_key.as_bytes(),
@@ -343,9 +352,10 @@ mod tests {
     use http::{HeaderMap, Method};
     use reqsign_core::hash::base64_decode;
     use reqsign_core::{ErrorKind, FileRead, Granter, HttpSend, StaticEnv, time::Timestamp};
+    use rsa::Generate;
+    use rsa::PrivateKey;
+    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use serde_json::Value;
-
-    use crate::test_support::RSA_PKCS8_PEM;
 
     use crate::{
         CredentialAccessBoundaryGrant, CredentialAccessBoundaryPermissions,
@@ -435,8 +445,13 @@ mod tests {
     }
 
     fn service_account() -> ServiceAccount {
+        let key = PrivateKey::generate();
+        let private_key = key
+            .to_pkcs8_pem(LineEnding::LF)
+            .expect("test RSA key must encode")
+            .to_string();
         ServiceAccount {
-            private_key: RSA_PKCS8_PEM.to_string(),
+            private_key,
             client_email: "provider@example.iam.gserviceaccount.com".to_string(),
         }
     }
@@ -502,7 +517,7 @@ mod tests {
         let provider = ServiceAccountTokenCredentialProvider::new(service_account.clone())
             .with_scope("scope-a scope-b");
         let output = provider
-            .provide_credential(&Context::new().with_http_send(http.clone()))
+            .provide_credential(&crate::test_context().with_http_send(http.clone()))
             .await?
             .expect("credential must be returned");
 
@@ -547,7 +562,7 @@ mod tests {
 
     #[test]
     fn scope_precedence_is_explicit_then_environment_then_default() {
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs: HashMap::from([(GOOGLE_SCOPE.to_string(), "environment-scope".to_string())]),
         });
@@ -556,13 +571,13 @@ mod tests {
             "explicit-scope"
         );
         assert_eq!(resolve_scope(&ctx, None), "environment-scope");
-        assert_eq!(resolve_scope(&Context::new(), None), DEFAULT_SCOPE);
+        assert_eq!(resolve_scope(&crate::test_context(), None), DEFAULT_SCOPE);
     }
 
     #[tokio::test]
     async fn rejects_invalid_source_before_oauth_io_and_preserves_none() -> Result<()> {
         let http = MockHttpSend::default();
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
 
         let missing = ServiceAccountTokenCredentialProvider::from_provider(FixedProvider {
             credential: None,
@@ -600,7 +615,7 @@ mod tests {
         let content = service_account_json(&service_account).into_bytes();
 
         let file_http = MockHttpSend::new([oauth_success("file-token", 3600)]);
-        let file_context = Context::new()
+        let file_context = crate::test_context()
             .with_file_read(FixedFileRead::new(content.clone()))
             .with_http_send(file_http);
         let file_output = ServiceAccountTokenCredentialProvider::from_provider(
@@ -618,7 +633,7 @@ mod tests {
         );
 
         let default_http = MockHttpSend::new([oauth_success("default-token", 3600)]);
-        let default_context = Context::new()
+        let default_context = crate::test_context()
             .with_file_read(FixedFileRead::new(content))
             .with_http_send(default_http)
             .with_env(StaticEnv {
@@ -647,7 +662,7 @@ mod tests {
     async fn rejects_token_that_is_too_short_after_oauth_io() {
         let http = MockHttpSend::new([oauth_success("short-token", 5)]);
         let err = ServiceAccountTokenCredentialProvider::new(service_account())
-            .provide_credential(&Context::new().with_http_send(http.clone()))
+            .provide_credential(&crate::test_context().with_http_send(http.clone()))
             .await
             .expect_err("short OAuth token must be rejected");
 
@@ -710,7 +725,7 @@ mod tests {
         }"#;
         let http = MockHttpSend::new([response(http::StatusCode::BAD_REQUEST, body.as_slice())]);
         let err = provider
-            .provide_credential(&Context::new().with_http_send(http))
+            .provide_credential(&crate::test_context().with_http_send(http))
             .await
             .expect_err("OAuth error must be returned");
         assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
@@ -737,7 +752,7 @@ mod tests {
             CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
         );
         let output = Granter::new(
-            Context::new().with_http_send(http.clone()),
+            crate::test_context().with_http_send(http.clone()),
             source,
             ServerSideCredentialAccessBoundaryGranter::new(grant),
         )

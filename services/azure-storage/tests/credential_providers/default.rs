@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 
 use reqsign_azure_storage::{DefaultCredentialProvider, EnvCredentialProvider};
-use reqsign_core::{Context, ProvideCredential, StaticEnv};
+use reqsign_core::{ProvideCredential, StaticEnv};
 
 use super::{assert_provider_reads_probe, live_context};
 
@@ -38,7 +38,7 @@ async fn test_default_provider() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn builder_can_remove_and_restore_environment_slot() {
-    let ctx = Context::new().with_env(StaticEnv {
+    let ctx = crate::common::test_context().with_env(StaticEnv {
         home_dir: None,
         envs: HashMap::from([
             (

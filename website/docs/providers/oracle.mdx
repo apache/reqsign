@@ -34,10 +34,11 @@ cargo add reqsign --features oracle
 ```
 
 ```rust
-use reqsign::oracle;
+use reqsign::{default_context, oracle};
 
 // Env and the OCI config file (~/.oci/config) — resolved by the default chain.
-let signer = oracle::default_signer();
+let ctx = default_context();
+let signer = oracle::default_signer(ctx);
 
 let mut req = http::Request::builder()
     .method(http::Method::GET)

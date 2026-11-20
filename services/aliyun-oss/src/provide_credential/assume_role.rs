@@ -241,6 +241,7 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
         }
 
         let req = signed_rpc_request(
+            ctx.crypto_provider()?,
             &self.get_sts_endpoint(&envs),
             &params,
             &base_credential.access_key_secret,
@@ -345,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_assume_role_loader_without_config() {
-        let ctx = Context::new().with_env(StaticEnv {
+        let ctx = crate::test_context().with_env(StaticEnv {
             home_dir: None,
             envs: HashMap::new(),
         });
@@ -368,7 +369,7 @@ mod tests {
             br#"{"Credentials":{"SecurityToken":"sts-token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"sts-secret","AccessKeyId":"sts-ak"}}"#
                 .to_vec(),
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
                 home_dir: None,
@@ -453,9 +454,10 @@ mod tests {
         let canonicalized = canonicalized_query_string(&expected_params);
         let string_to_sign = format!("GET&%2F&{}", percent_encode_query_value(&canonicalized));
         let expected_signature = base64_hmac_sha1(
+            &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
             format!("{}&", base_credential.access_key_secret).as_bytes(),
             string_to_sign.as_bytes(),
-        );
+        )?;
         assert_eq!(
             Some(expected_signature.as_str()),
             params.get("Signature").map(String::as_str)
@@ -472,7 +474,7 @@ mod tests {
             br#"{"Credentials":{"SecurityToken":"sts-token-2","Expiration":"2124-03-05T06:09:00Z","AccessKeySecret":"sts-secret-2","AccessKeyId":"sts-ak-2"}}"#
                 .to_vec(),
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
                 home_dir: None,
@@ -539,7 +541,7 @@ mod tests {
             br#"{"Credentials":{"SecurityToken":"sts-token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"sts-secret","AccessKeyId":"sts-ak"}}"#
                 .to_vec(),
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
                 home_dir: None,

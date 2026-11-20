@@ -15,7 +15,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Shared synthetic key material for unit tests.
+mod support;
 
-pub(crate) const RSA_PKCS8_PEM: &str = include_str!("../tests/fixtures/rsa-2048-pkcs8.pem");
-pub(crate) const RSA_PKCS8_ALT_PEM: &str = include_str!("../tests/fixtures/rsa-2048-pkcs8-alt.pem");
+use reqsign_core::crypto::{get_default, install_default};
+use support::TestProvider;
+
+#[test]
+fn early_lookup_does_not_freeze_an_unset_provider() {
+    assert!(
+        get_default().is_none(),
+        "this binary starts without a provider"
+    );
+    assert!(install_default(TestProvider::new("first")).is_ok());
+    assert!(get_default().is_some());
+}

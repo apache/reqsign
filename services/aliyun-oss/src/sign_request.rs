@@ -20,6 +20,7 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE, DATE, HOST};
 use http::{HeaderValue, Uri};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use reqsign_core::Result;
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::{
     base64_hmac_sha1, base64_hmac_sha256, hex_hmac_sha256, hex_sha256, hmac_sha256,
 };
@@ -161,7 +162,7 @@ impl SignRequest for RequestSigner {
 
     async fn sign_request(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         req: &mut http::request::Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
@@ -169,6 +170,7 @@ impl SignRequest for RequestSigner {
         let Some(cred) = credential else {
             return Ok(());
         };
+        let provider = ctx.crypto_provider()?;
 
         let signing_time = self.get_time();
         let required_until = self.required_valid_until_at(signing_time, expires_in);
@@ -183,16 +185,16 @@ impl SignRequest for RequestSigner {
         match self.signing_version {
             SigningVersion::V1 => {
                 if let Some(expires) = expires_in {
-                    self.sign_query(&mut candidate, cred, signing_time, expires)?;
+                    self.sign_query(provider, &mut candidate, cred, signing_time, expires)?;
                 } else {
-                    self.sign_header(&mut candidate, cred, signing_time)?;
+                    self.sign_header(provider, &mut candidate, cred, signing_time)?;
                 }
             }
             SigningVersion::V2 => {
-                self.sign_v2(&mut candidate, cred, signing_time, expires_in)?;
+                self.sign_v2(provider, &mut candidate, cred, signing_time, expires_in)?;
             }
             SigningVersion::V4 => {
-                self.sign_v4(&mut candidate, cred, signing_time, expires_in)?;
+                self.sign_v4(provider, &mut candidate, cred, signing_time, expires_in)?;
             }
         }
 
@@ -205,19 +207,21 @@ impl SignRequest for RequestSigner {
 impl RequestSigner {
     fn sign_v2(
         &self,
+        provider: &dyn CryptoProvider,
         req: &mut http::request::Parts,
         cred: &Credential,
         signing_time: Timestamp,
         expires_in: Option<Duration>,
     ) -> Result<()> {
         match expires_in {
-            Some(expires) => self.sign_v2_query(req, cred, signing_time, expires),
-            None => self.sign_v2_header(req, cred, signing_time),
+            Some(expires) => self.sign_v2_query(provider, req, cred, signing_time, expires),
+            None => self.sign_v2_header(provider, req, cred, signing_time),
         }
     }
 
     fn sign_v2_header(
         &self,
+        provider: &dyn CryptoProvider,
         req: &mut http::request::Parts,
         cred: &Credential,
         signing_time: Timestamp,
@@ -238,8 +242,11 @@ impl RequestSigner {
             &date,
             &additional_headers,
         )?;
-        let signature =
-            base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+        let signature = base64_hmac_sha256(
+            provider,
+            cred.access_key_secret.as_bytes(),
+            string_to_sign.as_bytes(),
+        )?;
 
         let authorization = if additional_headers.is_empty() {
             format!(
@@ -262,6 +269,7 @@ impl RequestSigner {
 
     fn sign_v2_query(
         &self,
+        provider: &dyn CryptoProvider,
         req: &mut http::request::Parts,
         cred: &Credential,
         signing_time: Timestamp,
@@ -294,8 +302,11 @@ impl RequestSigner {
             &expiration_time,
             &additional_headers,
         )?;
-        let signature =
-            base64_hmac_sha256(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+        let signature = base64_hmac_sha256(
+            provider,
+            cred.access_key_secret.as_bytes(),
+            string_to_sign.as_bytes(),
+        )?;
         query_pairs.push((X_OSS_SIGNATURE.to_string(), signature));
 
         self.apply_query_pairs(req, &query_pairs, existing_query_count)
@@ -303,13 +314,17 @@ impl RequestSigner {
 
     fn sign_header(
         &self,
+        provider: &dyn CryptoProvider,
         req: &mut http::request::Parts,
         cred: &Credential,
         signing_time: Timestamp,
     ) -> Result<()> {
         let string_to_sign = self.build_string_to_sign(req, cred, signing_time, None)?;
-        let signature =
-            base64_hmac_sha1(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+        let signature = base64_hmac_sha1(
+            provider,
+            cred.access_key_secret.as_bytes(),
+            string_to_sign.as_bytes(),
+        )?;
 
         // Add date header
         req.headers
@@ -331,6 +346,7 @@ impl RequestSigner {
 
     fn sign_query(
         &self,
+        provider: &dyn CryptoProvider,
         req: &mut http::request::Parts,
         cred: &Credential,
         signing_time: Timestamp,
@@ -338,8 +354,11 @@ impl RequestSigner {
     ) -> Result<()> {
         let expiration_time = signing_time + expires;
         let string_to_sign = self.build_string_to_sign(req, cred, signing_time, Some(expires))?;
-        let signature =
-            base64_hmac_sha1(cred.access_key_secret.as_bytes(), string_to_sign.as_bytes());
+        let signature = base64_hmac_sha1(
+            provider,
+            cred.access_key_secret.as_bytes(),
+            string_to_sign.as_bytes(),
+        )?;
 
         let mut authentication = vec![
             format!(
@@ -464,6 +483,7 @@ impl RequestSigner {
 
     fn sign_v4(
         &self,
+        provider: &dyn CryptoProvider,
         req: &mut http::request::Parts,
         cred: &Credential,
         signing_time: Timestamp,
@@ -496,8 +516,9 @@ impl RequestSigner {
         )?;
         let scope = self.v4_scope(signing_time, region);
         let string_to_sign =
-            self.build_v4_string_to_sign(signing_time, &scope, &canonical_request)?;
-        let signature = self.build_v4_signature(cred, signing_time, region, &string_to_sign);
+            self.build_v4_string_to_sign(provider, signing_time, &scope, &canonical_request)?;
+        let signature =
+            self.build_v4_signature(provider, cred, signing_time, region, &string_to_sign)?;
 
         let final_uri = if expires_in.is_some() {
             let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
@@ -699,6 +720,7 @@ impl RequestSigner {
 
     fn build_v4_string_to_sign(
         &self,
+        provider: &dyn CryptoProvider,
         signing_time: Timestamp,
         scope: &str,
         canonical_request: &str,
@@ -707,25 +729,31 @@ impl RequestSigner {
         writeln!(&mut s, "{OSS_V4_ALGORITHM}")?;
         writeln!(&mut s, "{}", signing_time.format_iso8601())?;
         writeln!(&mut s, "{scope}")?;
-        write!(&mut s, "{}", hex_sha256(canonical_request.as_bytes()))?;
+        write!(
+            &mut s,
+            "{}",
+            hex_sha256(provider, canonical_request.as_bytes())?
+        )?;
         Ok(s)
     }
 
     fn build_v4_signature(
         &self,
+        provider: &dyn CryptoProvider,
         cred: &Credential,
         signing_time: Timestamp,
         region: &str,
         string_to_sign: &str,
-    ) -> String {
+    ) -> Result<String> {
         let date_key = hmac_sha256(
+            provider,
             format!("aliyun_v4{}", cred.access_key_secret).as_bytes(),
             signing_time.format_date().as_bytes(),
-        );
-        let region_key = hmac_sha256(&date_key, region.as_bytes());
-        let service_key = hmac_sha256(&region_key, OSS_V4_SERVICE.as_bytes());
-        let signing_key = hmac_sha256(&service_key, OSS_V4_REQUEST.as_bytes());
-        hex_hmac_sha256(&signing_key, string_to_sign.as_bytes())
+        )?;
+        let region_key = hmac_sha256(provider, &date_key, region.as_bytes())?;
+        let service_key = hmac_sha256(provider, &region_key, OSS_V4_SERVICE.as_bytes())?;
+        let signing_key = hmac_sha256(provider, &service_key, OSS_V4_REQUEST.as_bytes())?;
+        hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())
     }
 
     fn v4_scope(&self, signing_time: Timestamp, region: &str) -> String {
@@ -1196,7 +1224,7 @@ mod tests {
     use super::*;
     use crate::Credential;
     use http::Request;
-    use reqsign_core::{Context, SigningRequest};
+    use reqsign_core::SigningRequest;
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -1332,7 +1360,12 @@ mod tests {
                 .0;
         RequestSigner::new("bucket")
             .with_time(time)
-            .sign_header(&mut without_region, &credential, time)
+            .sign_header(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+                &mut without_region,
+                &credential,
+                time,
+            )
             .expect("signing without region must succeed");
 
         let mut with_region =
@@ -1344,7 +1377,12 @@ mod tests {
         RequestSigner::new("bucket")
             .with_region("oss-cn-beijing")
             .with_time(time)
-            .sign_header(&mut with_region, &credential, time)
+            .sign_header(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+                &mut with_region,
+                &credential,
+                time,
+            )
             .expect("signing with region must succeed");
 
         assert_eq!(
@@ -1405,7 +1443,12 @@ mod tests {
                 .into_parts()
                 .0;
         signer
-            .sign_v2_header(&mut signed_req, &credential, time)
+            .sign_v2_header(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+                &mut signed_req,
+                &credential,
+                time,
+            )
             .expect("v2 header signing must succeed");
 
         assert_eq!(
@@ -1473,7 +1516,12 @@ mod tests {
                 .into_parts()
                 .0;
         signer
-            .sign_v2_header(&mut signed_req, &credential, time)
+            .sign_v2_header(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+                &mut signed_req,
+                &credential,
+                time,
+            )
             .expect("v2 header signing must succeed");
 
         assert_eq!(
@@ -1533,6 +1581,7 @@ mod tests {
                 .0;
         signer
             .sign_v2_query(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
                 &mut signed_req,
                 &credential,
                 time,
@@ -1590,7 +1639,13 @@ mod tests {
         .into_parts()
         .0;
         signer
-            .sign_v2_query(&mut signed_req, &credential, time, Duration::from_secs(640))
+            .sign_v2_query(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+                &mut signed_req,
+                &credential,
+                time,
+                Duration::from_secs(640),
+            )
             .expect("v2 presign must succeed");
 
         assert_eq!(
@@ -1659,6 +1714,7 @@ mod tests {
         .0;
         signer
             .sign_v2_query(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
                 &mut signed_req,
                 &credential,
                 time,
@@ -1689,7 +1745,7 @@ mod tests {
         let err = RequestSigner::new("examplebucket")
             .with_signing_version(SigningVersion::V4)
             .with_time(Timestamp::from_second(1_744_353_684).expect("timestamp must build"))
-            .sign_request(&Context::new(), &mut req, Some(&credential), None)
+            .sign_request(&crate::test_context(), &mut req, Some(&credential), None)
             .await
             .expect_err("v4 without region must fail");
         assert!(err.to_string().contains("OSS V4 signing requires region"));
@@ -1744,6 +1800,7 @@ mod tests {
         );
         let string_to_sign = signer
             .build_v4_string_to_sign(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
                 time,
                 &signer.v4_scope(time, "cn-hangzhou"),
                 &canonical_request,
@@ -1766,7 +1823,13 @@ mod tests {
                 .0;
 
         signer
-            .sign_v4(&mut req, &credential, time, None)
+            .sign_v4(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+                &mut req,
+                &credential,
+                time,
+                None,
+            )
             .expect("v4 header signing must succeed");
 
         assert_eq!(
@@ -1842,6 +1905,7 @@ mod tests {
             .with_signing_version(SigningVersion::V4)
             .with_time(time)
             .sign_v4(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
                 &mut req,
                 &credential,
                 time,
@@ -1876,7 +1940,13 @@ mod tests {
             .with_region("cn-hangzhou")
             .with_signing_version(SigningVersion::V4)
             .with_time(time)
-            .sign_v4(&mut req, &credential, time, Some(Duration::from_secs(60)))
+            .sign_v4(
+                &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+                &mut req,
+                &credential,
+                time,
+                Some(Duration::from_secs(60)),
+            )
             .expect("v4 presign must succeed");
 
         let query = req.uri.query().expect("query must exist");
@@ -1907,7 +1977,12 @@ mod tests {
                 .into_parts()
                 .0;
             signer
-                .sign_request(&Context::new(), &mut header_req, Some(&credential), None)
+                .sign_request(
+                    &crate::test_context(),
+                    &mut header_req,
+                    Some(&credential),
+                    None,
+                )
                 .await?;
             assert_eq!(header_req.uri.to_string(), original_uri);
             assert_eq!(header_req.headers["x-custom"], " value ");
@@ -1915,7 +1990,7 @@ mod tests {
             let mut query_req = http::Request::get(&original_uri).body(())?.into_parts().0;
             signer
                 .sign_request(
-                    &Context::new(),
+                    &crate::test_context(),
                     &mut query_req,
                     Some(&credential),
                     Some(Duration::from_secs(60)),

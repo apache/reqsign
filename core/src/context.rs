@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::crypto::{self, CryptoProvider};
 use crate::{BoxedFuture, Error, MaybeSend, Result};
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -31,6 +32,15 @@ use std::sync::Arc;
 /// reqsign provides NO default implementations. Users MAY configure components they need.
 /// Any unconfigured component will use a no-op implementation that returns errors or empty values when called.
 ///
+/// ## Cryptographic provider
+///
+/// Crypto operations resolve through the context. Resolution prefers a provider
+/// bound with [`Context::with_crypto`], then the process-wide provider installed
+/// with [`crate::crypto::install_default`]. A bare `Context::new()` has no
+/// explicit binding and returns [`crate::ErrorKind::ConfigInvalid`] when crypto
+/// is first needed without a process-wide provider. Creating or cloning a
+/// context never installs or freezes a global provider.
+///
 /// ## Example
 ///
 /// ```
@@ -46,6 +56,7 @@ pub struct Context {
     http: Arc<dyn HttpSendDyn>,
     env: Arc<dyn Env>,
     cmd: Arc<dyn CommandExecuteDyn>,
+    crypto: Option<Arc<dyn CryptoProvider>>,
 }
 
 impl Debug for Context {
@@ -55,6 +66,7 @@ impl Debug for Context {
             .field("http", &self.http)
             .field("env", &self.env)
             .field("cmd", &self.cmd)
+            .field("crypto", &self.crypto)
             .finish()
     }
 }
@@ -87,6 +99,7 @@ impl Context {
             http: Arc::new(NoopHttpSend),
             env: Arc::new(NoopEnv),
             cmd: Arc::new(NoopCommandExecute),
+            crypto: None,
         }
     }
 
@@ -112,6 +125,41 @@ impl Context {
     pub fn with_command_execute(mut self, cmd: impl CommandExecute) -> Self {
         self.cmd = Arc::new(cmd);
         self
+    }
+
+    /// Bind a cryptographic provider to this context.
+    ///
+    /// An explicitly bound provider has the highest priority for every crypto
+    /// operation performed through this context. It does not affect the
+    /// process-wide provider or other contexts.
+    pub fn with_crypto(mut self, provider: impl CryptoProvider) -> Self {
+        self.crypto = Some(Arc::new(provider));
+        self
+    }
+
+    /// Resolve the cryptographic provider for this context.
+    ///
+    /// Resolution order is:
+    ///
+    /// 1. the provider bound with [`Context::with_crypto`];
+    /// 2. the process-wide provider installed with
+    ///    [`crate::crypto::install_default`].
+    ///
+    /// If neither is available this returns [`crate::ErrorKind::ConfigInvalid`]
+    /// at the point of use. Resolution never installs or freezes a provider.
+    /// An unbound context observes the current process-wide registration; a
+    /// context that already has an explicit binding keeps it.
+    pub fn crypto_provider(&self) -> Result<&dyn CryptoProvider> {
+        if let Some(provider) = &self.crypto {
+            return Ok(provider.as_ref());
+        }
+        if let Some(provider) = crypto::get_default() {
+            return Ok(provider.as_ref());
+        }
+
+        Err(Error::config_invalid(
+            "no CryptoProvider is available; bind one with Context::with_crypto or install a process-wide default",
+        ))
     }
 
     /// Read the file content entirely in `Vec<u8>`.

@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-aliyun-oss"
-version = "3.2.1"
+version = "3.2.2"
 
 description = "Aliyun OSS signing implementation for reqsign."
 
@@ -38,6 +38,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+reqsign-crypto-rustcrypto = { workspace = true }
 bytes = { workspace = true }
 dotenvy = { workspace = true }
 env_logger = { workspace = true }

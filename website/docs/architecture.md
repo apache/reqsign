@@ -66,7 +66,7 @@ Builders swap any component while keeping the others:
 
 ```rust
 let signer = signer
-    .with_context(custom_ctx)
+    .with_context(custom_ctx) // clears the credential cache
     .with_credential_provider(static_provider) // clears the credential cache
     .with_request_signer(other_signer);
 ```
@@ -102,6 +102,36 @@ HTTP responses without process-global mutation; sandboxes withhold
 capabilities by simply not providing them; and WASM targets provide
 browser-backed implementations. See
 [Custom runtimes & WASM](/docs/guides/custom-runtimes/).
+
+## Crypto provider
+
+Cryptography is resolved through `Context`. Every hash, MAC, asymmetric
+signature, AES-GCM operation, and random draw calls
+`ctx.crypto_provider()`, which prefers an explicit
+`Context::with_crypto` binding, then the process-wide provider installed with
+`RustCryptoProvider::install_default()`:
+
+```rust
+use reqsign::{Context, RustCryptoProvider, Signer};
+
+// Explicit provider for this context.
+let ctx = Context::new().with_crypto(RustCryptoProvider::new());
+
+// Or install before constructing facade contexts to select one provider.
+RustCryptoProvider::install_default()
+    .map_err(|_| "a CryptoProvider is already installed")?;
+```
+
+`reqsign-core` and the service crates contain no cryptographic implementation.
+A bare `Context::new()` starts unbound and returns `ConfigInvalid` when signing
+needs crypto without a global provider. The facade's `default-crypto` feature
+makes `default_context()` bind RustCrypto only when the process-wide slot is
+empty at construction; it never writes the slot. A context that already binds
+RustCrypto keeps it, and an explicit `with_crypto` binding always wins.
+Applications choose the provider, and integrating middleware such as OpenDAL
+must not install a global default. See
+[CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md)
+for the full contract and error semantics.
 
 ## ProvideCredential
 
@@ -209,9 +239,9 @@ The reuse rule on every `sign` or `grant`:
    reuse of the previous cached credential. A configured provider chain can
    handle errors internally by trying its next source, as described above.
 
-Replacing a signer's credential provider — or a granter's context or source
-provider — clears the cache: a credential loaded under one configuration is
-never reused under another.
+Replacing a signer's or granter's context or credential provider clears the
+cache: a credential loaded under one configuration is never reused under
+another.
 
 ## Granter and GrantCredential
 
@@ -268,8 +298,10 @@ The same components are reachable at three levels — pick by how much you
 want to control:
 
 **The facade** (`reqsign` crate) — one dependency, feature flags per
-provider, `default_signer` entries that wire everything. Best for
-applications; still customizable through `with_*` builders.
+provider, `default_context()` for the standard runtime, and `default_signer`
+entries that wire each provider's credential chain and request signer with
+your supplied `Context`. Best for applications; still customizable through
+`with_*` builders.
 
 **Custom assembly** — the same components, wired explicitly. What
 `default_signer` does for you, written out:

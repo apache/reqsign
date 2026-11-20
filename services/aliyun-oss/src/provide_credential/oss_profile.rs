@@ -180,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_profile_provider_reads_default_profile() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead::new(HashMap::from([(
                 "/mock/credentials".to_string(),
                 br#"[default]
@@ -214,7 +214,7 @@ session_token = profile_token
 
     #[tokio::test]
     async fn test_profile_provider_selects_named_profile() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead::new(HashMap::from([(
                 "/mock/credentials".to_string(),
                 br#"[default]
@@ -253,7 +253,7 @@ security_token = prod_token
 
     #[tokio::test]
     async fn test_profile_provider_returns_none_for_missing_profile() -> anyhow::Result<()> {
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TestFileRead::new(HashMap::from([(
                 "/mock/credentials".to_string(),
                 br#"[default]

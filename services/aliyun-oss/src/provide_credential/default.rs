@@ -372,7 +372,7 @@ mod tests {
     async fn test_default_loader_without_env() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -394,7 +394,7 @@ mod tests {
     async fn test_default_loader_with_env() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -423,7 +423,7 @@ mod tests {
     async fn test_default_loader_with_security_token() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(OsEnv);
@@ -464,7 +464,7 @@ access_key_secret = profile_secret_key
             .to_vec(),
         )]));
         let http_send = CountingHttpSend::new([]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read.clone())
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -543,7 +543,7 @@ access_key_secret = profile_secret_key
             [br#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"oidc_secret_key","AccessKeyId":"oidc_access_key"}}"#
                 .to_vec()],
         );
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read.clone())
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -609,7 +609,7 @@ access_key_secret=shared_secret_key
                 .to_vec(),
             ),
         ]));
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -659,7 +659,7 @@ access_key_secret=shared_secret_key
 }"#
             .to_vec(),
         )]));
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -704,7 +704,7 @@ access_key_secret=shared_secret_key
 }"#
             .to_vec(),
         )]));
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -766,7 +766,7 @@ access_key_secret=shared_secret_key
             ("/mock/token".to_string(), b"token".to_vec()),
         ]));
         let http_send = CountingHttpSend::new([br#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"oidc_secret_key","AccessKeyId":"oidc_access_key"}}"#.to_vec()]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -814,7 +814,7 @@ access_key_secret=shared_secret_key
             b"token".to_vec(),
         )]));
         let http_send = CountingHttpSend::new([br#"{"Code":"Success","AccessKeyId":"uri_access_key","AccessKeySecret":"uri_secret_key","SecurityToken":"uri_token","Expiration":"2124-05-25T11:45:17Z"}"#.to_vec()]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -876,7 +876,7 @@ access_key_secret=shared_secret_key
             b"metadata-token".to_vec(),
             br#"{"Code":"Success","AccessKeyId":"ecs_access_key","AccessKeySecret":"ecs_secret_key","SecurityToken":"ecs_token","Expiration":"2124-05-25T11:45:17Z"}"#.to_vec(),
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -930,7 +930,7 @@ access_key_secret=shared_secret_key
     #[tokio::test]
     async fn test_builder_no_credentials_uri_removes_credentials_uri_provider() {
         let http_send = CountingHttpSend::new([br#"{"Code":"Success","AccessKeyId":"uri_access_key","AccessKeySecret":"uri_secret_key","SecurityToken":"uri_token","Expiration":"2124-05-25T11:45:17Z"}"#.to_vec()]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -984,7 +984,7 @@ access_key_secret=shared_secret_key
             b"metadata-token".to_vec(),
             br#"{"Code":"Success","AccessKeyId":"ecs_access_key","AccessKeySecret":"ecs_secret_key","SecurityToken":"ecs_token","Expiration":"2124-05-25T11:45:17Z"}"#.to_vec(),
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -1042,7 +1042,7 @@ access_key_secret=shared_secret_key
             [br#"{"Credentials":{"SecurityToken":"security_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"secret_access_key","AccessKeyId":"access_key_id"}}"#
                 .to_vec()],
         );
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(file_read.clone())
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -1098,7 +1098,7 @@ access_key_secret=shared_secret_key
             br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
                 .to_vec(),
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -1139,7 +1139,7 @@ access_key_secret=shared_secret_key
             br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
                 .to_vec(),
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {
@@ -1182,7 +1182,7 @@ access_key_secret=shared_secret_key
             br#"{"Credentials":{"SecurityToken":"sts_token","Expiration":"2124-05-25T11:45:17Z","AccessKeySecret":"assumed_secret_key","AccessKeyId":"assumed_access_key"}}"#
                 .to_vec(),
         ]);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
             .with_env(StaticEnv {

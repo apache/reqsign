@@ -16,6 +16,8 @@
 // under the License.
 
 //! Integration tests for ProvideCredentialChain with Huawei Cloud OBS
+mod common;
+
 use reqsign_core::ProvideCredentialChain;
 use reqsign_core::{Context, OsEnv, ProvideCredential, Result};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -51,7 +53,7 @@ impl ProvideCredential for CountingProvider {
 
 #[tokio::test]
 async fn test_chain_stops_at_first_success() {
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -95,7 +97,7 @@ async fn test_chain_with_real_providers() {
     use reqsign_core::StaticEnv;
     use std::collections::HashMap;
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -126,7 +128,7 @@ async fn test_chain_with_real_providers() {
 
 #[tokio::test]
 async fn test_empty_chain_returns_none() {
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -138,7 +140,7 @@ async fn test_empty_chain_returns_none() {
 
 #[tokio::test]
 async fn test_chain_all_providers_return_none() {
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -168,7 +170,7 @@ async fn test_chain_all_providers_return_none() {
 
 #[tokio::test]
 async fn test_chain_with_security_token() {
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);

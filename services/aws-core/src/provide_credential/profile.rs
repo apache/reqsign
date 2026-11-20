@@ -76,7 +76,7 @@ impl ProfileCredentialProvider {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn shared_config(&self) -> crate::SharedConfig {
+    pub(crate) fn shared_config(&self) -> crate::SharedConfig {
         let mut config = crate::SharedConfig::new();
         if let Some(v) = &self.profile {
             config = config.with_profile(v);
@@ -161,7 +161,7 @@ mod tests {
         writeln!(tmp_file, "aws_secret_access_key = PROFILE1SECRETACCESSKEY")?;
         writeln!(tmp_file, "aws_session_token = PROFILE1SESSIONTOKEN")?;
 
-        let context = Context::new()
+        let context = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -208,7 +208,7 @@ mod tests {
         writeln!(tmp_file, "aws_access_key_id = PROFILE1ACCESSKEYID")?;
         writeln!(tmp_file, "aws_secret_access_key = PROFILE1SECRETACCESSKEY")?;
 
-        let context = Context::new()
+        let context = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -255,7 +255,7 @@ mod tests {
         writeln!(tmp_file, "aws_access_key_id = PROFILE1ACCESSKEYID")?;
         writeln!(tmp_file, "aws_secret_access_key = PROFILE1SECRETACCESSKEY")?;
 
-        let context = Context::new()
+        let context = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -289,7 +289,7 @@ mod tests {
         writeln!(tmp_file, "aws_access_key_id = PROFILE1ACCESSKEYID")?;
         writeln!(tmp_file, "aws_secret_access_key = PROFILE1SECRETACCESSKEY")?;
 
-        let context = Context::new()
+        let context = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default())
             .with_env(StaticEnv {
@@ -311,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_profile_missing_credentials() -> anyhow::Result<()> {
-        let context = Context::new()
+        let context = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(ReqwestHttpSend::default());
 

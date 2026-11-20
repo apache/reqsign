@@ -41,7 +41,7 @@ async fn init_signer_for_signed_url() -> Option<(Context, Signer<Credential>)> {
         .expect("credential must be valid base64");
     let builder = RequestSigner::new("storage");
 
-    let ctx = Context::new()
+    let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);

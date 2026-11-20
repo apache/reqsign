@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::base64_hmac_sha1;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, GrantCredential, Result, SigningCredential};
@@ -156,6 +157,7 @@ pub(crate) fn signature_nonce(signing_time: Timestamp) -> String {
 /// parameter except `Signature`; the caller owns action-specific parameters.
 /// The request is signed with HMAC-SHA1 using `access_key_secret`.
 pub(crate) fn signed_rpc_request(
+    provider: &dyn CryptoProvider,
     endpoint: &str,
     params: &BTreeMap<String, String>,
     access_key_secret: &str,
@@ -166,9 +168,10 @@ pub(crate) fn signed_rpc_request(
         percent_encode_query_value(&canonicalized_query_string)
     );
     let signature = base64_hmac_sha1(
+        provider,
         format!("{access_key_secret}&").as_bytes(),
         string_to_sign.as_bytes(),
-    );
+    )?;
 
     let url = format!(
         "{}/?{}&Signature={}",
@@ -422,7 +425,12 @@ impl GrantCredential for AssumeRoleGranter {
             params.insert("DurationSeconds".to_string(), duration_seconds.to_string());
         }
 
-        let req = signed_rpc_request(&self.endpoint(), &params, &credential.access_key_secret)?;
+        let req = signed_rpc_request(
+            ctx.crypto_provider()?,
+            &self.endpoint(),
+            &params,
+            &credential.access_key_secret,
+        )?;
         let resp = ctx.http_send(req.map(Into::into)).await?;
         if resp.status() != http::StatusCode::OK {
             let content = String::from_utf8_lossy(resp.body());
@@ -574,7 +582,7 @@ mod tests {
     #[tokio::test]
     async fn test_grant_signs_request_and_returns_credential() -> Result<()> {
         let http_send = CaptureHttpSend::new(vec![SUCCESS_BODY.to_vec()]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
 
         let signing_time: Timestamp = "2024-03-05T06:07:08Z".parse().unwrap();
         let grant = AssumeRoleGrant::new("acs:ram::123456789012:role/test-role")
@@ -657,7 +665,11 @@ mod tests {
         expected.insert("Version".to_string(), "2015-04-01".to_string());
         let canonical = canonicalized_query_string(&expected);
         let string_to_sign = format!("GET&%2F&{}", percent_encode_query_value(&canonical));
-        let expected_signature = base64_hmac_sha1("base-sk&".as_bytes(), string_to_sign.as_bytes());
+        let expected_signature = base64_hmac_sha1(
+            &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+            "base-sk&".as_bytes(),
+            string_to_sign.as_bytes(),
+        )?;
         assert_eq!(
             Some(expected_signature.as_str()),
             params.get("Signature").map(String::as_str)
@@ -668,7 +680,7 @@ mod tests {
     #[tokio::test]
     async fn test_grant_omits_optional_params_when_unset() -> Result<()> {
         let http_send = CaptureHttpSend::new(vec![SUCCESS_BODY.to_vec()]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
 
         let granter =
             AssumeRoleGranter::new(AssumeRoleGrant::new("acs:ram::123456789012:role/test-role"))
@@ -694,7 +706,7 @@ mod tests {
     #[tokio::test]
     async fn test_grant_rejects_invalid_source_before_io() {
         let http_send = CaptureHttpSend::new(vec![SUCCESS_BODY.to_vec()]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
 
         let granter =
             AssumeRoleGranter::new(AssumeRoleGrant::new("acs:ram::123456789012:role/test-role"));
@@ -721,7 +733,7 @@ mod tests {
     #[tokio::test]
     async fn test_grant_rejects_out_of_range_duration_before_io() {
         let http_send = CaptureHttpSend::new(vec![SUCCESS_BODY.to_vec()]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
 
         let granter =
             AssumeRoleGranter::new(AssumeRoleGrant::new("acs:ram::123456789012:role/test-role"));
@@ -737,7 +749,7 @@ mod tests {
     async fn test_grant_rejects_expired_granted_credential() {
         let expired = br#"{"Credentials":{"SecurityToken":"sts-token","Expiration":"2000-01-01T00:00:00Z","AccessKeySecret":"sts-secret","AccessKeyId":"sts-ak"}}"#;
         let http_send = CaptureHttpSend::new(vec![expired.to_vec()]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
 
         let granter =
             AssumeRoleGranter::new(AssumeRoleGrant::new("acs:ram::123456789012:role/test-role"));

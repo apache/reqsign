@@ -15,7 +15,7 @@ credential chain.
 
 Create a new provider and signer for each independently authenticated request
 identity. Cloned signers share their exchanged-credential cache, while
-`Signer::with_credential_provider` creates a new empty cache.
+`Signer::with_context` and `Signer::with_credential_provider` create a new empty cache.
 
 ```rust
 use reqsign::{Context, Signer, time::Timestamp};

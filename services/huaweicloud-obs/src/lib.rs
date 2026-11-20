@@ -20,6 +20,9 @@
 mod credential;
 pub use credential::Credential;
 
+mod agency;
+pub use agency::{AgencyGrant, AgencyGranter};
+
 mod sign_request;
 pub use sign_request::RequestSigner;
 
@@ -27,3 +30,8 @@ mod provide_credential;
 pub use provide_credential::*;
 
 mod constants;
+
+#[cfg(test)]
+pub(crate) fn test_context() -> reqsign_core::Context {
+    reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+}

@@ -1273,7 +1273,7 @@ mod tests {
         responses: impl IntoIterator<Item = Response<Bytes>>,
     ) -> (S3ExpressSessionGranter, Context, MockHttpSend) {
         let http = MockHttpSend::new(responses);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let operation = S3ExpressSessionGranter::new(config, grant).with_time(now);
         (operation, ctx, http)
     }
@@ -1292,7 +1292,7 @@ mod tests {
         responses: impl IntoIterator<Item = Response<Bytes>>,
     ) -> (S3ExpressSessionGranter, Context, MockHttpSend) {
         let http = MockHttpSend::new(responses);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let operation = S3ExpressSessionGranter::new_with_custom_endpoint(
             "compatible-bucket",
             "custom-region-1",
@@ -2043,7 +2043,7 @@ mod tests {
     async fn rejects_invalid_custom_endpoint_configuration_before_provider_io() {
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let http = MockHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let invalid = [
             (
                 "",
@@ -2230,7 +2230,7 @@ mod tests {
         .expect("custom endpoint configuration must be valid")
         .with_time(timestamp("2030-01-01T00:00:00Z"));
         let source = source_credential();
-        let ctx = Context::new().with_http_send(FailingHttpSend);
+        let ctx = crate::test_context().with_http_send(FailingHttpSend);
 
         let err = operation
             .grant_credential(&ctx, &source, None)
@@ -2282,7 +2282,7 @@ mod tests {
             "2099-01-01T00:05:00Z",
         );
         let http = MockHttpSend::new([response]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let provider = S3ExpressSessionProvider::new("example--usw2-az1--x-s3", source_provider);
 
@@ -2320,7 +2320,7 @@ mod tests {
                 &second_expiration,
             ),
         ]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let provider = S3ExpressSessionProvider::new("example--usw2-az1--x-s3", source_provider)
             .with_grant(S3ExpressSessionGrant::maximum_allowed());
@@ -2383,7 +2383,7 @@ mod tests {
             "2099-01-01T00:05:00Z",
         );
         let http = MockHttpSend::new([response]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let provider = S3ExpressSessionProvider::new("example--apse6-az1--x-s3", source_provider)
             .with_region("ap-southeast-6");
@@ -2411,7 +2411,7 @@ mod tests {
             "2099-01-01T00:05:00Z",
         );
         let http = MockHttpSend::new([response]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let provider =
             S3ExpressSessionProvider::new("example--cnn1-pkx1-az1--x-s3", source_provider);
@@ -2440,7 +2440,7 @@ mod tests {
     #[tokio::test]
     async fn provider_validates_configuration_before_loading_source() {
         let http = MockHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let provider = S3ExpressSessionProvider::new("invalid-bucket", source_provider);
 
@@ -2456,7 +2456,7 @@ mod tests {
     #[tokio::test]
     async fn provider_rejects_unsupported_partition_before_loading_source() {
         let http = MockHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let provider = S3ExpressSessionProvider::new("example--usgw1-az1--x-s3", source_provider)
             .with_region("us-gov-west-1");
@@ -2473,7 +2473,7 @@ mod tests {
     #[tokio::test]
     async fn provider_rejects_zone_region_mismatch_before_loading_source() {
         let http = MockHttpSend::new([]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let (source_provider, source_calls) = FixedCredentialProvider::new(source_credential());
         let provider = S3ExpressSessionProvider::new("example--use1-az1--x-s3", source_provider)
             .with_region("us-west-2");
@@ -2499,7 +2499,7 @@ mod tests {
             )
         };
         let http = MockHttpSend::new([response(), response()]);
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::test_context().with_http_send(http.clone());
         let operation =
             S3ExpressSessionGranter::new(config(), S3ExpressSessionGrant::maximum_allowed())
                 .with_time(now);
@@ -2528,7 +2528,7 @@ mod tests {
 
         let (output_provider, _) = FixedCredentialProvider::new(output);
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             output_provider,
             crate::RequestSigner::new("s3express", "us-west-2"),
         );

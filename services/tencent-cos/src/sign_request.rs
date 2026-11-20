@@ -22,6 +22,7 @@ use http::header::{AUTHORIZATION, DATE};
 use http::request::Parts;
 use log::debug;
 use percent_encoding::{percent_decode_str, utf8_percent_encode};
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::{hex_hmac_sha1, hex_sha1};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest, SigningCredential, SigningRequest};
@@ -79,7 +80,7 @@ impl SignRequest for RequestSigner {
 
     async fn sign_request(
         &self,
-        _ctx: &Context,
+        ctx: &Context,
         req: &mut Parts,
         credential: Option<&Self::Credential>,
         expires_in: Option<Duration>,
@@ -87,6 +88,7 @@ impl SignRequest for RequestSigner {
         let Some(cred) = credential else {
             return Ok(());
         };
+        let provider = ctx.crypto_provider()?;
 
         let now = self.get_time();
         let required_until = self.required_valid_until_at(now, expires_in);
@@ -101,7 +103,7 @@ impl SignRequest for RequestSigner {
 
         let final_uri = if let Some(expires) = expires_in {
             // Query signing
-            let signature = build_signature(&signing_req, cred, now, expires);
+            let signature = build_signature(provider, &signing_req, cred, now, expires)?;
 
             signing_req
                 .headers
@@ -117,7 +119,8 @@ impl SignRequest for RequestSigner {
             Some(append_query_fragment(&original_uri, &authentication)?)
         } else {
             // Header signing (default 3600s expiration)
-            let signature = build_signature(&signing_req, cred, now, Duration::from_secs(3600));
+            let signature =
+                build_signature(provider, &signing_req, cred, now, Duration::from_secs(3600))?;
 
             signing_req
                 .headers
@@ -147,13 +150,14 @@ impl SignRequest for RequestSigner {
 }
 
 fn build_signature(
+    provider: &dyn CryptoProvider,
     ctx: &SigningRequest,
     cred: &Credential,
     now: Timestamp,
     expires: Duration,
-) -> String {
+) -> Result<String> {
     let key_time = format!("{};{}", now.as_second(), (now + expires).as_second());
-    let sign_key = hex_hmac_sha1(cred.secret_key.as_bytes(), key_time.as_bytes());
+    let sign_key = hex_hmac_sha1(provider, cred.secret_key.as_bytes(), key_time.as_bytes())?;
 
     let (param_list, param_string) = canonical_query(ctx);
     debug!("param list: {param_list}");
@@ -201,16 +205,16 @@ fn build_signature(
     string_to_sign.push('\n');
     string_to_sign.push_str(&key_time);
     string_to_sign.push('\n');
-    string_to_sign.push_str(&hex_sha1(http_string.as_bytes()));
+    string_to_sign.push_str(&hex_sha1(provider, http_string.as_bytes())?);
     string_to_sign.push('\n');
     debug!("string_to_sign: {string_to_sign}");
 
-    let signature = hex_hmac_sha1(sign_key.as_bytes(), string_to_sign.as_bytes());
+    let signature = hex_hmac_sha1(provider, sign_key.as_bytes(), string_to_sign.as_bytes())?;
 
-    format!(
+    Ok(format!(
         "q-sign-algorithm=sha1&q-ak={}&q-sign-time={}&q-key-time={}&q-header-list={}&q-url-param-list={}&q-signature={}",
         cred.secret_id, key_time, key_time, header_list, param_list, signature
-    )
+    ))
 }
 
 fn canonical_query(ctx: &SigningRequest) -> (String, String) {
@@ -298,14 +302,19 @@ mod tests {
 
         let mut header_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
         signer
-            .sign_request(&Context::new(), &mut header_parts, Some(&credential), None)
+            .sign_request(
+                &crate::test_context(),
+                &mut header_parts,
+                Some(&credential),
+                None,
+            )
             .await?;
         assert_eq!(header_parts.uri.to_string(), original_uri);
 
         let mut query_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
         signer
             .sign_request(
-                &Context::new(),
+                &crate::test_context(),
                 &mut query_parts,
                 Some(&credential),
                 Some(Duration::from_secs(60)),

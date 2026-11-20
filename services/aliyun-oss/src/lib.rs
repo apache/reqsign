@@ -258,3 +258,8 @@ pub use sign_request::{RequestSigner, SigningVersion};
 
 mod provide_credential;
 pub use provide_credential::*;
+
+#[cfg(test)]
+pub(crate) fn test_context() -> reqsign_core::Context {
+    reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+}

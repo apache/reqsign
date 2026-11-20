@@ -33,6 +33,7 @@ use std::time::Duration;
 
 use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use percent_encoding::utf8_percent_encode;
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::{hex_hmac_sha256, hex_sha256, hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, GrantCredential, Result, SigningCredential};
@@ -307,6 +308,7 @@ impl GetFederationTokenGranter {
 
     fn build_request(
         &self,
+        provider: &dyn CryptoProvider,
         credential: &Credential,
         duration_seconds: Option<u64>,
         signing_time: Timestamp,
@@ -331,20 +333,21 @@ impl GetFederationTokenGranter {
         let signed_headers = "content-type;host";
         let canonical_request = format!(
             "POST\n/\n\n{canonical_headers}\n{signed_headers}\n{}",
-            hex_sha256(&body)
+            hex_sha256(provider, &body)?
         );
         let credential_scope = format!("{date}/{STS_SERVICE}/tc3_request");
         let string_to_sign = format!(
             "TC3-HMAC-SHA256\n{timestamp}\n{credential_scope}\n{}",
-            hex_sha256(canonical_request.as_bytes())
+            hex_sha256(provider, canonical_request.as_bytes())?
         );
         let secret_date = hmac_sha256(
+            provider,
             format!("TC3{}", credential.secret_key).as_bytes(),
             date.as_bytes(),
-        );
-        let secret_service = hmac_sha256(&secret_date, STS_SERVICE.as_bytes());
-        let secret_signing = hmac_sha256(&secret_service, b"tc3_request");
-        let signature = hex_hmac_sha256(&secret_signing, string_to_sign.as_bytes());
+        )?;
+        let secret_service = hmac_sha256(provider, &secret_date, STS_SERVICE.as_bytes())?;
+        let secret_signing = hmac_sha256(provider, &secret_service, b"tc3_request")?;
+        let signature = hex_hmac_sha256(provider, &secret_signing, string_to_sign.as_bytes())?;
         let authorization = format!(
             "TC3-HMAC-SHA256 Credential={}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}",
             credential.secret_id
@@ -479,7 +482,12 @@ impl GrantCredential for GetFederationTokenGranter {
         let required_until = self.required_valid_until(credential, expires_in);
         self.validate_source(credential, required_until)?;
 
-        let request = self.build_request(credential, duration_seconds, self.now())?;
+        let request = self.build_request(
+            ctx.crypto_provider()?,
+            credential,
+            duration_seconds,
+            self.now(),
+        )?;
         let response = ctx
             .http_send(request.map(Into::into))
             .await
@@ -826,7 +834,7 @@ mod tests {
     async fn grants_with_exact_tc3_signature_and_epoch_expiration() -> Result<()> {
         let signing_time = timestamp("2024-03-05T06:07:08Z");
         let http_send = MockHttpSend::new([response(http::StatusCode::OK, SUCCESS_BODY)]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
 
         let credential = Granter::new(ctx, source_provider(), granter(signing_time))
             .grant(Some(Duration::from_secs(3600)))
@@ -881,7 +889,7 @@ mod tests {
     async fn omitted_duration_uses_the_service_default_and_accepts_iso_expiration() -> Result<()> {
         let body = br#"{"Response":{"Credentials":{"TmpSecretId":"sts-secret-id","TmpSecretKey":"sts-secret-key","Token":"sts-security-token"},"Expiration":"2124-05-25T11:45:17Z"}}"#;
         let http_send = MockHttpSend::new([response(http::StatusCode::OK, body.as_slice())]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
 
         let credential = Granter::new(
             ctx,
@@ -915,7 +923,7 @@ mod tests {
         ];
         for duration in durations {
             let http_send = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-            let ctx = Context::new().with_http_send(http_send.clone());
+            let ctx = crate::test_context().with_http_send(http_send.clone());
             let err = Granter::new(ctx, source_provider(), granter(signing_time))
                 .grant(duration)
                 .await
@@ -931,7 +939,7 @@ mod tests {
         );
         for grant in invalid_grants {
             let http_send = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-            let ctx = Context::new().with_http_send(http_send.clone());
+            let ctx = crate::test_context().with_http_send(http_send.clone());
             let err = Granter::new(
                 ctx,
                 source_provider(),
@@ -960,7 +968,7 @@ mod tests {
         ];
         for source in invalid_sources {
             let http_send = MockHttpSend::new(Vec::<http::Response<Bytes>>::new());
-            let ctx = Context::new().with_http_send(http_send.clone());
+            let ctx = crate::test_context().with_http_send(http_send.clone());
             let err = Granter::new(
                 ctx,
                 FixedCredentialProvider { credential: source },
@@ -978,7 +986,7 @@ mod tests {
     async fn rejects_expired_granted_credential_after_io() {
         let body = br#"{"Response":{"Credentials":{"TmpSecretId":"sts-secret-id","TmpSecretKey":"sts-secret-key","Token":"sts-security-token"},"ExpiredTime":1893553445}}"#;
         let http_send = MockHttpSend::new([response(http::StatusCode::OK, body.as_slice())]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
 
         let err = Granter::new(
             ctx,
@@ -1010,7 +1018,7 @@ mod tests {
 
         let error_body = br#"{"Response":{"Error":{"Code":"AuthFailure.SignatureFailure","Message":"source-secret-key and policy detail"},"RequestId":"request-id"}}"#;
         let http_send = MockHttpSend::new([response(http::StatusCode::OK, error_body.as_slice())]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let err = Granter::new(
             ctx,
             source_provider(),
@@ -1030,7 +1038,7 @@ mod tests {
             http::StatusCode::INTERNAL_SERVER_ERROR,
             Bytes::from(error_body),
         )]);
-        let ctx = Context::new().with_http_send(http_send.clone());
+        let ctx = crate::test_context().with_http_send(http_send.clone());
         let err = Granter::new(
             ctx,
             source_provider(),
@@ -1048,13 +1056,13 @@ mod tests {
     async fn granted_credential_is_consumable_by_the_cos_signer() -> Result<()> {
         let now = Timestamp::now();
         let http_send = MockHttpSend::new([success_response(now.as_second() + 7200)]);
-        let ctx = Context::new().with_http_send(http_send);
+        let ctx = crate::test_context().with_http_send(http_send);
         let granted = Granter::new(ctx, source_provider(), granter(now))
             .grant(Some(Duration::from_secs(7200)))
             .await?;
 
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             FixedCredentialProvider {
                 credential: granted,
             },
@@ -1079,13 +1087,13 @@ mod tests {
     {
         let now = Timestamp::now();
         let http_send = MockHttpSend::new([success_response(now.as_second() + 1800)]);
-        let ctx = Context::new().with_http_send(http_send);
+        let ctx = crate::test_context().with_http_send(http_send);
         let granted = Granter::new(ctx, source_provider(), granter(now))
             .grant(None)
             .await?;
 
         let signer = Signer::new(
-            Context::new(),
+            crate::test_context(),
             FixedCredentialProvider {
                 credential: granted,
             },

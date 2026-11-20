@@ -65,10 +65,10 @@ impl<K: SigningCredential> Signer<K> {
         }
     }
 
-    /// Replace the context while keeping the credential provider, request signer,
-    /// and shared credential cache.
+    /// Replace the context and create an isolated empty credential cache.
     pub fn with_context(mut self, ctx: Context) -> Self {
         self.ctx = ctx;
+        self.credential = Arc::new(Mutex::new(None));
         self
     }
 
@@ -83,7 +83,8 @@ impl<K: SigningCredential> Signer<K> {
         self
     }
 
-    /// Replace the request signer while keeping context and credential provider.
+    /// Replace only the request signer, retaining the context, credential provider,
+    /// and shared credential cache.
     pub fn with_request_signer(mut self, signer: impl SignRequest<Credential = K>) -> Self {
         self.builder = Arc::new(signer);
         self
@@ -180,12 +181,12 @@ impl<K: SigningCredential> Signer<K> {
 mod tests {
     use super::*;
     use crate::time::Timestamp;
-    use crate::{ErrorKind, ProvideCredential, SignRequest};
+    use crate::{ErrorKind, ProvideCredential, SignRequest, StaticEnv};
     use asyncband::oneshot;
     use futures::future::{join_all, pending};
     use futures::poll;
     use http::{HeaderValue, Method, Request, Version};
-    use std::collections::VecDeque;
+    use std::collections::{HashMap, VecDeque};
     use std::sync::Mutex as StdMutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -868,12 +869,85 @@ mod tests {
         let with_provider = signer.clone().with_credential_provider(StaticProvider);
 
         assert!(Arc::ptr_eq(&signer.credential, &clone.credential));
-        assert!(Arc::ptr_eq(&signer.credential, &with_context.credential));
+        assert!(!Arc::ptr_eq(&signer.credential, &with_context.credential));
         assert!(Arc::ptr_eq(
             &signer.credential,
             &with_request_signer.credential
         ));
         assert!(!Arc::ptr_eq(&signer.credential, &with_provider.credential));
+    }
+
+    #[test]
+    fn with_context_isolates_credential_cache() {
+        #[derive(Debug)]
+        struct EnvGenerationProvider {
+            calls: Arc<AtomicUsize>,
+            base: Timestamp,
+        }
+
+        impl ProvideCredential for EnvGenerationProvider {
+            type Credential = ExpiringCredential;
+
+            async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let generation = ctx
+                    .env_var("GENERATION")
+                    .expect("generation env must be set")
+                    .parse::<u8>()
+                    .expect("generation env must be u8");
+                Ok(Some(ExpiringCredential {
+                    generation,
+                    fresh: true,
+                    expires_at: self.base + Duration::from_secs(60),
+                    required_until: self.base + Duration::from_secs(10),
+                }))
+            }
+        }
+
+        fn context_with_generation(generation: u8) -> Context {
+            Context::new().with_env(StaticEnv {
+                home_dir: None,
+                envs: HashMap::from([("GENERATION".to_string(), generation.to_string())]),
+            })
+        }
+
+        futures::executor::block_on(async {
+            let base = Timestamp::from_second(975).expect("timestamp must be valid");
+            let calls = Arc::new(AtomicUsize::new(0));
+            let signer_a = Signer::new(
+                context_with_generation(1),
+                EnvGenerationProvider {
+                    calls: calls.clone(),
+                    base,
+                },
+                OperationSigner,
+            );
+
+            let mut req_a = request_parts();
+            signer_a
+                .sign(&mut req_a, None)
+                .await
+                .expect("initial sign under context 1 must succeed");
+            assert_eq!(req_a.headers["x-credential-generation"], "1");
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+            let signer_b = signer_a.clone().with_context(context_with_generation(2));
+            let mut req_b = request_parts();
+            signer_b
+                .sign(&mut req_b, None)
+                .await
+                .expect("sign after with_context must reload under context 2");
+            assert_eq!(req_b.headers["x-credential-generation"], "2");
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+            let mut req_a_again = request_parts();
+            signer_a
+                .sign(&mut req_a_again, None)
+                .await
+                .expect("original signer must retain its isolated cache");
+            assert_eq!(req_a_again.headers["x-credential-generation"], "1");
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+        });
     }
 
     #[test]

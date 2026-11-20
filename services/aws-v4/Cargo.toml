@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-aws-v4"
-version = "3.4.0"
+version = "3.5.0"
 
 description = "AWS SigV4 signing implementation for reqsign."
 
@@ -40,6 +40,7 @@ reqsign-core = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]
+reqsign-crypto-rustcrypto = { workspace = true }
 anyhow = { workspace = true }
 aws-credential-types = "1.1.8"
 aws-sigv4 = "1.2.0"

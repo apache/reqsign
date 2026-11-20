@@ -45,6 +45,11 @@ pub const EMPTY_STRING_SHA256: &str =
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 #[cfg(test)]
+pub(crate) fn test_context() -> reqsign_core::Context {
+    reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+}
+
+#[cfg(test)]
 mod tests {
     use reqsign_core::hash::hex_sha256;
 
@@ -52,7 +57,11 @@ mod tests {
 
     #[test]
     fn empty_string_sha256_matches_computed_digest() {
-        assert_eq!(EMPTY_STRING_SHA256, hex_sha256(b""));
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        assert_eq!(
+            EMPTY_STRING_SHA256,
+            hex_sha256(&provider, b"").expect("SHA-256 must succeed")
+        );
         assert_eq!(
             EMPTY_STRING_SHA256,
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

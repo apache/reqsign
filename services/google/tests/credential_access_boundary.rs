@@ -17,11 +17,13 @@
 
 #![cfg(feature = "credential-access-boundary-client-side")]
 
+mod common;
+
 use std::env;
 
 use log::warn;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Granter, Result, Signer};
+use reqsign_core::{Granter, Result, Signer};
 use reqsign_google::{
     ClientSideCredentialAccessBoundaryGranter, CredentialAccessBoundaryGrant,
     CredentialAccessBoundaryPermissions, RequestSigner, TokenCredentialProvider,
@@ -48,7 +50,7 @@ async fn test_client_side_credential_access_boundary_live_interoperability() -> 
     let object_prefix = env::var("REQSIGN_GOOGLE_CAB_OBJECT_PREFIX")
         .expect("REQSIGN_GOOGLE_CAB_OBJECT_PREFIX must be set");
 
-    let context = Context::new().with_http_send(ReqwestHttpSend::default());
+    let context = crate::common::test_context().with_http_send(ReqwestHttpSend::default());
     let grant = CredentialAccessBoundaryGrant::for_object_prefix(
         &bucket,
         &object_prefix,
@@ -68,7 +70,7 @@ async fn test_client_side_credential_access_boundary_live_interoperability() -> 
         .expires_at
         .expect("client-side CAB output must have an expiration");
     let signer = Signer::new(
-        Context::new(),
+        crate::common::test_context(),
         TokenCredentialProvider::new(token.access_token).with_expires_at(expires_at),
         RequestSigner::new("storage"),
     );

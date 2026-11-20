@@ -29,57 +29,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
+  # Offline coverage only. Live Tencent Cloud coverage runs from
+  # tencent_cos_live.yml on pushes to main, so a pull request never executes a
+  # job that can request a GitHub OIDC token.
   unit_test:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Test
+      - name: Run unit tests
         working-directory: ./services/tencent-cos
         run: cargo test --no-fail-fast
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
-          # Tencent COS Test
-          REQSIGN_TENCENT_COS_TEST: ${{ secrets.REQSIGN_TENCENT_COS_TEST }}
-          REQSIGN_TENCENT_COS_ACCESS_KEY: ${{ secrets.REQSIGN_TENCENT_COS_ACCESS_KEY }}
-          REQSIGN_TENCENT_COS_SECRET_KEY: ${{ secrets.REQSIGN_TENCENT_COS_SECRET_KEY }}
-          REQSIGN_TENCENT_COS_URL: ${{ secrets.REQSIGN_TENCENT_COS_URL }}
-
-  tencent_cloud_web_identify_test:
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: "read"
-      id-token: "write"
-    if: github.event_name == 'push' || (!github.event.pull_request.head.repo.fork && github.actor != 'dependabot[bot]')
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Get Id Token
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        id: idtoken
-        with:
-          script: |
-            let id_token = await core.getIDToken('sts.tencentcloudapi.com')
-            core.exportVariable('GITHUB_ID_TOKEN', id_token)
-            core.setSecret(id_token)
-
-      - name: Test
-        working-directory: ./services/tencent-cos
-        run: cargo test --no-fail-fast
-        env:
-          RUST_LOG: DEBUG
-          RUST_BACKTRACE: full
-          REQSIGN_TENCENT_COS_TEST: ${{ secrets.REQSIGN_TENCENT_COS_TEST }}
-          REQSIGN_TENCENT_COS_ACCESS_KEY: ${{ secrets.REQSIGN_TENCENT_COS_ACCESS_KEY }}
-          REQSIGN_TENCENT_COS_SECRET_KEY: ${{ secrets.REQSIGN_TENCENT_COS_SECRET_KEY }}
-          REQSIGN_TENCENT_COS_URL: ${{ secrets.REQSIGN_TENCENT_COS_URL }}
-          REQSIGN_TENCENT_COS_ROLE_ARN: ${{ secrets.REQSIGN_TENCENT_COS_ROLE_ARN }}
-          REQSIGN_TENCENT_COS_PROVIDER_ID: ${{ secrets.REQSIGN_TENCENT_COS_PROVIDER_ID }}
-          REQSIGN_TENCENT_COS_REGION: ${{ secrets.REQSIGN_TENCENT_COS_REGION }}

@@ -45,6 +45,11 @@ mod profile;
 pub use profile::ProfileCredentialProvider;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod role_chain;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use role_chain::AssumeRoleChainCredentialProvider;
+
+#[cfg(not(target_arch = "wasm32"))]
 mod sso;
 #[cfg(not(target_arch = "wasm32"))]
 pub use sso::SSOCredentialProvider;

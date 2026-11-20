@@ -23,6 +23,7 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 
 fn main() {
     let ctx = Context::new()
+        .with_crypto(reqsign::RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv)

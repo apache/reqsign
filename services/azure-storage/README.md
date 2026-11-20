@@ -5,9 +5,16 @@ Azure Storage signing support for reqsign.
 This crate signs requests for Blob, File, Queue, and Table Storage. It supports
 shared key, SAS token, and Azure AD bearer token credentials.
 
+> Signing needs a `CryptoProvider` resolved through the `Context`: bind one with
+> `Context::with_crypto`, install a process-wide default, or use a facade
+> `default_context()` (which binds RustCrypto when the global slot is empty). A
+> bare `Context::new()` starts unbound. See
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use anyhow::Result;
 use reqsign_azure_storage::{DefaultCredentialProvider, RequestSigner};
 use reqsign_core::{Context, Signer};
@@ -16,7 +23,7 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let ctx = Context::new()
+    let ctx = Context::new().with_crypto(RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default());
 
@@ -111,6 +118,7 @@ Use a Shared Key source to mint an independently usable, expiration-aware SAS
 for one typed container or blob grant:
 
 ```rust
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use std::time::Duration;
 
 use reqsign_azure_storage::{
@@ -126,7 +134,7 @@ let grant = ServiceSasGrant::for_blob(
     ServiceSasBlobPermissions::READ,
 );
 let credential = Granter::new(
-    Context::new(),
+    Context::new().with_crypto(RustCryptoProvider::new()),
     StaticCredentialProvider::new_shared_key(
         "mystorageaccount",
         "<base64-encoded 512-bit account key>",

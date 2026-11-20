@@ -2,9 +2,16 @@
 
 AWS SigV4 signing implementation for `reqsign`.
 
+> Signing needs a `CryptoProvider` resolved through the `Context`: bind one with
+> `Context::with_crypto`, install a process-wide default, or use a facade
+> `default_context()` (which binds RustCrypto when the global slot is empty). A
+> bare `Context::new()` starts unbound. See
+> [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
 ## Quick Start
 
 ```rust,no_run
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use reqsign_aws_v4::{DefaultCredentialProvider, EMPTY_STRING_SHA256, RequestSigner};
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -12,7 +19,7 @@ use reqsign_http_send_reqwest::ReqwestHttpSend;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let ctx = Context::new()
+    let ctx = Context::new().with_crypto(RustCryptoProvider::new())
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);
@@ -87,7 +94,7 @@ let body: &[u8] = b"Hello, World!";
 let payload_hash = if body.is_empty() {
     EMPTY_STRING_SHA256.to_string()
 } else {
-    hex_sha256(body)
+    hex_sha256(body).expect("SHA-256 must succeed")
 };
 
 let request = http::Request::put("https://s3.amazonaws.com/mybucket/hello.txt")
@@ -120,6 +127,11 @@ payload signatures.
 5. `process`
 6. `ecs`
 7. `imds`
+
+The `profile` stage also resolves an assume-role profile through its
+`source_profile` chain. A named SSO source profile uses the `sso` slot; each
+role is assumed with the previous hop's credential. `.no_profile()` disables
+the graph and `.no_sso()` prevents an SSO source from participating.
 
 On `wasm32`, the non-portable `sso` and `process` slots are not available.
 
@@ -180,6 +192,7 @@ an existing AWS credential and return the temporary credential issued by S3
 Access Grants. The result can be passed directly to the existing AWS signer.
 
 ```rust,no_run
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
 use std::time::Duration;
 
 use reqsign_aws_v4::{
@@ -197,7 +210,7 @@ let grant = S3AccessGrantsGrant::new(
     S3AccessGrantsPrivilege::Minimal,
 );
 let granter = Granter::new(
-    Context::new().with_http_send(ReqwestHttpSend::default()),
+    Context::new().with_crypto(RustCryptoProvider::new()).with_http_send(ReqwestHttpSend::default()),
     DefaultCredentialProvider::new(),
     S3AccessGrantsGranter::new(
         S3AccessGrantsConfig::new("111122223333", "us-east-2"),

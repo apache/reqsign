@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::env;
 use std::str::FromStr;
 use std::time::Duration;
@@ -41,7 +43,7 @@ async fn init_signer() -> Option<(Context, Signer<reqsign_aliyun_oss::Credential
         return None;
     }
 
-    let context = Context::new()
+    let context = crate::common::test_context()
         .with_file_read(TokioFileRead)
         .with_http_send(ReqwestHttpSend::default())
         .with_env(OsEnv);

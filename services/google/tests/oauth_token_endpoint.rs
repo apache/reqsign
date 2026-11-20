@@ -15,22 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::sync::{Arc, Mutex, OnceLock};
 
 use bytes::Bytes;
 use http::{Request, Response, StatusCode};
 use reqsign_core::hash::base64_decode;
-use reqsign_core::{Context, Error, ErrorKind, Granter, HttpSend, ProvideCredential, Result};
+use reqsign_core::{Error, ErrorKind, Granter, HttpSend, ProvideCredential, Result};
 use reqsign_google::{
     AuthorizedUserCredentialProvider, CredentialAccessBoundaryGrant,
     CredentialAccessBoundaryPermissions, OAuth2Credentials,
     ServerSideCredentialAccessBoundaryGranter, ServiceAccount,
     ServiceAccountTokenCredentialProvider, StaticCredentialProvider,
 };
+use rsa::Generate;
+use rsa::PrivateKey;
+use rsa::pkcs8::{EncodePrivateKey, LineEnding};
 use serde::Deserialize;
 use serde_json::{Value, json};
-
-const RSA_PKCS8_PEM: &str = include_str!("fixtures/rsa-2048-pkcs8.pem");
 
 const DEFAULT_URI: &str = "https://oauth2.googleapis.com/token";
 const CUSTOM_URI: &str = "https://trusted.example/token?tenant=uri-secret";
@@ -62,7 +65,14 @@ impl HttpSend for MockHttp {
 fn service_account() -> ServiceAccount {
     static KEY: OnceLock<String> = OnceLock::new();
     ServiceAccount {
-        private_key: KEY.get_or_init(|| RSA_PKCS8_PEM.to_string()).clone(),
+        private_key: KEY
+            .get_or_init(|| {
+                PrivateKey::generate()
+                    .to_pkcs8_pem(LineEnding::LF)
+                    .unwrap()
+                    .to_string()
+            })
+            .clone(),
         client_email: "test@example.iam.gserviceaccount.com".into(),
     }
 }
@@ -105,7 +115,7 @@ async fn service_account_uses_selected_uri_for_request_and_audience_on_each_exch
 {
     for uri in [None, Some(CUSTOM_URI), Some("http://127.0.0.1:8765/token")] {
         let http = MockHttp::default();
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::common::test_context().with_http_send(http.clone());
         let mut provider = ServiceAccountTokenCredentialProvider::new(service_account())
             .with_scope("scope-a scope-b");
         if let Some(uri) = uri {
@@ -143,7 +153,7 @@ async fn service_account_uses_selected_uri_for_request_and_audience_on_each_exch
 async fn authorized_user_uses_selected_uri_and_preserves_refresh_fields() -> Result<()> {
     for uri in [None, Some(CUSTOM_URI), Some("http://[::1]:8765/token")] {
         let http = MockHttp::default();
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::common::test_context().with_http_send(http.clone());
         let mut provider = AuthorizedUserCredentialProvider::new(oauth_credentials());
         if let Some(uri) = uri {
             provider = provider.with_token_uri(uri)?;
@@ -211,7 +221,7 @@ async fn adapter_selects_explicit_configuration_then_file_uri_then_default() -> 
                 user = user.with_token_uri(uri)?;
             }
             let http = MockHttp::default();
-            let ctx = Context::new().with_http_send(http.clone());
+            let ctx = crate::common::test_context().with_http_send(http.clone());
             service.provide_credential(&ctx).await?;
             user.provide_credential(&ctx).await?;
 
@@ -292,7 +302,7 @@ async fn failures_are_redacted_and_do_not_fall_back() -> Result<()> {
             br#"{"access_token":"access-secret","expires_in":18446744073709551615}"#,
         )), ..Default::default() },
     ] {
-        let ctx = Context::new().with_http_send(http.clone());
+        let ctx = crate::common::test_context().with_http_send(http.clone());
         let errors = [service.provide_credential(&ctx).await.unwrap_err(), user.provide_credential(&ctx).await.unwrap_err()];
         for error in errors {
             let rendered = format!("{error} {error:?}");
@@ -321,7 +331,7 @@ async fn custom_oauth_sources_compose_with_existing_granter() -> Result<()> {
             CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
         );
         let output = Granter::new(
-            Context::new().with_http_send(http.clone()),
+            crate::common::test_context().with_http_send(http.clone()),
             source,
             ServerSideCredentialAccessBoundaryGranter::new(grant),
         )

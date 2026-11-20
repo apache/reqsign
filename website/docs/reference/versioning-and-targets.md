@@ -59,7 +59,7 @@ majors are published with each
 ## Targets
 
 **Rust version.** The workspace declares `rust-version = "1.87.0"` — the
-minimum supported Rust. The `rsa 0.10` upgrade used by the JWT helpers
+minimum supported Rust. The RustCrypto backend's `rsa 0.10` dependency
 requires this version. CI tracks stable; MSRV bumps are treated as
 observable changes, not patch-level noise.
 

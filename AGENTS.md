@@ -40,6 +40,17 @@ For security-sensitive changes, follow [SECURITY.md](SECURITY.md) and
 [THREAT_MODEL.md](THREAT_MODEL.md) as the source of truth for Reqsign's
 security boundary and its relationship to OpenDAL and other host applications.
 
+### Crypto Provider
+
+All signing cryptography goes through a `reqsign_core::crypto::CryptoProvider`
+resolved by `Context` (explicit binding, then the process-wide registration).
+`reqsign-core` and every `services/*` crate carry no production cryptographic
+implementation. `reqsign-core` exposes no public JWT module or feature; Azure
+and Google own their private RS256 JWS formatting. Follow
+[docs/crypto-provider.md](docs/crypto-provider.md) as the source of truth for
+the provider contract, resolution and installation ownership, error semantics,
+and the official RustCrypto/BoringSSL implementations.
+
 ### Default Credential Provider
 
 All future refactors and API reviews around `DefaultCredentialProvider` must
@@ -76,6 +87,8 @@ this supported subset.
 
 - Service crates and core share a lockstep major version (`3.0.0`).
 - `reqsign-http-send-reqwest` has its own major (`4.0.0`).
+- `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
+  version lines, starting at `1.0.0`.
 - The facade `reqsign` crate follows an independent scheme (`0.20.0`).
 - Release is triggered by pushing a `v*.*.*` tag; `cargo publish --workspace`
   publishes everything.

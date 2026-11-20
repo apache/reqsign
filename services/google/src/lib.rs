@@ -31,6 +31,7 @@ mod credential;
 pub use credential::{Credential, OAuth2Credentials, ServiceAccount, Token};
 
 mod credential_access_boundary;
+mod jwt;
 #[cfg(feature = "credential-access-boundary-client-side")]
 pub use credential_access_boundary::ClientSideCredentialAccessBoundaryGranter;
 pub use credential_access_boundary::{
@@ -47,9 +48,6 @@ pub use service_account_impersonation::{
 mod sign_request;
 pub use sign_request::RequestSigner;
 
-#[cfg(test)]
-mod test_support;
-
 mod provide_credential;
 pub use provide_credential::{
     AuthorizedUserCredentialProvider, DefaultCredentialProvider, DefaultCredentialProviderBuilder,
@@ -57,3 +55,8 @@ pub use provide_credential::{
     FileCredentialProvider, ServiceAccountTokenCredentialProvider, StaticCredentialProvider,
     TokenCredentialProvider, VmMetadataCredentialProvider, WellKnownCredentialProvider,
 };
+
+#[cfg(test)]
+pub(crate) fn test_context() -> reqsign_core::Context {
+    reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
+}

@@ -24,10 +24,10 @@ use crate::provide_credential::entra::{
 };
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, ProvideCredential};
+use reqsign_core::{Context, ProvideCredential, hash};
 use serde::Serialize;
-use sha1::{Digest, Sha1};
 
 /// Generate a unique JWT ID using timestamp and a pseudo-random component
 fn generate_jti(now: u64) -> String {
@@ -141,16 +141,47 @@ impl ClientCertificateCredentialProvider {
         Ok((cert_der, private_key_pem.into_bytes()))
     }
 
+    /// Format a JWS compact JWT using RS256 and the selected provider.
+    fn encode_rs256_jws<H, C>(
+        provider: &dyn CryptoProvider,
+        header: &H,
+        claims: &C,
+        private_key_pem: &[u8],
+    ) -> Result<String, reqsign_core::Error>
+    where
+        H: Serialize,
+        C: Serialize,
+    {
+        let encoded_header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(header).map_err(|e| {
+            reqsign_core::Error::unexpected("failed to serialize JWT JSON").with_source(e)
+        })?);
+        let encoded_claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).map_err(|e| {
+            reqsign_core::Error::unexpected("failed to serialize JWT JSON").with_source(e)
+        })?);
+        let signing_input = format!("{encoded_header}.{encoded_claims}");
+        let signature =
+            provider.rsa_pkcs1v15_sha256_sign(private_key_pem, signing_input.as_bytes())?;
+
+        Ok(format!(
+            "{signing_input}.{}",
+            URL_SAFE_NO_PAD.encode(signature)
+        ))
+    }
+
     /// Calculate certificate thumbprint (x5t)
     /// Azure AD expects SHA1 thumbprint for x5t field
-    fn calculate_thumbprint(&self, cert_der: &[u8]) -> String {
-        let hash = Sha1::digest(cert_der);
-        URL_SAFE_NO_PAD.encode(hash)
+    fn calculate_thumbprint(
+        &self,
+        provider: &dyn CryptoProvider,
+        cert_der: &[u8],
+    ) -> Result<String, reqsign_core::Error> {
+        Ok(URL_SAFE_NO_PAD.encode(hash::sha1(provider, cert_der)?))
     }
 
     /// Create JWT client assertion
     fn create_client_assertion(
         &self,
+        provider: &dyn CryptoProvider,
         tenant_id: &str,
         client_id: &str,
         cert_der: &[u8],
@@ -163,30 +194,11 @@ impl ClientCertificateCredentialProvider {
             })?
             .as_secs();
 
-        self.create_client_assertion_at(
-            tenant_id,
-            client_id,
-            cert_der,
-            private_key_pem,
-            now,
-            generate_jti(now),
-        )
-    }
-
-    fn create_client_assertion_at(
-        &self,
-        tenant_id: &str,
-        client_id: &str,
-        cert_der: &[u8],
-        private_key_pem: &[u8],
-        now: u64,
-        jti: String,
-    ) -> Result<String, reqsign_core::Error> {
         let claims = ClientAssertionClaims {
             aud: format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"),
             exp: now + 600, // 10 minutes
             iss: client_id.to_string(),
-            jti,
+            jti: generate_jti(now),
             nbf: now,
             sub: client_id.to_string(),
         };
@@ -194,10 +206,10 @@ impl ClientCertificateCredentialProvider {
         let header = ClientAssertionHeader {
             alg: "RS256",
             typ: "JWT",
-            x5t: self.calculate_thumbprint(cert_der),
+            x5t: self.calculate_thumbprint(provider, cert_der)?,
         };
 
-        reqsign_core::jwt::encode_rs256_pem(&header, &claims, private_key_pem)
+        Self::encode_rs256_jws(provider, &header, &claims, private_key_pem)
     }
 
     /// Exchange client assertion for access token
@@ -298,12 +310,19 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
                 _ => return Ok(None),
             };
 
+        let provider = ctx.crypto_provider()?;
+
         // Load certificate and private key
         let (cert_der, private_key_pem) = self.load_certificate(ctx, &certificate_path).await?;
 
         // Create client assertion
-        let client_assertion =
-            self.create_client_assertion(&tenant_id, &client_id, &cert_der, &private_key_pem)?;
+        let client_assertion = self.create_client_assertion(
+            provider,
+            &tenant_id,
+            &client_id,
+            &cert_der,
+            &private_key_pem,
+        )?;
 
         // Exchange for access token
         let token_response = self
@@ -323,57 +342,131 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use reqsign_core::FileRead;
-
-    const CLIENT_CERTIFICATE_PEM: &str =
-        include_str!("../../tests/fixtures/client-certificate.pem");
-    // Fixed RS256 output for the synthetic fixture and fixed timestamp/JTI below.
-    // This protects the certificate x5t, claims shape and PKCS#1 v1.5 signature.
-    const EXPECTED_CLIENT_ASSERTION: &str = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsIng1dCI6IjlsNlFzcGRYRVZ5WXI5VXI1Z1F5RkhoRnBKTSJ9.eyJhdWQiOiJodHRwczovL2xvZ2luLm1pY3Jvc29mdG9ubGluZS5jb20vdGVuYW50L29hdXRoMi92Mi4wL3Rva2VuIiwiZXhwIjoxNzAwMDAwNjAwLCJpc3MiOiJjbGllbnQiLCJqdGkiOiJmaXhlZC1qdGkiLCJuYmYiOjE3MDAwMDAwMDAsInN1YiI6ImNsaWVudCJ9.VovaDD9_dOI8PyYGC3HwefKgk9LhnZkVCkv8OegzWcuvhcm2oFUP2IipkS691hmjrtNTTORu8e8ow0M3iD1_73-ilJKvbwjNGf64EDY33b0aUG1xEVDqgeqdVa9rqltGeiuSAIBjRg01N_cRiezf6LMMWNtpbymKFxZWg0icqn08FYkhb1fvKCNaQW_fxSzfwNJv0wdM6OT9no12nuoIL8S0iCf-a7Piv14U75ECIADUvC3ssySlDxIs53tBtCOOc1sv6A59QEaR4z6MczFmVFFg8Kh1D8H51K5S9wWCCKbzZn1c_1Q-iRfnr5ZFlHIRDTYsAEI24E4aK-cLUQlF7Q";
-
-    #[derive(Debug)]
-    struct FixtureFileRead;
-
-    impl FileRead for FixtureFileRead {
-        async fn file_read(&self, path: &str) -> reqsign_core::Result<Vec<u8>> {
-            assert_eq!(path, "client-certificate.pem");
-            Ok(CLIENT_CERTIFICATE_PEM.as_bytes().to_vec())
-        }
-    }
-
-    #[tokio::test]
-    async fn client_assertion_matches_the_certificate_fixture() -> anyhow::Result<()> {
-        let provider = ClientCertificateCredentialProvider::new();
-        let ctx = Context::new().with_file_read(FixtureFileRead);
-        let (cert_der, private_key_pem) = provider
-            .load_certificate(&ctx, "client-certificate.pem")
-            .await?;
-        assert!(private_key_pem.starts_with(b"-----BEGIN PRIVATE KEY-----"));
-
-        let jwt = provider.create_client_assertion_at(
-            "tenant",
-            "client",
-            &cert_der,
-            &private_key_pem,
-            1_700_000_000,
-            "fixed-jti".to_string(),
-        )?;
-        assert_eq!(jwt, EXPECTED_CLIENT_ASSERTION);
-        Ok(())
-    }
 
     #[test]
     fn test_calculate_thumbprint() {
         // Test certificate DER (simplified example)
         let cert_der = b"test certificate";
         let provider = ClientCertificateCredentialProvider::new();
-        let thumbprint = provider.calculate_thumbprint(cert_der);
+        let crypto = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        let thumbprint = provider
+            .calculate_thumbprint(&crypto, cert_der)
+            .expect("thumbprint calculation must succeed");
 
         // Should produce a valid base64url encoded hash
         assert!(!thumbprint.is_empty());
         assert!(!thumbprint.contains('+'));
         assert!(!thumbprint.contains('/'));
         assert!(!thumbprint.contains('='));
+    }
+
+    #[test]
+    fn client_assertion_is_three_unpadded_verifiable_segments_for_both_pem_formats() {
+        use rsa::Generate;
+        use rsa::PrivateKey;
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        use rsa::pkcs1v15::{Signature, VerifyingKey};
+        use rsa::pkcs8::{EncodePrivateKey, LineEnding};
+        use rsa::sha2::Sha256;
+        use rsa::signature::Verifier;
+
+        let key = PrivateKey::generate();
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        let certificate_provider = ClientCertificateCredentialProvider::new();
+        let cert_der = b"test certificate";
+        let thumbprint = certificate_provider
+            .calculate_thumbprint(&provider, cert_der)
+            .expect("thumbprint calculation must succeed");
+        let header = ClientAssertionHeader {
+            alg: "RS256",
+            typ: "JWT",
+            x5t: thumbprint.clone(),
+        };
+        let claims = ClientAssertionClaims {
+            aud: "https://example.com/token".to_string(),
+            exp: 1,
+            iss: "client".to_string(),
+            jti: "jti".to_string(),
+            nbf: 0,
+            sub: "client".to_string(),
+        };
+
+        for pem in [
+            key.to_pkcs8_pem(LineEnding::LF)
+                .expect("test key must encode as PKCS#8"),
+            key.to_pkcs1_pem(LineEnding::LF)
+                .expect("test key must encode as PKCS#1"),
+        ] {
+            let jwt = ClientCertificateCredentialProvider::encode_rs256_jws(
+                &provider,
+                &header,
+                &claims,
+                pem.as_bytes(),
+            )
+            .expect("JWT encoding must succeed");
+            let parts = jwt.split('.').collect::<Vec<_>>();
+            assert_eq!(parts.len(), 3);
+            assert!(parts.iter().all(|part| !part.contains('=')));
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(
+                    &URL_SAFE_NO_PAD
+                        .decode(parts[0])
+                        .expect("header must decode")
+                )
+                .expect("header must be JSON"),
+                serde_json::json!({"alg": "RS256", "typ": "JWT", "x5t": thumbprint})
+            );
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(
+                    &URL_SAFE_NO_PAD
+                        .decode(parts[1])
+                        .expect("claims must decode")
+                )
+                .expect("claims must be JSON"),
+                serde_json::json!({
+                    "aud": "https://example.com/token",
+                    "exp": 1,
+                    "iss": "client",
+                    "jti": "jti",
+                    "nbf": 0,
+                    "sub": "client"
+                })
+            );
+
+            let signature = URL_SAFE_NO_PAD
+                .decode(parts[2])
+                .expect("signature must decode");
+            let signature =
+                Signature::try_from(signature.as_slice()).expect("signature must parse");
+            let verifying_key = VerifyingKey::<Sha256>::new(key.to_public_key());
+            verifying_key
+                .verify(format!("{}.{}", parts[0], parts[1]).as_bytes(), &signature)
+                .expect("signature must verify");
+        }
+    }
+
+    #[test]
+    fn malformed_client_certificate_private_key_is_credential_invalid() {
+        let crypto = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        let err = ClientCertificateCredentialProvider::encode_rs256_jws(
+            &crypto,
+            &ClientAssertionHeader {
+                alg: "RS256",
+                typ: "JWT",
+                x5t: "thumbprint".to_string(),
+            },
+            &ClientAssertionClaims {
+                aud: "aud".to_string(),
+                exp: 1,
+                iss: "iss".to_string(),
+                jti: "jti".to_string(),
+                nbf: 0,
+                sub: "sub".to_string(),
+            },
+            b"not a private key",
+        )
+        .expect_err("malformed key must fail");
+        assert_eq!(err.kind(), reqsign_core::ErrorKind::CredentialInvalid);
     }
 
     #[test]

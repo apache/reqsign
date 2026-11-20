@@ -1615,7 +1615,7 @@ mod tests {
 
     #[test]
     fn test_resolve_template() {
-        let ctx = Context::new().with_env(MockEnv::default().with_var("FOO", "bar"));
+        let ctx = crate::test_context().with_env(MockEnv::default().with_var("FOO", "bar"));
         assert_eq!(resolve_template(&ctx, "a${FOO}c").unwrap(), "abarc");
     }
 
@@ -1642,7 +1642,9 @@ mod tests {
             access_token: "access-token".to_string(),
         };
         let fs = MockFileRead::default().with_file("/var/run/token", b"  test-oidc \n");
-        let ctx = Context::new().with_http_send(http).with_file_read(fs);
+        let ctx = crate::test_context()
+            .with_http_send(http)
+            .with_file_read(fs);
 
         let provider =
             ExternalAccountCredentialProvider::new(external_account).with_scope("scope-a");
@@ -1670,7 +1672,7 @@ mod tests {
             expected_subject_token_type: "urn:ietf:params:oauth:token-type:jwt".to_string(),
             access_token: "access-token".to_string(),
         };
-        let ctx = Context::new().with_http_send(http);
+        let ctx = crate::test_context().with_http_send(http);
         let provider =
             ExternalAccountCredentialProvider::from_subject_token(config, "caller.subject.token")
                 .with_scope("scope-a");
@@ -1696,7 +1698,7 @@ mod tests {
             "expired.subject.token",
             Timestamp::now() - Duration::from_secs(1),
         );
-        let ctx = Context::new().with_http_send(PanicHttpSend);
+        let ctx = crate::test_context().with_http_send(PanicHttpSend);
 
         let err = provider
             .provide_credential(&ctx)
@@ -1714,7 +1716,7 @@ mod tests {
             "https://sts.googleapis.com/v1/token",
         );
         let provider = ExternalAccountCredentialProvider::from_subject_token(config, secret);
-        let ctx = Context::new().with_http_send(EchoErrorHttpSend {
+        let ctx = crate::test_context().with_http_send(EchoErrorHttpSend {
             response_body: format!(r#"{{"error_description":"{secret}"}}"#),
         });
 
@@ -1747,7 +1749,9 @@ mod tests {
         let sts_scope = Arc::clone(&http.sts_scope);
         let impersonation_scopes = Arc::clone(&http.impersonation_scopes);
         let fs = MockFileRead::default().with_file("/var/run/token", b"test-oidc");
-        let ctx = Context::new().with_http_send(http).with_file_read(fs);
+        let ctx = crate::test_context()
+            .with_http_send(http)
+            .with_file_read(fs);
 
         let provider =
             ExternalAccountCredentialProvider::new(external_account).with_scope(business_scope);
@@ -1800,7 +1804,7 @@ mod tests {
             .with_var("PATH", "oidc")
             .with_var("TOKEN", "secret");
 
-        let ctx = Context::new().with_http_send(http).with_env(env);
+        let ctx = crate::test_context().with_http_send(http).with_env(env);
 
         let provider = ExternalAccountCredentialProvider::new(external_account);
         let cred = provider
@@ -1863,7 +1867,7 @@ mod tests {
             .with_var(AWS_ACCESS_KEY_ID, "test-access-key")
             .with_var(AWS_SECRET_ACCESS_KEY, "test-secret-key")
             .with_var(AWS_SESSION_TOKEN, "test-session-token");
-        let ctx = Context::new().with_env(env);
+        let ctx = crate::test_context().with_env(env);
         let provider = ExternalAccountCredentialProvider::new(aws_account(aws_source()));
 
         let token = provider.load_oidc_token(&ctx).await?;
@@ -1911,7 +1915,7 @@ mod tests {
             region_response: "us-west-2b".to_string(),
             role_name: "test-role".to_string(),
         };
-        let ctx = Context::new().with_http_send(http);
+        let ctx = crate::test_context().with_http_send(http);
         let provider = ExternalAccountCredentialProvider::new(aws_account(aws_source()));
 
         let token = provider.load_oidc_token(&ctx).await?;
@@ -1946,7 +1950,7 @@ mod tests {
 
         let provider = ExternalAccountCredentialProvider::new(aws_account(source));
         let err = provider
-            .load_oidc_token(&Context::new())
+            .load_oidc_token(&crate::test_context())
             .await
             .expect_err("unsupported AWS environment_id must fail");
         assert!(err.to_string().contains("aws2"));
@@ -1960,7 +1964,7 @@ mod tests {
 
         let provider = ExternalAccountCredentialProvider::new(aws_account(source));
         let err = provider
-            .load_oidc_token(&Context::new())
+            .load_oidc_token(&crate::test_context())
             .await
             .expect_err("invalid metadata host must fail");
         assert!(err.to_string().contains("169.254.169.254"));
@@ -2013,7 +2017,7 @@ mod tests {
             "/tmp/exec-cache.json",
             serde_json::to_vec(&cache).expect("json"),
         );
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(fs)
             .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
             .with_command_execute(MockCommandExecute::success(br#"{"unexpected":true}"#));
@@ -2047,7 +2051,9 @@ mod tests {
         let env = MockEnv::default()
             .with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1")
             .with_var("SUFFIX", "value");
-        let ctx = Context::new().with_env(env).with_command_execute(command);
+        let ctx = crate::test_context()
+            .with_env(env)
+            .with_command_execute(command);
 
         let provider = ExternalAccountCredentialProvider::new(external_account);
         let token = provider.load_oidc_token(&ctx).await?;
@@ -2085,7 +2091,8 @@ mod tests {
     async fn test_executable_source_requires_opt_in() {
         let external_account =
             executable_account(executable_source("/bin/example", None), TOKEN_TYPE_ID_TOKEN);
-        let ctx = Context::new().with_command_execute(MockCommandExecute::success(Vec::new()));
+        let ctx =
+            crate::test_context().with_command_execute(MockCommandExecute::success(Vec::new()));
 
         let provider = ExternalAccountCredentialProvider::new(external_account);
         let err = provider
@@ -2113,7 +2120,7 @@ mod tests {
             .expect("json"),
             b"permission denied".as_slice(),
         );
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
             .with_command_execute(command);
 
@@ -2149,7 +2156,7 @@ mod tests {
             },
         };
         let external_account = executable_account(source, TOKEN_TYPE_ID_TOKEN);
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
             .with_command_execute(SlowCommandExecute);
 
@@ -2166,7 +2173,7 @@ mod tests {
         let external_account =
             executable_account(executable_source("/bin/example", None), TOKEN_TYPE_ID_TOKEN);
         let command = MockCommandExecute::failure("permission denied");
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
             .with_command_execute(command);
 
@@ -2191,7 +2198,7 @@ mod tests {
             }))
             .expect("json"),
         );
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
             .with_command_execute(command);
 
@@ -2218,7 +2225,7 @@ mod tests {
             }))
             .expect("json"),
         );
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
             .with_command_execute(command);
 
@@ -2255,7 +2262,7 @@ mod tests {
             }))
             .expect("json"),
         );
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(fs)
             .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
             .with_command_execute(command);
@@ -2283,7 +2290,7 @@ mod tests {
             }))
             .expect("json"),
         );
-        let ctx = Context::new()
+        let ctx = crate::test_context()
             .with_file_read(fs)
             .with_env(MockEnv::default().with_var(GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES, "1"))
             .with_command_execute(command);

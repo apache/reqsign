@@ -61,7 +61,8 @@ const AWS_SSO_SESSION_NAME: &str = "sso_session";
 ///
 /// Legacy inline `sso_start_url` / `sso_region` profiles and configuration supplied
 /// directly through the setters remain non-refreshable. This provider never
-/// starts interactive login and does not resolve assume-role profile chains.
+/// starts interactive login. It resolves the selected SSO profile itself; the
+/// AWS default provider resolves assume-role profiles that use an SSO source.
 /// The AWS default provider propagates SSO errors. A custom credential chain
 /// retains its own error policy.
 #[derive(Debug, Clone)]
@@ -72,6 +73,7 @@ pub struct SSOCredentialProvider {
     sso_role_name: Option<String>,
     sso_start_url: Option<String>,
     sso_endpoint: Option<String>, // Allow custom endpoint for testing
+    shared: Option<crate::SharedConfig>,
     sessions: Arc<Mutex<HashMap<SessionKey, Arc<SsoSession>>>>,
 }
 
@@ -91,6 +93,7 @@ impl SSOCredentialProvider {
             sso_role_name: None,
             sso_start_url: None,
             sso_endpoint: None,
+            shared: None,
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -131,6 +134,31 @@ impl SSOCredentialProvider {
         self
     }
 
+    /// Reuse the shared configuration selection of the AWS default provider.
+    pub(crate) fn with_shared_config(mut self, shared: crate::SharedConfig) -> Self {
+        self.shared = Some(shared);
+        self
+    }
+
+    /// Load the SSO credential for a source profile of an assume-role chain.
+    ///
+    /// Directly configured SSO values describe the selected SSO profile, not a
+    /// source profile, so they are ignored here. The configured endpoint and
+    /// in-memory session state are retained.
+    pub(crate) async fn provide_credential_for_profile(
+        &self,
+        ctx: &Context,
+        profile: &str,
+    ) -> Result<Option<Credential>> {
+        let mut provider = self.clone();
+        provider.profile = Some(profile.to_owned());
+        provider.sso_account_id = None;
+        provider.sso_region = None;
+        provider.sso_role_name = None;
+        provider.sso_start_url = None;
+        provider.provide_with_clock(ctx, Timestamp::now).await
+    }
+
     async fn load_sso_config(&self, ctx: &Context) -> Result<Option<SSOConfig>> {
         // If all fields are provided directly, use them
         if let (Some(account_id), Some(region), Some(role_name), Some(start_url)) = (
@@ -149,7 +177,7 @@ impl SSOCredentialProvider {
             }));
         }
 
-        let mut shared = crate::SharedConfig::new();
+        let mut shared = self.shared.clone().unwrap_or_default();
         if let Some(profile) = &self.profile {
             shared = shared.with_profile(profile);
         }

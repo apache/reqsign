@@ -34,10 +34,11 @@ cargo add reqsign --features openstack
 ```
 
 ```rust
-use reqsign::openstack;
+use reqsign::{default_context, openstack};
 
 // Environment variables — resolved by the default chain.
-let signer = openstack::default_signer();
+let ctx = default_context();
+let signer = openstack::default_signer(ctx);
 
 let mut req = http::Request::builder()
     .method(http::Method::GET)

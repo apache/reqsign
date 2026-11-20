@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod common;
+
 use std::sync::LazyLock;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -22,24 +24,21 @@ use http::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, DATE};
 use http::{Method, request::Parts};
 use reqsign_core::{Context, ErrorKind, FileRead, Result, SignRequest, Signer};
 use reqsign_oracle::{Credential, RequestSigner, StaticCredentialProvider};
+use rsa::Generate;
 use rsa::PrivateKey;
+use rsa::pkcs1::EncodeRsaPrivateKey;
 use rsa::pkcs1v15::{Signature, VerifyingKey};
-use rsa::pkcs8::DecodePrivateKey;
+use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
 
 const KEY_PATH: &str = "test-key.pem";
-const REQUEST_URI: &str = "https://iaas.example.com:8443/20160918/instances?name=a%2Fb&name=c+%20d";
-const RSA_PKCS1_PEM: &str = include_str!("fixtures/rsa-2048-pkcs1.pem");
-const RSA_PKCS8_PEM: &str = include_str!("fixtures/rsa-2048-pkcs8.pem");
-const RSA_PUBLIC_PEM: &str = include_str!("fixtures/rsa-2048-public.pem");
 const RSA_ENCRYPTED_PEM: &str = include_str!("fixtures/rsa-2048-pkcs8-encrypted.pem");
+const REQUEST_URI: &str = "https://iaas.example.com:8443/20160918/instances?name=a%2Fb&name=c+%20d";
 
 fn private_key() -> &'static PrivateKey {
-    // All fixtures are synthetic and shared by the format tests.
-    static KEY: LazyLock<PrivateKey> = LazyLock::new(|| {
-        PrivateKey::from_pkcs8_pem(RSA_PKCS8_PEM).expect("test RSA key fixture must parse")
-    });
+    // Generate one ephemeral key for all formats; never read a developer's OCI files.
+    static KEY: LazyLock<PrivateKey> = LazyLock::new(PrivateKey::generate);
     &KEY
 }
 
@@ -59,7 +58,7 @@ impl FileRead for KeyFile {
 }
 
 fn context(pem: &str) -> Context {
-    Context::new().with_file_read(KeyFile(pem.as_bytes().to_vec()))
+    crate::common::test_context().with_file_read(KeyFile(pem.as_bytes().to_vec()))
 }
 
 fn credential() -> Credential {
@@ -178,10 +177,8 @@ async fn verify_signed_request(pem: &str) -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn pkcs1_private_keys_produce_valid_signatures() -> anyhow::Result<()> {
-    for pem in [
-        RSA_PKCS1_PEM.to_string(),
-        RSA_PKCS1_PEM.replace('\n', "\r\n"),
-    ] {
+    for line_ending in [LineEnding::LF, LineEnding::CRLF] {
+        let pem = private_key().to_pkcs1_pem(line_ending)?;
         verify_signed_request(&pem).await?;
     }
     Ok(())
@@ -189,10 +186,8 @@ async fn pkcs1_private_keys_produce_valid_signatures() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn pkcs8_private_keys_produce_valid_signatures() -> anyhow::Result<()> {
-    for pem in [
-        RSA_PKCS8_PEM.to_string(),
-        RSA_PKCS8_PEM.replace('\n', "\r\n"),
-    ] {
+    for line_ending in [LineEnding::LF, LineEnding::CRLF] {
+        let pem = private_key().to_pkcs8_pem(line_ending)?;
         verify_signed_request(&pem).await?;
     }
     Ok(())
@@ -200,7 +195,7 @@ async fn pkcs8_private_keys_produce_valid_signatures() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn post_signs_caller_supplied_body_metadata() -> anyhow::Result<()> {
-    let pem = RSA_PKCS8_PEM;
+    let pem = private_key().to_pkcs8_pem(LineEnding::LF)?;
     let body_sha256 = "V9Z20UJTvkvpJ50flBzKE32+6m2zJjweHpDMX/U4Uy0=";
     let mut parts = http::Request::builder()
         .method(Method::POST)
@@ -214,7 +209,7 @@ async fn post_signs_caller_supplied_body_metadata() -> anyhow::Result<()> {
         .0;
     let original_uri = parts.uri.clone();
 
-    sign(pem, &mut parts).await?;
+    sign(&pem, &mut parts).await?;
 
     assert_eq!(parts.uri, original_uri);
     assert_eq!(parts.headers["x-original"], "preserved");
@@ -231,7 +226,7 @@ async fn post_signs_caller_supplied_body_metadata() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn object_storage_put_without_body_metadata_keeps_generic_headers() -> anyhow::Result<()> {
-    let pem = RSA_PKCS8_PEM;
+    let pem = private_key().to_pkcs8_pem(LineEnding::LF)?;
     let mut parts = http::Request::put(
         "https://namespace.compat.objectstorage.us-phoenix-1.oraclecloud.com/b/bucket/o/object",
     )
@@ -240,7 +235,7 @@ async fn object_storage_put_without_body_metadata_keeps_generic_headers() -> any
     .into_parts()
     .0;
 
-    sign(pem, &mut parts).await?;
+    sign(&pem, &mut parts).await?;
 
     assert_eq!(parts.headers["x-original"], "preserved");
     assert_eq!(signed_headers(&parts)?, "date (request-target) host");
@@ -253,7 +248,7 @@ async fn object_storage_put_without_body_metadata_keeps_generic_headers() -> any
 
 #[tokio::test]
 async fn object_storage_upload_part_signs_supplied_content_length_only() -> anyhow::Result<()> {
-    let pem = RSA_PKCS8_PEM;
+    let pem = private_key().to_pkcs8_pem(LineEnding::LF)?;
     let mut parts = http::Request::builder()
         .method(Method::PUT)
         .uri("https://namespace.compat.objectstorage.us-phoenix-1.oraclecloud.com/b/bucket/o/object?uploadId=upload&partNumber=2")
@@ -262,7 +257,7 @@ async fn object_storage_upload_part_signs_supplied_content_length_only() -> anyh
         .into_parts()
         .0;
 
-    sign(pem, &mut parts).await?;
+    sign(&pem, &mut parts).await?;
 
     assert_eq!(parts.headers[CONTENT_LENGTH], "10485760");
     assert_eq!(
@@ -277,7 +272,7 @@ async fn object_storage_upload_part_signs_supplied_content_length_only() -> anyh
 
 #[tokio::test]
 async fn duplicate_signed_body_header_is_rejected_without_mutation() -> anyhow::Result<()> {
-    let pem = RSA_PKCS8_PEM;
+    let pem = private_key().to_pkcs8_pem(LineEnding::LF)?;
     let mut parts = http::Request::builder()
         .method(Method::POST)
         .uri("https://iaas.example.com/20160918/volumeAttachments")
@@ -293,7 +288,7 @@ async fn duplicate_signed_body_header_is_rejected_without_mutation() -> anyhow::
         .0;
     let original = parts.clone();
 
-    let error = sign(pem, &mut parts)
+    let error = sign(&pem, &mut parts)
         .await
         .expect_err("duplicate signed body headers must be rejected");
 
@@ -329,7 +324,10 @@ async fn assert_rejected_without_mutation(pem: &str) -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn public_keys_are_rejected_without_mutating_request() -> anyhow::Result<()> {
-    assert_rejected_without_mutation(RSA_PUBLIC_PEM).await
+    let pem = private_key()
+        .to_public_key()
+        .to_public_key_pem(LineEnding::LF)?;
+    assert_rejected_without_mutation(&pem).await
 }
 
 #[tokio::test]
@@ -360,7 +358,12 @@ async fn absent_or_incomplete_credentials_do_not_read_private_key() -> anyhow::R
         let original = parts.clone();
         // No file adapter is installed: credential checks must precede key loading.
         let result = RequestSigner::default()
-            .sign_request(&Context::new(), &mut parts, credential.as_ref(), None)
+            .sign_request(
+                &crate::common::test_context(),
+                &mut parts,
+                credential.as_ref(),
+                None,
+            )
             .await;
         if credential.is_some() {
             assert_eq!(
