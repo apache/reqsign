@@ -21,11 +21,10 @@ use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use reqsign_core::crypto::{CryptoProvider, get_default};
 use reqsign_core::{ErrorKind, Result};
 use reqsign_crypto_rustcrypto::RustCryptoProvider;
-use rsa::RsaPrivateKey;
+use rsa::PrivateKey;
 use rsa::pkcs1v15::{Signature as RsaSignature, VerifyingKey as RsaVerifyingKey};
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::sha2::Sha256 as RsaSha256;
-use rsa::signature::Verifier as _;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
@@ -118,7 +117,7 @@ fn reference_hmac_sha256(key: &[u8], input: &[u8]) -> [u8; 32] {
 #[test]
 fn rsa_signs_both_pkcs8_and_pkcs1_pem() {
     let provider = provider();
-    let public_key = RsaPrivateKey::from_pkcs8_pem(std::str::from_utf8(RSA_PKCS8).unwrap())
+    let public_key = PrivateKey::from_pkcs8_pem(std::str::from_utf8(RSA_PKCS8).unwrap())
         .expect("test key must parse")
         .to_public_key();
     let verifying_key = RsaVerifyingKey::<RsaSha256>::new(public_key);
@@ -136,6 +135,19 @@ fn rsa_signs_both_pkcs8_and_pkcs1_pem() {
                 .verify(message, &signature)
                 .expect("signature must verify");
         }
+    }
+}
+
+#[test]
+fn rsa_signature_is_deterministic_for_both_pem_formats() {
+    const EXPECTED: &str = "6be8116e69987bb4dd2048520ab3ac580e5f4f0c872d6f7b6223e24dc58d86037b524e8fadd8b608ef97f0f44ab6011c05275cefb2fb43deb0bb9569634aac7ff0ae3e019979a15c455a4c1bc6d0b722bb5d17bfb9e4d9886e32678afa048e3af03f5c37c33d9dfab9229edf5ae9140c2440ca18a92a8d47e3994e04e4171b375c556c3c14632642510c1b7f2e464b1bf765a1e795490391653d384f25ed7da415709197da7b81f3ba5d8c23b9594d7e420ee1142cefe70664bd63fa3c2f84ac97884d278a4c4ef5ee3e0427601a76fbe20880231a00771f997151ab77d2d8e3260e397ba4c1f08f697ae80cd8fab9ff4eeaa20d4424e4c9cc793a35041e526d";
+
+    let provider = provider();
+    for pem in [RSA_PKCS8, RSA_PKCS1] {
+        let signature = provider
+            .rsa_pkcs1v15_sha256_sign(pem, b"reqsign-rsa-0.10-vector")
+            .expect("RSA signing must succeed");
+        assert_eq!(hex(&signature), EXPECTED);
     }
 }
 

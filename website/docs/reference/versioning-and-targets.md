@@ -58,8 +58,9 @@ majors are published with each
 
 ## Targets
 
-**Rust version.** The workspace declares `rust-version = "1.86.0"` — the
-minimum supported Rust. CI tracks stable; MSRV bumps are treated as
+**Rust version.** The workspace declares `rust-version = "1.87.0"` — the
+minimum supported Rust. The RustCrypto backend's `rsa 0.10` dependency
+requires this version. CI tracks stable; MSRV bumps are treated as
 observable changes, not patch-level noise.
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI

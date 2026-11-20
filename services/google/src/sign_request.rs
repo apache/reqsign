@@ -909,8 +909,8 @@ mod tests {
     use bytes::Bytes;
     use http::header;
     use reqsign_core::{ErrorKind, HttpSend, ProvideCredential, Signer};
+    use rsa::Generate;
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-    use rsa::rand_core::OsRng;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -1291,8 +1291,7 @@ mod tests {
 
     #[tokio::test]
     async fn service_account_exchange_preserves_optional_expiration_response() -> Result<()> {
-        let private_key = rsa::RsaPrivateKey::new(&mut OsRng, 1024)
-            .expect("private key must generate")
+        let private_key = rsa::PrivateKey::generate()
             .to_pkcs8_pem(LineEnding::LF)
             .expect("private key must encode")
             .to_string();
@@ -1419,8 +1418,7 @@ mod tests {
     }
 
     fn test_service_account(client_email: &str) -> ServiceAccount {
-        let private_key = rsa::RsaPrivateKey::new(&mut OsRng, 1024)
-            .expect("private key must generate")
+        let private_key = rsa::PrivateKey::generate()
             .to_pkcs8_pem(LineEnding::LF)
             .expect("private key must encode")
             .to_string();

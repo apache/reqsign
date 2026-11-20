@@ -196,9 +196,8 @@ fn single_header_value<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Result<
 mod tests {
     use super::*;
     use reqsign_core::FileRead;
-    use rsa::RsaPrivateKey;
+    use rsa::Generate;
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-    use rsa::rand_core::OsRng;
 
     const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -237,7 +236,7 @@ mod tests {
             string_to_sign.contains(&format!("(request-target): get /object%2Fname?{RAW_QUERY}"))
         );
 
-        let private_key = RsaPrivateKey::new(&mut OsRng, 1024).expect("key generation must work");
+        let private_key = rsa::PrivateKey::generate();
         let private_key = private_key
             .to_pkcs8_pem(LineEnding::LF)
             .expect("private key must encode")

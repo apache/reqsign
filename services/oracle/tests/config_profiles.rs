@@ -30,12 +30,12 @@ use reqsign_core::{
 use reqsign_oracle::{
     ConfigFileCredentialProvider, Credential, DefaultCredentialProvider, RequestSigner,
 };
+use rsa::Generate;
+use rsa::PrivateKey;
 use rsa::pkcs1v15::{Signature, VerifyingKey};
 use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-use rsa::rand_core::OsRng;
 use rsa::sha2::Sha256;
 use rsa::signature::Verifier;
-use rsa::{RsaPrivateKey, RsaPublicKey};
 
 const CONFIG_PATH: &str = "/synthetic/oci/config";
 const DEFAULT_KEY: &str = "/synthetic/keys/default.pem";
@@ -397,7 +397,7 @@ async fn default_chain_loads_inherited_profile_and_respects_removed_slot() -> Re
 
 #[tokio::test]
 async fn inherited_profile_produces_a_verifiable_signed_request() -> anyhow::Result<()> {
-    let key = RsaPrivateKey::new(&mut OsRng, 2048)?;
+    let key = PrivateKey::generate();
     let (ctx, files) = context(&(defaults() + "[ADMIN]\nuser=admin-user\n"), Some("ADMIN"));
     files.insert(
         DEFAULT_KEY,
@@ -431,7 +431,7 @@ async fn inherited_profile_produces_a_verifiable_signed_request() -> anyhow::Res
         original_uri.path_and_query().unwrap(),
         original_uri.authority().unwrap()
     );
-    VerifyingKey::<Sha256>::new(RsaPublicKey::from(&key))
+    VerifyingKey::<Sha256>::new(key.to_public_key())
         .verify(signing_input.as_bytes(), &signature)?;
     assert_eq!(files.reads(), [CONFIG_PATH, DEFAULT_KEY]);
     Ok(())

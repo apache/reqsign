@@ -61,11 +61,11 @@ mod tests {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use reqsign_core::ErrorKind;
     use reqsign_crypto_rustcrypto::RustCryptoProvider;
-    use rsa::RsaPrivateKey;
+    use rsa::Generate;
+    use rsa::PrivateKey;
     use rsa::pkcs1::EncodeRsaPrivateKey;
     use rsa::pkcs1v15::{Signature, VerifyingKey};
     use rsa::pkcs8::{EncodePrivateKey, LineEnding};
-    use rsa::rand_core::OsRng;
     use rsa::sha2::Sha256;
     use rsa::signature::Verifier;
     use serde::Serialize;
@@ -85,8 +85,8 @@ mod tests {
         iat: u64,
     }
 
-    fn private_key() -> RsaPrivateKey {
-        RsaPrivateKey::new(&mut OsRng, 1024).expect("test RSA key generation must work")
+    fn private_key() -> PrivateKey {
+        PrivateKey::generate()
     }
 
     fn decode_json(segment: &str) -> serde_json::Value {
