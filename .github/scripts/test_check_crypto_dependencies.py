@@ -67,21 +67,28 @@ class CryptoDependencyBoundaryTest(unittest.TestCase):
         self.assertEqual(violations[0].package, "sha2")
         self.assertEqual(violations[0].key, "crypto-hash")
 
-    def test_target_specific_build_dependency_is_rejected(self):
-        violations = self.check(
-            {
-                "Cargo.toml": """\
-                    [workspace]
-                    members = ["service"]
-                """,
-                "service/Cargo.toml": """\
-                    [target.'cfg(unix)'.build-dependencies]
-                    ring = "0.17"
-                """,
-            }
-        )
-        self.assertEqual(violations[0].table, "target.cfg(unix).build-dependencies")
-        self.assertEqual(violations[0].package, "ring")
+    def test_legacy_dependency_table_names_are_rejected(self):
+        for declared, expected in [
+            ("build_dependencies", "build_dependencies"),
+            ("target.'cfg(unix)'.dev_dependencies", "target.cfg(unix).dev_dependencies"),
+        ]:
+            with self.subTest(table=declared):
+                violations = self.check(
+                    {
+                        "Cargo.toml": """\
+                            [workspace]
+                            members = ["service"]
+                        """,
+                        "service/Cargo.toml": f"""\
+                            [{declared}]
+                            backend = {{ package = "sha2", version = "0.11" }}
+                        """,
+                    }
+                )
+                self.assertEqual(
+                    [(item.table, item.key, item.package) for item in violations],
+                    [(expected, "backend", "sha2")],
+                )
 
     def test_unused_workspace_alias_is_rejected(self):
         violations = self.check(
@@ -104,18 +111,22 @@ class CryptoDependencyBoundaryTest(unittest.TestCase):
             [("workspace.dependencies", "crypto-random", "getrandom")],
         )
 
-    def test_workspace_alias_used_by_a_member_is_rejected_in_both_places(self):
+    def test_standalone_workspace_inherited_alias_is_rejected_in_both_places(self):
         violations = self.check(
             {
                 "Cargo.toml": """\
                     [workspace]
-                    members = ["service"]
+                    members = []
+                    exclude = ["tool"]
+                """,
+                "tool/Cargo.toml": """\
+                    [workspace]
+                    resolver = "2"
 
                     [workspace.dependencies]
                     crypto-hash = { package = "sha2", version = "0.11" }
-                """,
-                "service/Cargo.toml": """\
-                    [dependencies]
+
+                    [dev-dependencies]
                     crypto-hash = { workspace = true }
                 """,
             }
@@ -123,8 +134,8 @@ class CryptoDependencyBoundaryTest(unittest.TestCase):
         self.assertEqual(
             {(item.manifest, item.table) for item in violations},
             {
-                ("Cargo.toml", "workspace.dependencies"),
-                ("service/Cargo.toml", "dependencies"),
+                ("tool/Cargo.toml", "workspace.dependencies"),
+                ("tool/Cargo.toml", "dev-dependencies"),
             },
         )
 

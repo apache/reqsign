@@ -53,6 +53,11 @@ fn context(pem: &[u8], provider: RecordingProvider) -> Context {
         .with_crypto(provider)
 }
 
+fn pem_with_line_ending(pem: &str, crlf: bool) -> String {
+    let lf = pem.replace("\r\n", "\n");
+    if crlf { lf.replace('\n', "\r\n") } else { lf }
+}
+
 fn credential() -> Credential {
     Credential {
         tenancy: "test-tenancy".into(),
@@ -180,11 +185,7 @@ async fn verify_signed_request(pem: &[u8]) -> anyhow::Result<()> {
 #[tokio::test]
 async fn pkcs1_private_keys_produce_valid_signatures() -> anyhow::Result<()> {
     for crlf in [false, true] {
-        let pem = if crlf {
-            RSA_PKCS1_PEM.replace('\n', "\r\n")
-        } else {
-            RSA_PKCS1_PEM.to_string()
-        };
+        let pem = pem_with_line_ending(RSA_PKCS1_PEM, crlf);
         verify_signed_request(pem.as_bytes()).await?;
     }
     Ok(())
@@ -193,11 +194,7 @@ async fn pkcs1_private_keys_produce_valid_signatures() -> anyhow::Result<()> {
 #[tokio::test]
 async fn pkcs8_private_keys_produce_valid_signatures() -> anyhow::Result<()> {
     for crlf in [false, true] {
-        let pem = if crlf {
-            RSA_PKCS8_PEM.replace('\n', "\r\n")
-        } else {
-            RSA_PKCS8_PEM.to_string()
-        };
+        let pem = pem_with_line_ending(RSA_PKCS8_PEM, crlf);
         verify_signed_request(pem.as_bytes()).await?;
     }
     Ok(())

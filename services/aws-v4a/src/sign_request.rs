@@ -613,25 +613,46 @@ mod tests {
         )
     }
 
+    fn request_signature(request: &Request<()>) -> AnyResult<String> {
+        if let Some(authorization) = request.headers().get(header::AUTHORIZATION) {
+            Ok(authorization
+                .to_str()?
+                .rsplit_once(", Signature=")
+                .expect("authorization must contain signature")
+                .1
+                .to_string())
+        } else {
+            Ok(
+                form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+                    .find(|(key, _)| key == "X-Amz-Signature")
+                    .expect("presigned request must contain signature")
+                    .1
+                    .into_owned(),
+            )
+        }
+    }
+
+    fn sdk_signature(string_to_sign: &str) -> String {
+        let signing_key = v4a::generate_signing_key(ACCESS_KEY_ID, SECRET_ACCESS_KEY);
+        v4a::calculate_signature(signing_key, string_to_sign.as_bytes())
+    }
+
+    fn assert_signature_matches_sdk(request: &Request<()>, string_to_sign: &str) -> AnyResult<()> {
+        assert_eq!(
+            request_signature(request)?,
+            sdk_signature(string_to_sign),
+            "wire signature must match the AWS SDK signature for the independently assembled canonical request for {}",
+            request.uri(),
+        );
+        Ok(())
+    }
+
     fn verify_encoding_signature(
         request: &Request<()>,
         string_to_sign: &str,
         provider: &RecordingProvider,
     ) -> AnyResult<()> {
-        let signature = if let Some(authorization) = request.headers().get(header::AUTHORIZATION) {
-            authorization
-                .to_str()?
-                .rsplit_once(", Signature=")
-                .expect("authorization must contain signature")
-                .1
-                .to_string()
-        } else {
-            form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-                .find(|(key, _)| key == "X-Amz-Signature")
-                .expect("presigned request must contain signature")
-                .1
-                .into_owned()
-        };
+        let signature = request_signature(request)?;
 
         let calls = provider.calls();
         assert_eq!(calls.len(), 1, "one ECDSA call per signed request");
@@ -649,6 +670,7 @@ mod tests {
             "wire signature must be the provider's DER bytes as hex for {}",
             request.uri(),
         );
+        assert_signature_matches_sdk(request, string_to_sign)?;
         Ok(())
     }
 
@@ -761,9 +783,10 @@ mod tests {
                         assert_eq!(actual.uri().to_string(), uri);
                     }
 
-                    // The AWS SDK uses a different ECDSA nonce, so compare its
-                    // fields above and verify our signature input independently.
+                    // Compare both signatures against the independently
+                    // assembled canonical request, not just against each other.
                     let string_to_sign = encoding_string_to_sign(canonical_path, expires_in);
+                    assert_signature_matches_sdk(&expected, &string_to_sign)?;
                     verify_encoding_signature(&actual, &string_to_sign, &provider)?;
                 }
             }

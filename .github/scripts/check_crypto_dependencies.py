@@ -18,8 +18,9 @@
 """Reject direct cryptographic implementation dependencies outside crypto/*.
 
 The check walks every manifest so it sees declarations that Cargo metadata
-would omit, including unused workspace entries, renamed packages, target
-specific tables, and build/dev dependency kinds.
+would omit, including unused workspace entries, standalone workspace
+inheritance, renamed packages, target-specific tables, and both Cargo
+dependency table spellings.
 """
 
 from __future__ import annotations
@@ -45,7 +46,14 @@ FORBIDDEN_PACKAGES = frozenset(
     }
 )
 SKIPPED_DIRECTORIES = frozenset({"target", ".git"})
-DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
+# Cargo 1.87 accepts both hyphenated and underscored table names.
+DEPENDENCY_TABLES = (
+    "dependencies",
+    "dev-dependencies",
+    "dev_dependencies",
+    "build-dependencies",
+    "build_dependencies",
+)
 
 
 @dataclass(frozen=True)
@@ -70,15 +78,15 @@ def dependency_package(
     if isinstance(value, str):
         return key
     if isinstance(value, dict):
+        if value.get("workspace") is True:
+            return workspace_packages.get(key, key)
         package = value.get("package")
         if isinstance(package, str):
             return package
-        if value.get("workspace") is True:
-            return workspace_packages.get(key, key)
     return key
 
 
-def table_paths(manifest: dict[str, object]) -> list[tuple[str, object]]:
+def dependency_tables(manifest: dict[str, object]) -> list[tuple[str, object]]:
     paths: list[tuple[str, object]] = []
     for table in DEPENDENCY_TABLES:
         if table in manifest:
@@ -94,48 +102,71 @@ def table_paths(manifest: dict[str, object]) -> list[tuple[str, object]]:
     return paths
 
 
-def collect_workspace_packages(root: Path) -> tuple[dict[str, str], dict[str, object]]:
-    manifest_path = root / "Cargo.toml"
-    if not manifest_path.is_file():
-        return {}, {}
-    with manifest_path.open("rb") as file:
-        manifest = tomllib.load(file)
+def workspace_dependencies(manifest: dict[str, object]) -> dict[str, object]:
     workspace = manifest.get("workspace")
-    dependencies = workspace.get("dependencies", {}) if isinstance(workspace, dict) else {}
-    if not isinstance(dependencies, dict):
-        dependencies = {}
-    packages = {
-        key: dependency_package(key, value, {})
-        for key, value in dependencies.items()
-    }
-    return packages, dependencies
+    if not isinstance(workspace, dict):
+        return {}
+    dependencies = workspace.get("dependencies", {})
+    return dependencies if isinstance(dependencies, dict) else {}
 
 
-def check_repository(root: Path) -> list[Violation]:
-    workspace_packages, workspace_dependencies = collect_workspace_packages(root)
-    violations: list[Violation] = []
-
-    if workspace_dependencies:
-        for key, value in workspace_dependencies.items():
-            package = dependency_package(key, value, workspace_packages)
-            if package in FORBIDDEN_PACKAGES:
-                violations.append(
-                    Violation("Cargo.toml", "workspace.dependencies", key, package)
-                )
-
+def parse_manifests(root: Path) -> dict[Path, tuple[Path, dict[str, object]]]:
+    manifests = {}
     for manifest_path in sorted(root.rglob("Cargo.toml")):
         relative = manifest_path.relative_to(root)
         if any(part in SKIPPED_DIRECTORIES for part in relative.parts):
             continue
+        with manifest_path.open("rb") as file:
+            manifests[manifest_path] = (relative, tomllib.load(file))
+    return manifests
+
+
+def owning_workspace(
+    manifest_path: Path,
+    root: Path,
+    manifests: dict[Path, tuple[Path, dict[str, object]]],
+) -> Path | None:
+    directory = manifest_path.parent
+    while True:
+        candidate = directory / "Cargo.toml"
+        if candidate in manifests and isinstance(manifests[candidate][1].get("workspace"), dict):
+            return candidate
+        if directory == root:
+            return None
+        directory = directory.parent
+
+
+def check_repository(root: Path) -> list[Violation]:
+    root = root.resolve()
+    manifests = parse_manifests(root)
+    workspace_packages = {
+        path: {
+            key: dependency_package(key, value, {})
+            for key, value in workspace_dependencies(manifest).items()
+        }
+        for path, (_, manifest) in manifests.items()
+        if isinstance(manifest.get("workspace"), dict)
+    }
+    violations: list[Violation] = []
+
+    for manifest_path, (relative, manifest) in manifests.items():
         if relative.parts[0] == "crypto":
             continue
-        with manifest_path.open("rb") as file:
-            manifest = tomllib.load(file)
-        for table, dependencies in table_paths(manifest):
+        workspace_path = owning_workspace(manifest_path, root, manifests)
+        inherited_packages = workspace_packages.get(workspace_path, {})
+
+        for key, value in workspace_dependencies(manifest).items():
+            package = dependency_package(key, value, {})
+            if package in FORBIDDEN_PACKAGES:
+                violations.append(
+                    Violation(relative.as_posix(), "workspace.dependencies", key, package)
+                )
+
+        for table, dependencies in dependency_tables(manifest):
             if not isinstance(dependencies, dict):
                 continue
             for key, value in dependencies.items():
-                package = dependency_package(key, value, workspace_packages)
+                package = dependency_package(key, value, inherited_packages)
                 if package in FORBIDDEN_PACKAGES:
                     violations.append(
                         Violation(relative.as_posix(), table, key, package)

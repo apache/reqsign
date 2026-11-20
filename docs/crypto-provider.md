@@ -320,8 +320,8 @@ cryptographic implementation crate such as `sha1`, `sha2`, `hmac`, `rsa`,
 `p256`, `aes-gcm`, `getrandom`, `boring`, `openssl`, `ring`, or `aws-lc-rs`.
 This applies to `[dependencies]`, `[dev-dependencies]`, and
 `[build-dependencies]`, including target-specific tables, renamed packages, and
-root `[workspace.dependencies]`. Provider crates such as
-`reqsign-crypto-rustcrypto` remain permitted as dependencies and
+`[workspace.dependencies]` entries in any repo-local workspace. Provider crates
+such as `reqsign-crypto-rustcrypto` remain permitted as dependencies and
 dev-dependencies. Encoding (`base64`, `hex`), PEM parsing (`pem`), secret
 zeroization (`zeroize`), and interoperability reference harnesses such as
 `aws-sigv4` remain ordinary dependencies where needed. Backend crates under
@@ -389,7 +389,7 @@ The repository verifies this contract with:
   paths.
 - A manifest check rejects direct cryptographic implementation dependencies
   outside `crypto/*` in every dependency kind, including target-specific and
-  renamed declarations, and rejects unused entries in root
+  renamed declarations, and rejects unused entries in any repo-local
   `[workspace.dependencies]`.
 - `cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown`,
   the workspace test suite, doc tests, formatting, clippy with `-D warnings`,
