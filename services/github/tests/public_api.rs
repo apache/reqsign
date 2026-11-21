@@ -392,10 +392,6 @@ async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()>
         MockCommandExecute::sequence([user_result("bad user")]),
         MockCommandExecute::sequence([
             user_result("cli-user"),
-            MockCommandResult::AdapterError("SENTINEL_TOKEN_ADAPTER".to_string()),
-        ]),
-        MockCommandExecute::sequence([
-            user_result("cli-user"),
             failure_result(
                 1,
                 b"no oauth token found for github.com account cli-user".to_vec(),
@@ -409,6 +405,41 @@ async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()>
         assert!(!parts.headers.contains_key(AUTHORIZATION));
     }
     Ok(())
+}
+
+#[tokio::test]
+async fn gh_cli_token_lookup_adapter_error_is_reported_without_leaking() {
+    let cases = [
+        (
+            MockCommandExecute::sequence([
+                user_result("cli-user"),
+                MockCommandResult::AdapterError("SENTINEL_TOKEN_ADAPTER".to_string()),
+            ]),
+            2,
+        ),
+        (
+            MockCommandExecute::sequence([
+                user_result("cli-user"),
+                failure_result(1, b"unknown flag: --no-refresh".to_vec()),
+                MockCommandResult::AdapterError("SENTINEL_RETRY_ADAPTER".to_string()),
+            ]),
+            3,
+        ),
+    ];
+
+    for (command, expected_calls) in cases {
+        let ctx = context_with_command(HashMap::new(), command.clone());
+        let error = GhCliCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await
+            .expect_err("a token lookup adapter error must not become anonymous access");
+
+        assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("SENTINEL_TOKEN_ADAPTER"));
+        assert!(!debug.contains("SENTINEL_RETRY_ADAPTER"));
+        assert_eq!(command.calls().len(), expected_calls);
+    }
 }
 
 #[tokio::test]
@@ -449,6 +480,58 @@ async fn default_provider_rejects_failed_stored_token_read() -> Result<()> {
     assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
     assert_eq!(parts.uri, original.uri);
     assert_eq!(parts.headers, original.headers);
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_provider_rejects_incomplete_stored_token_lookup() -> Result<()> {
+    let cases = [
+        (
+            MockCommandExecute::sequence([
+                user_result("cli-user"),
+                MockCommandResult::AdapterError("SENTINEL_TOKEN_ADAPTER".to_string()),
+            ]),
+            ErrorKind::CredentialInvalid,
+        ),
+        (
+            MockCommandExecute::sequence([
+                user_result("cli-user"),
+                MockCommandResult::Output(CommandOutput {
+                    status: 0,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                }),
+            ]),
+            ErrorKind::ConfigInvalid,
+        ),
+        (
+            MockCommandExecute::sequence([
+                user_result("cli-user"),
+                MockCommandResult::Output(CommandOutput {
+                    status: 0,
+                    stdout: b" \n\t".to_vec(),
+                    stderr: Vec::new(),
+                }),
+            ]),
+            ErrorKind::ConfigInvalid,
+        ),
+    ];
+
+    for (command, expected_kind) in cases {
+        let ctx = context_with_command(HashMap::new(), command);
+        let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+        let original = stale_request();
+        let mut parts = original.clone();
+
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("an incomplete stored-token lookup must not become anonymous access");
+
+        assert_eq!(error.kind(), expected_kind);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+    }
     Ok(())
 }
 
@@ -510,6 +593,9 @@ async fn gh_cli_rejects_unsupported_user_flag_without_retry() {
 #[tokio::test]
 async fn gh_cli_malformed_successful_output_is_reported_without_leaking_it() {
     let cases = [
+        Vec::new(),
+        b" \n\t".to_vec(),
+        b"\r\n".to_vec(),
         b"first\nsecond".to_vec(),
         b"token with spaces".to_vec(),
         b"nonutf8\xff".to_vec(),

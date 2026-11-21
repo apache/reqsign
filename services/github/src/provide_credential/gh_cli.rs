@@ -48,10 +48,13 @@ pub(crate) const GH_CLI_MIN_VERSION: &str = "2.40.0";
 ///
 /// The command is executed directly, never through a shell. Reqsign does not
 /// parse the CLI's configuration files; the CLI remains the source of truth
-/// for account and host selection. A missing command adapter, a missing stored
-/// account, or an absent stored token yields no credential. Malformed
-/// successful token output and other stored-token failures, such as an expired
-/// or revoked token, yield a redacted error instead of silently falling back.
+/// for account and host selection. A missing command adapter or a missing
+/// stored account during the initial `gh config get user` lookup yields no
+/// credential and permits anonymous fallback. After an active user is found,
+/// only an explicit `no oauth token found` response yields no credential.
+/// Command execution errors, empty or whitespace-only successful stdout,
+/// malformed output, and other stored-token failures such as an expired or
+/// revoked token yield a redacted error instead of silently falling back.
 /// Errors never contain the token, the output, or the CLI's stderr.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GhCliCredentialProvider;
@@ -90,13 +93,15 @@ impl GhCliCredentialProvider {
         ctx: &Context,
         user: &str,
         no_refresh: bool,
-    ) -> Option<CommandOutput> {
+    ) -> Result<CommandOutput> {
         let mut args = vec!["auth", "token", "--hostname", GITHUB_HOST, "--user", user];
         if no_refresh {
             args.push("--no-refresh");
         }
 
-        self.execute(ctx, &args).await
+        ctx.command_execute(GH_CLI, &args)
+            .await
+            .map_err(|_| stored_token_failure())
     }
 }
 
@@ -108,17 +113,11 @@ impl ProvideCredential for GhCliCredentialProvider {
             return Ok(None);
         };
 
-        let mut output = match self.token_for_user(ctx, &user, true).await {
-            Some(output) => output,
-            None => return Ok(None),
-        };
+        let mut output = self.token_for_user(ctx, &user, true).await?;
 
         if !output.success() {
             if command_failed_with_unknown_flag(&output, "--no-refresh") {
-                output = match self.token_for_user(ctx, &user, false).await {
-                    Some(output) => output,
-                    None => return Ok(None),
-                };
+                output = self.token_for_user(ctx, &user, false).await?;
             } else if command_failed_with_unknown_flag(&output, "--user") {
                 return Err(unsupported_gh_cli_error());
             } else if command_failed_because_token_is_missing(&output) {
@@ -139,15 +138,21 @@ impl ProvideCredential for GhCliCredentialProvider {
         }
 
         let token = match std::str::from_utf8(&output.stdout) {
-            Ok(token) => token.trim(),
+            Ok(token) => token.trim_end_matches(['\r', '\n']),
             Err(_) => {
                 return Err(Error::config_invalid(
                     "`gh auth token` returned non-UTF-8 output",
                 ));
             }
         };
+        // The first-party command prints a non-empty token followed by a
+        // newline on success and returns `no oauth token found` with a non-zero
+        // status when no token exists. An empty or whitespace-only success is
+        // therefore malformed, not an absent credential.
         if token.is_empty() {
-            return Ok(None);
+            return Err(Error::config_invalid(
+                "`gh auth token` returned an unusable token",
+            ));
         }
 
         Credential::new(token)
