@@ -304,6 +304,18 @@ contact the network. IMDSv2 region fallback requires explicit opt-in and applies
 a deadline to the complete metadata-token and region exchange. Exposed endpoint
 settings remain the caller's responsibility to interpret.
 
+The Vercel Blob default provider reads only `BLOB_READ_WRITE_TOKEN`. It does not
+read Vercel OIDC, store, or API endpoint variables: those credentials need store
+or operation context in the request. The Vercel Artifacts default provider reads
+`TURBO_TOKEN`, then `VERCEL_ARTIFACTS_TOKEN`. The team or owner identifiers,
+cache key, endpoint, and protocol headers stay in the caller-built request, so
+credential discovery never selects a cache scope. Blob and Artifacts credentials
+are separate types and environment sources; a token discovered for one service
+never authenticates the other. A present but unusable token, or an invalid
+prepended provider, fails instead of falling through to another identity. Each
+signed `Authorization` header is marked sensitive, and forwarding it to a
+different host is the caller's responsibility.
+
 If a trusted caller configures a malicious file path, command, environment
 implementation, metadata endpoint, HTTP client, or custom provider, using that
 source is caller responsibility. If Reqsign ignores explicit source removal,
@@ -318,10 +330,11 @@ signing contract.
 Examples:
 
 - AWS SigV4, Azure Storage shared-key signing, Google service-account or token
-  flows, Aliyun OSS, Huawei Cloud OBS, Oracle Cloud, Tencent COS, and
-  Volcengine TOS signers must canonicalize method, path, query parameters,
-  headers, payload hash rules, expiry, date, service, region, account, and
-  provider-specific fields as required by their implemented contract.
+  flows, Aliyun OSS, Huawei Cloud OBS, Oracle Cloud, Tencent COS, Volcengine
+  TOS, Vercel Blob, and Vercel Artifacts signers must construct authentication
+  from the method, path, query parameters, headers, payload hash rules, expiry,
+  date, service, region, account, and provider-specific fields required by their
+  implemented contract.
 - Header-based signing must apply authorization data to headers without
   unintentionally moving authority to query parameters.
 - Query-based signing and presigning must apply expiry and signed query

@@ -1,0 +1,107 @@
+---
+title: Vercel Artifacts
+description: Vercel Artifacts bearer tokens for the Turborepo Remote Cache.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="vercel-artifacts" />
+
+## Get started
+
+```bash
+cargo add reqsign --features vercel
+```
+
+```rust
+use reqsign::{default_context, vercel};
+
+// TURBO_TOKEN, then VERCEL_ARTIFACTS_TOKEN — resolved by the default chain.
+let ctx = default_context();
+let signer = vercel::default_artifacts_signer(ctx);
+
+let mut req = http::Request::builder()
+    .method(http::Method::PUT)
+    .uri("https://api.vercel.com/v8/artifacts/example-hash?teamId=team_example")
+    .body(())?
+    .into_parts()
+    .0;
+
+// Sign in place, then send with the HTTP client you already use.
+signer.sign(&mut req, None).await?;
+```
+
+The signer inserts `Authorization: Bearer <token>`, which is how the Vercel
+Artifacts API authenticates Remote Cache calls.
+
+## Credential discovery
+
+The default chain reads:
+
+1. `TURBO_TOKEN` through `Context` environment access. Turborepo documents it as
+   the bearer token for Remote Cache access.
+2. `VERCEL_ARTIFACTS_TOKEN` through `Context` environment access. Vercel injects
+   it into its build environments.
+
+When both are present, `TURBO_TOKEN` is tried first; the Vercel-injected variable
+is the build-environment fallback. Vercel's OIDC token exchange for CI produces a
+short-lived Turborepo access token; Reqsign accepts that token but does not
+perform the exchange.
+
+`TURBO_TEAM`, `TURBO_TEAMID`, and `VERCEL_ARTIFACTS_OWNER` are not read. They
+describe the cache scope rather than the identity, so the caller adds them as the
+`teamId` or `slug` query parameter.
+
+A present but unusable token, or an invalid prepended or static provider, fails
+signing instead of silently selecting a different identity. An absent token
+yields no credential, and signing then reports `CredentialInvalid`.
+
+## Cache key and scope stay with the caller
+
+The signer preserves the URI. The caller chooses the API endpoint, the cache key
+in `/v8/artifacts/<hash>`, the team or owner scope query, and artifact headers such
+as `x-artifact-duration`.
+
+The default API host is `https://api.vercel.com`; self-hosted Remote Cache
+implementations and a caller-selected endpoint remain outside Reqsign.
+
+## Request behavior
+
+`ArtifactsRequestSigner` inserts a sensitive `Authorization` header and leaves the
+URI and every other header unchanged. The Vercel Remote Cache API has no query
+authentication, so signing rejects `expires_in`.
+
+A token is long-lived or refreshed by the caller's CI flow. It carries no expiry
+that Reqsign can read, and signing writes no protocol time, so signing has no
+clock dependency. Refresh or rotate it with the mechanism your deployment already
+uses; an expired token fails at the API.
+
+The caller owns the HTTP client and its redirect policy. Do not forward the
+signed `Authorization` header to a different host.
+
+## WASM
+
+Environment and static credentials plus header signing work on
+`wasm32-unknown-unknown` without a JavaScript clock.
+
+<ProviderDetails id="vercel-artifacts" />

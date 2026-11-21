@@ -150,6 +150,20 @@ let signer = azure::default_signer(ctx)
     ));
 ```
 
+#### Vercel Blob and Artifacts
+
+```rust
+use reqsign::{default_context, vercel};
+
+let ctx = default_context();
+
+// Reads BLOB_READ_WRITE_TOKEN.
+let blob_signer = vercel::default_blob_signer(ctx.clone());
+
+// Reads TURBO_TOKEN, then VERCEL_ARTIFACTS_TOKEN.
+let artifacts_signer = vercel::default_artifacts_signer(ctx);
+```
+
 #### Google Cloud
 
 ```rust
@@ -185,6 +199,7 @@ let signer = aliyun::default_signer(ctx, "mybucket");
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
   - Tencent COS: `reqsign-tencent-cos`
+  - Vercel Blob and Artifacts: `reqsign-vercel`
   - Volcengine TOS: `reqsign-volcengine-tos`
 
 ## Contributing

@@ -30,6 +30,7 @@ Reqsign publishes many crates on three tracks:
 | Track | Crates | Scheme |
 | --- | --- | --- |
 | Core + services | `reqsign-core`, `reqsign-aws-core`, every `reqsign-<provider>` service crate, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | Lockstep major (currently `3.x`) |
+| New provider crates | `reqsign-vercel` | Independent major, starting at `1.x` |
 | Reqwest adapter | `reqsign-http-send-reqwest` | Independent major (currently `4.x`), so reqwest major bumps do not force a core major |
 | Facade | `reqsign` | Independent (currently `0.20.x`) |
 
@@ -70,7 +71,9 @@ do.
 
 **WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a
 defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS
-SigV4a, Azure Storage, Aliyun OSS, and Tencent COS providers. The
+SigV4a, Azure Storage, Vercel Blob, Vercel Artifacts, Aliyun OSS, and Tencent
+COS providers. Vercel environment and static credentials plus header signing
+work without a JavaScript clock. The
 [provider matrix](/docs/providers/) is the authoritative per-provider
 status; the [Custom runtimes & WASM guide](/docs/guides/custom-runtimes/)
 covers building and browser-backed contexts.

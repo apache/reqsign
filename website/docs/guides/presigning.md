@@ -66,6 +66,8 @@ interpreted:
   nature; shared keys and bearer tokens sign headers.
 - Oracle Cloud bounds credential validity but produces **no** query
   authentication — header signing is its only mode.
+- Vercel Blob and Vercel Artifacts reject `expires_in`; header signing is
+  their only mode.
 
 The [provider matrix](/docs/providers/) carries the authoritative
 header/query flags, and the

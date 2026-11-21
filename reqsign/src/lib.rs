@@ -57,6 +57,9 @@ pub mod oracle;
 #[cfg(feature = "tencent")]
 pub mod tencent;
 
+#[cfg(feature = "vercel")]
+pub mod vercel;
+
 #[cfg(feature = "volcengine")]
 pub mod volcengine;
 
