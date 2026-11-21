@@ -80,12 +80,14 @@ servers checked into `services/aws-v4/tests/mocks/`.
 ## WASM Compatibility
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
-`aliyun`, `tencent`) must compile for `wasm32-unknown-unknown`. CI verifies
+`aliyun`, `b2`, `tencent`) must compile for `wasm32-unknown-unknown`. CI verifies
 this supported subset.
 
 ## Versioning
 
-- Service crates and core share a lockstep major version (`3.0.0`).
+- Established service crates and core share a lockstep major version (`3.0.0`).
+  New provider crates introduced after that line start independently at `1.0.0`
+  and depend on the current core major.
 - `reqsign-http-send-reqwest` has its own major (`4.0.0`).
 - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
   version lines, starting at `1.0.0`.
