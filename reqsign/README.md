@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services.
+Signing HTTP requests for AWS, Azure, GitHub, Google, Huawei, Aliyun, Tencent and Oracle services.
 
 ## Features
 
@@ -8,6 +8,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 
 - **AWS**: Signature V4 for AWS services
 - **Azure**: Azure Storage services
+- **GitHub**: GitHub.com bearer tokens and anonymous public access
 - **Google**: Google Cloud services
 - **Aliyun**: Aliyun Object Storage Service (OSS)
 - **Huawei Cloud**: Object Storage Service (OBS)
@@ -165,6 +166,10 @@ let ctx = reqsign::default_context();
 use reqsign::azure;
 let signer = azure::default_signer(ctx.clone());
 
+// GitHub
+use reqsign::github;
+let signer = github::default_signer(ctx.clone());
+
 // Google Cloud
 use reqsign::google;
 let signer = google::default_signer(ctx.clone(), "storage.googleapis.com");
@@ -198,6 +203,7 @@ let signer = oracle::default_signer(ctx);
 - `aliyun`: Enable Aliyun OSS support
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
+- `github`: Enable GitHub.com support
 - `google`: Enable Google Cloud support
 - `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
 - `huaweicloud`: Enable Huawei Cloud OBS support

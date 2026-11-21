@@ -292,6 +292,17 @@ contact the network. IMDSv2 region fallback requires explicit opt-in and applies
 a deadline to the complete metadata-token and region exchange. Exposed endpoint
 settings remain the caller's responsibility to interpret.
 
+GitHub credential discovery reads `GH_TOKEN` before `GITHUB_TOKEN`, then asks
+the GitHub CLI for its stored GitHub.com token with
+`gh auth token --hostname github.com --no-refresh` through the configured
+`CommandExecute`. The explicit hostname keeps discovery on GitHub.com regardless
+of `GH_HOST` or a local Git remote. It does not read `GH_ENTERPRISE_TOKEN` or
+`GITHUB_ENTERPRISE_TOKEN`, does not run a shell, and does not let `gh` refresh or
+rewrite its credential store. Command output, including stderr, never appears
+in errors or `Debug` output. The explicit anonymous provider is the only
+supported fallback when no token is found; it leaves the request unchanged and
+is subject to GitHub's unauthenticated rate limit.
+
 If a trusted caller configures a malicious file path, command, environment
 implementation, metadata endpoint, HTTP client, or custom provider, using that
 source is caller responsibility. If Reqsign ignores explicit source removal,

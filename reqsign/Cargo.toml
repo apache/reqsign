@@ -20,7 +20,7 @@ name = "reqsign"
 version = "0.20.9"
 
 categories = ["authentication", "web-programming::http-client"]
-description = "Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services"
+description = "Signing HTTP requests for AWS, Azure, GitHub, Google, Huawei, Aliyun, Tencent and Oracle services"
 documentation = "https://docs.rs/reqsign"
 keywords = ["http", "requests", "signing", "aws", "azure"]
 
@@ -43,6 +43,7 @@ reqsign-aliyun-oss = { workspace = true, optional = true }
 reqsign-aws-v4 = { workspace = true, optional = true }
 reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
+reqsign-github = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
 reqsign-openstack-keystone = { workspace = true, optional = true }
@@ -70,6 +71,7 @@ aws = ["aws-v4"]
 aws-v4 = ["dep:reqsign-aws-v4"]
 aws-v4a = ["dep:reqsign-aws-v4a"]
 azure = ["dep:reqsign-azure-storage"]
+github = ["dep:reqsign-github"]
 google = ["dep:reqsign-google"]
 google-credential-access-boundary-client-side = [
   "google",
@@ -87,6 +89,7 @@ full = [
   "aws",
   "aws-v4a",
   "azure",
+  "github",
   "google",
   "google-credential-access-boundary-client-side",
   "huaweicloud",

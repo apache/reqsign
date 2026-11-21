@@ -131,7 +131,7 @@ const config = {
           {
             title: "Apache Reqsign™: Build. Sign. Send.",
             description:
-              "Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.",
+              "Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.",
             summary:
               "Reqsign keeps explicit per-provider signing protocols while sharing one composition pattern: build the request, load or grant credentials, sign, then send with your own HTTP client.",
             generateLLMsTxt: true,

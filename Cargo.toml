@@ -37,6 +37,7 @@ reqsign-command-execute-tokio = { version = "3.0.9", path = "context/command-exe
 reqsign-core = { version = "3.3.4", path = "core" }
 reqsign-crypto-rustcrypto = { version = "1.0.0", path = "crypto/rustcrypto" }
 reqsign-file-read-tokio = { version = "3.0.9", path = "context/file-read-tokio" }
+reqsign-github = { version = "1.0.0", path = "services/github" }
 reqsign-google = { version = "3.4.0", path = "services/google" }
 reqsign-http-send-reqwest = { version = "4.0.9", path = "context/http-send-reqwest" }
 reqsign-huaweicloud-obs = { version = "3.1.0", path = "services/huaweicloud-obs" }

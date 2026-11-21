@@ -42,6 +42,9 @@ pub mod aws;
 #[cfg(feature = "azure")]
 pub mod azure;
 
+#[cfg(feature = "github")]
+pub mod github;
+
 #[cfg(feature = "google")]
 pub mod google;
 

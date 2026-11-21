@@ -150,6 +150,17 @@ let signer = azure::default_signer(ctx)
     ));
 ```
 
+#### GitHub
+
+```rust
+use reqsign::{default_context, github};
+
+// Reads GH_TOKEN/GITHUB_TOKEN, then the GitHub CLI, then falls back to
+// anonymous access for public resources.
+let ctx = default_context();
+let signer = github::default_signer(ctx);
+```
+
 #### Google Cloud
 
 ```rust
@@ -180,6 +191,7 @@ let signer = aliyun::default_signer(ctx, "mybucket");
   - AWS services (SigV4): `reqsign-aws-v4`
   - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
+  - GitHub.com: `reqsign-github`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
   - OpenStack Keystone: `reqsign-openstack-keystone`
