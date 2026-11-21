@@ -69,37 +69,61 @@ not a raw-path pass-through for noncanonical wire paths.
 
 ## Payload Signing
 
-`RequestSigner` signs the request head (`http::request::Parts`) and never reads
-the body. If `x-amz-content-sha256` is present, the signer preserves it and uses
-it as the SigV4 payload hash. Otherwise, header authentication adds
-`x-amz-content-sha256: UNSIGNED-PAYLOAD`, including for an empty body. Query
-authentication (presigning) does not add the header, but uses
-`UNSIGNED-PAYLOAD` in the canonical request.
+### Why `UNSIGNED-PAYLOAD` is the default
+
+`RequestSigner` receives `http::request::Parts` and never reads the request
+body. The caller owns the body and may stream it, retry it, or hand it directly
+to the HTTP client; hashing it inside the signer would require buffering the
+whole body or implementing a streaming signature. Reqsign therefore defaults
+to the S3 payload mode and leaves the signed-payload decision to the caller.
+
+When `x-amz-content-sha256` is absent, header authentication adds
+`x-amz-content-sha256: UNSIGNED-PAYLOAD`, including for an empty body, and uses
+that value in the canonical request. Query authentication (presigning) does not
+add the header but canonicalizes the missing value as `UNSIGNED-PAYLOAD`.
 
 `UNSIGNED-PAYLOAD` is an Amazon S3 payload mode. The signer uses the same
-default for every service name, while other AWS services define their own
-payload requirements. Check the endpoint's [SigV4 requirements] when that mode
-is not accepted.
+default for every service name; other AWS services define their own SigV4
+payload requirements, and some require the actual payload hash. Do not assume a
+non-S3 endpoint accepts `UNSIGNED-PAYLOAD`. Check the endpoint's
+[SigV4 requirements] and API reference when the service requires a signed
+payload.
 
-For an S3 request that must sign the actual payload, hash the exact bytes that
-will be sent and set `x-amz-content-sha256` before signing. Use
-`EMPTY_STRING_SHA256` for an empty body and `reqsign_core::hash::hex_sha256` for
-non-empty bytes:
+### Signing the exact bytes
+
+For an operation that requires a signed payload, set `x-amz-content-sha256`
+before signing to the lowercase hex SHA-256 of the exact bytes that will be
+transmitted. For an empty body, use `EMPTY_STRING_SHA256`, whose value is the
+SHA-256 of the empty string:
+
+```text
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+```
+
+Use `reqsign_core::hash::hex_sha256` for non-empty bytes. Hash after any content
+encoding or compression, and do not change the payload after signing. Chunked
+or streaming payload signatures are not implemented.
 
 ```rust,no_run
 use reqsign_aws_v4::EMPTY_STRING_SHA256;
 use reqsign_core::hash::hex_sha256;
 
+let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
 let body: &[u8] = b"Hello, World!";
 let payload_hash = if body.is_empty() {
     EMPTY_STRING_SHA256.to_string()
 } else {
-    hex_sha256(body).expect("SHA-256 must succeed")
+    hex_sha256(&provider, body).expect("SHA-256 must succeed")
 };
 
 let request = http::Request::put("https://s3.amazonaws.com/mybucket/hello.txt")
     .header("x-amz-content-sha256", payload_hash)
     .body(body)
+    .expect("request must be valid");
+
+let empty_request = http::Request::put("https://s3.amazonaws.com/mybucket/empty.txt")
+    .header("x-amz-content-sha256", EMPTY_STRING_SHA256)
+    .body(())
     .expect("request must be valid");
 ```
 
@@ -110,11 +134,40 @@ effect. If the header is set before presigning, it becomes part of
 request. Leave it unset when the URL should use `UNSIGNED-PAYLOAD` without a
 payload header.
 
-Hash the bytes after content encoding or compression, and do not change the
-payload after signing. `RequestSigner` does not implement chunked or streaming
-payload signatures.
+### Signature hash, TLS, and S3 checksums
+
+The SigV4 signature covers the request method, URI, signed headers, and the
+declared payload hash; it does not encrypt the body. When set to a payload
+digest, the hash binds the signature to those exact bytes; `UNSIGNED-PAYLOAD`
+explicitly does not cover the body. The signature does not replace TLS: the HTTP
+client owns transport security, and Reqsign does not verify responses or S3
+checksums.
+
+S3's upload checksum headers are a separate integrity mechanism. `RequestSigner`
+does not add them to general requests; callers supply them when required or
+useful. Their values and support rules differ from the SigV4 payload hash:
+
+| Header | Value | Role |
+| --- | --- | --- |
+| `x-amz-content-sha256` | Lowercase hex SHA-256, or `UNSIGNED-PAYLOAD` | SigV4 payload hash |
+| `x-amz-checksum-*` (for example, `x-amz-checksum-sha256`) | Base64-encoded checksum | S3 additional checksum; support varies by algorithm, operation, bucket, and transfer mode |
+| `Content-MD5` | Base64 MD5 | Legacy S3 integrity header; availability depends on operation, bucket, and transfer mode |
+
+Checksum support is not universal. For example, [`PutObject`] does not support
+`Content-MD5` for directory buckets, while [`DeleteObjects`] requires
+`Content-MD5` for general purpose buckets and accepts `Content-MD5` or one of
+the supported `x-amz-checksum-*` headers for directory buckets. Multipart
+uploads and `aws-chunked` trailing checksums have their own per-operation rules.
+Use the operation's API reference and the [S3 upload integrity guide]; do not
+substitute a checksum header for `x-amz-content-sha256`.
+
+For the REST API, use the algorithm-specific `x-amz-checksum-*` header rather
+than the SDK-only `x-amz-sdk-checksum-algorithm` selector.
 
 [SigV4 requirements]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html
+[S3 upload integrity guide]: https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html
+[`PutObject`]: https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html
+[`DeleteObjects`]: https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html
 
 ## Default Credential Chain
 
