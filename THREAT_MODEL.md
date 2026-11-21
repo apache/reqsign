@@ -286,6 +286,18 @@ cycles, conflicting `credential_source`, and an SSO source whose slot was
 removed fail without selecting a later provider. The STS requests use only the
 regional endpoint implied by the selected signing region.
 
+`AssumeRoleCredentialProvider` and `AssumeRoleWithWebIdentityCredentialProvider`
+send STS requests to the endpoint configured on the provider, including any path
+prefix it carries; otherwise to the first of `AWS_ENDPOINT_URL_STS`,
+`AWS_ENDPOINT_URL`, the selected profile's `sts` service `endpoint_url`, and the
+profile's `endpoint_url`, unless
+`AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` or the profile's
+`ignore_configured_endpoint_urls` is true; and otherwise to the regional or
+partition default. Endpoint settings in the environment and the shared config
+file are trusted caller configuration, as in the AWS SDKs. An `http://` endpoint
+carries the web identity token or signed request, and the returned temporary
+credentials, in cleartext; choosing one is the caller's responsibility.
+
 AWS shared configuration and region discovery are separate from credential
 acquisition. Loading `SharedConfig` does not execute credential processes or
 contact the network. IMDSv2 region fallback requires explicit opt-in and applies

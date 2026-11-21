@@ -57,4 +57,5 @@ pub use sso::SSOCredentialProvider;
 mod r#static;
 pub use r#static::StaticCredentialProvider;
 
+pub(crate) mod sts_endpoint;
 pub(crate) mod utils;

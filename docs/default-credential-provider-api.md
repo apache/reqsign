@@ -87,8 +87,10 @@ input applies to multiple provider slots. Such a method must:
   still wins.
 
 For AWS V4, `with_profile(profile)` applies the explicit profile to the
-`profile`, `sso`, and `process` slots. On `wasm32`, it applies only to the
-available `profile` slot.
+`profile`, `sso`, `process`, and `web_identity` slots. For `web_identity` it
+selects the profile whose STS endpoint settings apply; `no_profile()` removes only
+the profile credential source and does not stop that. On `wasm32`, it applies
+only to the available `profile` and `web_identity` slots.
 
 ## Internal State Model
 

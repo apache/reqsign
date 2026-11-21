@@ -187,6 +187,147 @@ impl SharedConfig {
     }
 }
 
+/// Endpoint settings of the selected profile for one service, read from the shared config file only.
+///
+/// Values are raw: no environment variable or explicit override is applied, and
+/// `ignore_configured_endpoint_urls` is not interpreted. Empty values are absent.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ProfileEndpointSettings {
+    /// The profile's `ignore_configured_endpoint_urls`.
+    pub(crate) ignore_configured_endpoint_urls: Option<String>,
+    /// `endpoint_url` under the service's key in the `[services ...]` section the profile names.
+    pub(crate) service_endpoint_url: Option<String>,
+    /// The profile's global `endpoint_url`.
+    pub(crate) endpoint_url: Option<String>,
+}
+
+impl SharedConfig {
+    /// Read the selected profile's endpoint settings for `service_key` (for example `sts`).
+    ///
+    /// This reads only the shared config file, with the same profile and path selection as
+    /// [`Self::load`], and parses it as the AWS SDKs do: `[profile default]` fully replaces
+    /// `[default]`, a `#` or `;` preceded by whitespace starts a comment in a property line, and
+    /// property names are case-insensitive. A missing file, profile, or `services` section yields
+    /// absent values.
+    pub(crate) async fn load_endpoint_settings(
+        &self,
+        ctx: &Context,
+        service_key: &str,
+    ) -> Result<ProfileEndpointSettings> {
+        let name = self.profile_name(ctx);
+        let Some(path) = self.config_file_path(ctx) else {
+            return Ok(ProfileEndpointSettings::default());
+        };
+        let Ok(content) = ctx.file_read(&path).await else {
+            return Ok(ProfileEndpointSettings::default());
+        };
+        let content = std::str::from_utf8(&content)
+            .map_err(|_| Error::config_invalid("AWS shared configuration is not UTF-8"))?;
+        let sections = parse_config_sections(content);
+        let profile_section = if name == "default" && sections.contains_key("profile default") {
+            "profile default".to_owned()
+        } else {
+            config_section(&name)
+        };
+        let Some(profile) = sections.get(&profile_section) else {
+            return Ok(ProfileEndpointSettings::default());
+        };
+        let service_endpoint_url = profile
+            .get("services")
+            .and_then(|services| non_empty(Some(services.as_str())))
+            .and_then(|services| sections.get(&format!("services {services}")))
+            .and_then(|section| section.get(service_key))
+            .and_then(|nested| nested_setting(nested, "endpoint_url"));
+        Ok(ProfileEndpointSettings {
+            ignore_configured_endpoint_urls: non_empty(
+                profile
+                    .get("ignore_configured_endpoint_urls")
+                    .map(String::as_str),
+            ),
+            service_endpoint_url,
+            endpoint_url: non_empty(profile.get("endpoint_url").map(String::as_str)),
+        })
+    }
+}
+
+/// Parse an AWS shared config file into its sections, following the AWS SDK for Rust's
+/// profile-file parser: sections keyed by their normalized header (`default`, `profile name`,
+/// `services name`), property names lower-cased, a sub-property block kept as its lines.
+fn parse_config_sections(content: &str) -> HashMap<String, HashMap<String, String>> {
+    let mut sections: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut section: Option<String> = None;
+    let mut property: Option<String> = None;
+    for line in content.lines() {
+        if line.trim().is_empty() || line.starts_with(['#', ';']) {
+            continue;
+        }
+        if line.starts_with('[') {
+            let header = strip_comment(line, false);
+            property = None;
+            section = header
+                .strip_prefix('[')
+                .and_then(|header| header.strip_suffix(']'))
+                .map(|header| header.split_whitespace().collect::<Vec<_>>().join(" "));
+            if let Some(name) = &section {
+                sections.entry(name.clone()).or_default();
+            }
+        } else if line.starts_with([' ', '\t']) {
+            // A continuation line: part of the previous property's value or sub-properties.
+            if let (Some(name), Some(key)) = (&section, &property) {
+                if let Some(value) = sections.get_mut(name).and_then(|s| s.get_mut(key)) {
+                    value.push('\n');
+                    value.push_str(line.trim());
+                }
+            }
+        } else {
+            let line = strip_comment(line, true);
+            let Some((key, value)) = line.split_once('=') else {
+                property = None;
+                continue;
+            };
+            let key = key.trim().to_ascii_lowercase();
+            if let Some(name) = &section {
+                sections
+                    .entry(name.clone())
+                    .or_default()
+                    .insert(key.clone(), value.trim().to_owned());
+                property = Some(key);
+            }
+        }
+    }
+    sections
+}
+
+fn non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+/// Read `key` from a nested setting block such as `sts =\n  endpoint_url = ...`.
+fn nested_setting(block: &str, key: &str) -> Option<String> {
+    block
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .find(|(name, _)| name.trim() == key)
+        .and_then(|(_, value)| non_empty(Some(value)))
+}
+
+/// Trim a line and drop a trailing comment. In a property line a `#` or `;` starts a comment only
+/// when preceded by whitespace; in a section header it always does.
+fn strip_comment(line: &str, comments_need_whitespace: bool) -> &str {
+    let line = line.trim();
+    let mut previous_whitespace = false;
+    for (idx, chr) in line.char_indices() {
+        if matches!(chr, '#' | ';') && (previous_whitespace || !comments_need_whitespace) {
+            return line[..idx].trim();
+        }
+        previous_whitespace = chr.is_whitespace();
+    }
+    line
+}
+
 /// A selected AWS profile with resolved region and global endpoint settings.
 ///
 /// Raw properties may contain secrets. Debug output omits all property values.
