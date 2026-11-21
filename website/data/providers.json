@@ -567,6 +567,64 @@
       "credential_provider_crate": "reqsign-aliyun-oss"
     },
     {
+      "id": "aliyun-drive",
+      "display_name": "Aliyun Drive",
+      "family": "Aliyun",
+      "blurb": "Aliyun Drive Open Platform bearer tokens with a dedicated JSON refresh flow.",
+      "service_scope": "Aliyun Drive Open Platform API requests authenticated with an OAuth access token. The drive ID, file paths, upload URLs, request bodies, and storage API requests stay with the caller.",
+      "signing_schemes": [
+        "Bearer token"
+      ],
+      "crates": [
+        "reqsign-aliyun-drive"
+      ],
+      "facade_features": [
+        {
+          "name": "aliyun-drive",
+          "capability": "Enables reqsign-aliyun-drive."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::aliyun_drive::default_signer(ctx)"
+      },
+      "credential_sources": [],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts a sensitive Authorization: Bearer header and leaves the URI and every other header unchanged; expires_in is rejected because the service has no query authentication. The caller supplies the User-Agent required by the storage API."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-aliyun-drive and builds the facade with --features aliyun-drive for wasm32-unknown-unknown. Static signing and JSON refresh with a mock transport run under wasm-bindgen-test with the JavaScript clock."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Static and refresh credentials, vendor JSON request shape, required User-Agent, trusted endpoint, expiry, serialized refresh-token rotation, redaction, and header signing are asserted with fabricated tokens and a mock transport; no live Aliyun Drive traffic is required.",
+        "refs": [
+          "services/aliyun-drive/tests"
+        ]
+      },
+      "source_refs": [
+        "services/aliyun-drive"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access token",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "refresh",
+          "label": "OAuth refresh token with a vendor JSON exchange",
+          "provider": "RefreshCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-aliyun-drive"
+    },
+    {
       "id": "huaweicloud-obs",
       "display_name": "Huawei Cloud OBS",
       "family": "Huawei Cloud",

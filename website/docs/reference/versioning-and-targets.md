@@ -70,7 +70,7 @@ do.
 
 **WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a
 defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS
-SigV4a, Azure Storage, Aliyun OSS, and Tencent COS providers. The
+SigV4a, Azure Storage, Aliyun OSS, Aliyun Drive, and Tencent COS providers. The
 [provider matrix](/docs/providers/) is the authoritative per-provider
 status; the [Custom runtimes & WASM guide](/docs/guides/custom-runtimes/)
 covers building and browser-backed contexts.

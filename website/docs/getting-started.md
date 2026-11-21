@@ -45,6 +45,7 @@ cargo add http anyhow
 | `google` | Google Cloud |
 | `google-credential-access-boundary-client-side` | Client-side CAB downscoping (implies `google`) |
 | `aliyun` | Aliyun OSS |
+| `aliyun-drive` | Aliyun Drive Open Platform |
 | `huaweicloud` | Huawei Cloud OBS |
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
@@ -105,11 +106,15 @@ composes that provider's own credential chain — the
 | [Azure Storage](/docs/providers/azure-storage/) | `azure::default_signer(ctx)` |
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |
+| [Aliyun Drive](/docs/providers/aliyun-drive/) | `aliyun_drive::default_signer(ctx)` |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | `huaweicloud::default_signer(ctx, bucket)` |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer(ctx)` |
 | [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer(ctx)` |
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
+
+Aliyun Drive has no documented ambient source; replace its default provider
+with a static access token or refresh-token provider.
 
 A default signer is an ordinary `Signer`: replace any component and keep the
 rest —

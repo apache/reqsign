@@ -48,6 +48,7 @@ jobs:
         run: |
           packages=(
             reqsign-core
+            reqsign-aliyun-drive
             reqsign-aliyun-oss
             reqsign-aws-core
             reqsign-aws-v4
@@ -118,7 +119,7 @@ jobs:
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,tencent
 
   # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
   wasm_compat:
@@ -134,8 +135,9 @@ jobs:
           cargo check --package reqsign-crypto-rustcrypto --target wasm32-unknown-unknown
           cargo check -p reqsign-aws-core --target wasm32-unknown-unknown
           cargo check -p reqsign-aws-v4a --target wasm32-unknown-unknown
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,tencent
+          cargo check -p reqsign-aliyun-drive --target wasm32-unknown-unknown
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,tencent
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,tencent
 
   unit:
     runs-on: ubuntu-latest
@@ -152,7 +154,7 @@ jobs:
           RUST_BACKTRACE: full
       - name: Facade crypto feature tests
         run: |
-          cargo test --package reqsign --all-features --test crypto --test default_signer
+          cargo test --package reqsign --all-features --test crypto --test default_signer --test aliyun_drive
           cargo test --package reqsign --no-default-features --features default-context --test crypto_without_default_crypto
       - name: Doc Test
         run: cargo +nightly test --doc --all-features --workspace
@@ -187,3 +189,4 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo test --target wasm32-unknown-unknown -p reqsign-http-send-reqwest --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-aliyun-drive --test wasm

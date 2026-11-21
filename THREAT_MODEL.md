@@ -219,6 +219,16 @@ after a process restart, the disk registration and refresh token must still be
 usable. Legacy inline SSO configurations do not refresh, and Reqsign never
 starts interactive login.
 
+Aliyun Drive refresh providers retain only the latest rotated refresh token in
+memory. A provider and its clones share this state and serialize exchanges;
+independently constructed providers do not coordinate. The exchange is sent only
+to the provider's configured HTTPS token endpoint, which defaults to the
+first-party endpoint, and tokens are never persisted. A successful, parseable
+token response commits a non-empty rotated refresh token even when the
+accompanying access token or expiry is unusable, because Aliyun Drive makes the
+previous refresh token single-use. Access-token caching and refresh-on-expiry
+remain in `Signer`.
+
 ### 4.3 Credential redaction and observability
 
 Reqsign must avoid exposing credentials through `Debug` output, error chains,

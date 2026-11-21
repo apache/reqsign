@@ -28,6 +28,7 @@ rust-version = "1.87.0"
 
 [workspace.dependencies]
 # Workspace dependencies
+reqsign-aliyun-drive = { version = "1.0.0", path = "services/aliyun-drive" }
 reqsign-aliyun-oss = { version = "3.2.2", path = "services/aliyun-oss" }
 reqsign-aws-core = { version = "3.4.0", path = "services/aws-core" }
 reqsign-aws-v4 = { version = "3.5.0", path = "services/aws-v4" }

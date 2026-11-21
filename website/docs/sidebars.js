@@ -41,6 +41,7 @@ module.exports = {
         "providers/azure-storage",
         "providers/google",
         "providers/aliyun-oss",
+        "providers/aliyun-drive",
         "providers/huaweicloud-obs",
         "providers/oracle",
         "providers/tencent-cos",
