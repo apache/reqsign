@@ -1139,6 +1139,26 @@ let provider = DefaultCredentialProvider::builder()
 
 There are no `configure_*` or `disable_*(bool)` methods by design: a removed slot stays removed, and every slot is controlled by one positive and one removal method.
 
+### IMDSv1 fallback[​](#imdsv1-fallback "Direct link to IMDSv1 fallback")
+
+The AWS IMDS provider uses IMDSv2 by default. To allow IMDSv1 when the IMDSv2 token request returns HTTP 403, 404, or 405, opt in on the IMDS slot:
+
+```
+
+use reqsign::aws::{DefaultCredentialProvider, IMDSv2CredentialProvider};
+
+
+let provider = DefaultCredentialProvider::builder()
+
+    .imds(IMDSv2CredentialProvider::new().with_imdsv1_fallback())
+
+    .build();
+
+
+```
+
+Other token, transport, metadata, role, and credential failures are returned without falling back. Enable this only for instances where IMDSv2 is unavailable.
+
 ## Fixed credentials[​](#fixed-credentials "Direct link to Fixed credentials")
 
 When the credential is decided elsewhere — tests, WASM, a control plane that injects keys — skip chains entirely:
@@ -1908,7 +1928,7 @@ The default signer tries these sources in order and uses the first one that yiel
 4. STS AssumeRoleWithWebIdentity (OIDC)
 5. External credential process
 6. ECS container credentials
-7. EC2 instance metadata (IMDSv2)
+7. EC2 instance metadata (IMDSv2, optional IMDSv1 fallback)
 
 ### Credential providers
 
@@ -1920,7 +1940,7 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 * [AssumeRoleWithWebIdentityCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.AssumeRoleWithWebIdentityCredentialProvider.html) — STS AssumeRoleWithWebIdentity (OIDC)
 * [ProcessCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ProcessCredentialProvider.html) — External credential process
 * [ECSCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ECSCredentialProvider.html) — ECS container credentials
-* [IMDSv2CredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.IMDSv2CredentialProvider.html) — EC2 instance metadata (IMDSv2)
+* [IMDSv2CredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.IMDSv2CredentialProvider.html) — EC2 instance metadata (IMDSv2, optional IMDSv1 fallback)
 * [StaticCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.StaticCredentialProvider.html) — Static access keys
 * [AssumeRoleCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.AssumeRoleCredentialProvider.html) — STS AssumeRole
 * [CognitoIdentityCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.CognitoIdentityCredentialProvider.html) — Cognito Identity
@@ -2006,7 +2026,7 @@ The default signer tries these sources in order and uses the first one that yiel
 4. STS AssumeRoleWithWebIdentity (OIDC)
 5. External credential process
 6. ECS container credentials
-7. EC2 instance metadata (IMDSv2)
+7. EC2 instance metadata (IMDSv2, optional IMDSv1 fallback)
 
 ### Credential providers
 
@@ -2018,7 +2038,7 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 * [AssumeRoleWithWebIdentityCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.AssumeRoleWithWebIdentityCredentialProvider.html) — STS AssumeRoleWithWebIdentity (OIDC)
 * [ProcessCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ProcessCredentialProvider.html) — External credential process
 * [ECSCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.ECSCredentialProvider.html) — ECS container credentials
-* [IMDSv2CredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.IMDSv2CredentialProvider.html) — EC2 instance metadata (IMDSv2)
+* [IMDSv2CredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.IMDSv2CredentialProvider.html) — EC2 instance metadata (IMDSv2, optional IMDSv1 fallback)
 * [StaticCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.StaticCredentialProvider.html) — Static access keys
 * [AssumeRoleCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.AssumeRoleCredentialProvider.html) — STS AssumeRole
 * [CognitoIdentityCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/struct.CognitoIdentityCredentialProvider.html) — Cognito Identity
