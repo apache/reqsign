@@ -74,13 +74,22 @@ impl ImdsClient {
         })
     }
 
-    pub(crate) async fn load_ec2_metadata_token(&self, ctx: &Context) -> Result<String> {
+    /// Load an IMDSv2 token.
+    ///
+    /// Returns `None` only when `allow_imdsv1_fallback` is true and the token
+    /// endpoint reports that IMDSv2 is unavailable. All other errors are
+    /// returned unchanged.
+    pub(crate) async fn load_ec2_metadata_token(
+        &self,
+        ctx: &Context,
+        allow_imdsv1_fallback: bool,
+    ) -> Result<Option<String>> {
         let endpoint = self.get_endpoint(ctx);
         {
             let (cached_endpoint, token, expires_in) =
                 self.token.lock().expect("lock poisoned").clone();
             if cached_endpoint == endpoint && expires_in > Timestamp::now() {
-                return Ok(token);
+                return Ok(Some(token));
             }
         }
 
@@ -107,11 +116,13 @@ impl ImdsClient {
         })?;
 
         if resp.status() != http::StatusCode::OK {
-            return Err(parse_imds_error(
-                "fetch_imds_token",
-                resp.status(),
-                resp.body(),
-            ));
+            let status = resp.status();
+            if allow_imdsv1_fallback && is_imdsv1_fallback_status(status) {
+                log::debug!("IMDSv2 token endpoint returned {status}; falling back to IMDSv1");
+                return Ok(None);
+            }
+
+            return Err(parse_imds_error("fetch_imds_token", status, resp.body()));
         }
         let ec2_token = resp.into_body();
         // Refresh ten minutes before the token expires.
@@ -121,8 +132,19 @@ impl ImdsClient {
             *self.token.lock().expect("lock poisoned") = (endpoint, ec2_token.clone(), expires_in);
         }
 
-        Ok(ec2_token)
+        Ok(Some(ec2_token))
     }
+}
+
+// AWS documents 403, 404, and 405 from the token endpoint as non-retryable
+// responses that indicate IMDSv2 is unavailable.
+fn is_imdsv1_fallback_status(status: http::StatusCode) -> bool {
+    matches!(
+        status,
+        http::StatusCode::FORBIDDEN
+            | http::StatusCode::NOT_FOUND
+            | http::StatusCode::METHOD_NOT_ALLOWED
+    )
 }
 
 impl std::fmt::Debug for ImdsClient {

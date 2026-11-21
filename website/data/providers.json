@@ -91,7 +91,7 @@
         },
         {
           "id": "imds",
-          "label": "EC2 instance metadata (IMDSv2)",
+          "label": "EC2 instance metadata (IMDSv2, optional IMDSv1 fallback)",
           "provider": "IMDSv2CredentialProvider"
         }
       ],
@@ -207,7 +207,7 @@
         },
         {
           "id": "imds",
-          "label": "EC2 instance metadata (IMDSv2)",
+          "label": "EC2 instance metadata (IMDSv2, optional IMDSv1 fallback)",
           "provider": "IMDSv2CredentialProvider"
         }
       ],

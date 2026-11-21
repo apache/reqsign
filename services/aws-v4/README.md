@@ -185,6 +185,23 @@ let provider = DefaultCredentialProvider::builder()
 For advanced composition, use `DefaultCredentialProvider::with_chain(...)` or
 prepend a higher-priority source with `DefaultCredentialProvider::push_front(...)`.
 
+## IMDSv1 Fallback
+
+The default IMDS provider requires IMDSv2. Instances that cannot use IMDSv2 can
+opt in to an IMDSv1 fallback on the IMDS slot:
+
+```rust,no_run
+use reqsign_aws_v4::{DefaultCredentialProvider, IMDSv2CredentialProvider};
+
+let provider = DefaultCredentialProvider::builder()
+    .imds(IMDSv2CredentialProvider::new().with_imdsv1_fallback())
+    .build();
+```
+
+Fallback is attempted only when the IMDSv2 token request returns HTTP 403, 404,
+or 405. Transport, server, metadata, role, and credential errors are returned
+and never downgraded. IMDSv2 remains the default.
+
 ## S3 Access Grants
 
 Use `S3AccessGrantsGranter` to authorize one typed `GetDataAccess` request with
