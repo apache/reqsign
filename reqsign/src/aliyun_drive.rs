@@ -33,7 +33,9 @@ pub type DefaultSigner = Signer<Credential>;
 /// Aliyun Drive Open Platform does not define an ambient CLI, SDK, environment,
 /// or file credential contract, so the default provider intentionally has no
 /// source. Replace it with [`StaticCredentialProvider`] for a caller-managed
-/// access token or [`RefreshCredentialProvider`] for a rotating refresh token.
+/// access token or [`RefreshCredentialProvider`] for a confidential-client
+/// refresh token. Official PKCE public clients receive an access token, not a
+/// refresh token.
 ///
 /// # Example
 ///

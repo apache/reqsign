@@ -44,13 +44,18 @@ use crate::constants::{DEFAULT_TOKEN_ENDPOINT, USER_AGENT};
 /// ```
 ///
 /// to the trusted token endpoint with `Content-Type: application/json` and the
-/// non-empty `User-Agent` header the endpoint requires. `client_secret` is
-/// omitted for a public client.
+/// non-empty `User-Agent` header the endpoint requires. All three client
+/// credentials are required: Aliyun Drive's official PKCE public-client flow
+/// returns a 30-day access token without a refresh token, so public clients use
+/// [`crate::StaticCredentialProvider`] with the access token they obtained.
 ///
 /// Aliyun Drive returns a new single-use refresh token with every successful
 /// exchange. A provider keeps only the latest token in memory, clones share
 /// that state, and every exchange is serialized so concurrent callers use the
-/// latest rotated token. The previous refresh token is not reused or persisted.
+/// latest rotated token. The configured initial refresh token may be consumed
+/// after a successful exchange; a restart needs a fresh authorized grant, or an
+/// application that manages and persists its own exchange and supplies an
+/// access token. Reqsign exposes no persistence callback or token getter.
 /// Access-token caching belongs to [`reqsign_core::Signer`]; this provider
 /// performs no implicit retry.
 ///
@@ -63,7 +68,7 @@ use crate::constants::{DEFAULT_TOKEN_ENDPOINT, USER_AGENT};
 pub struct RefreshCredentialProvider {
     token_endpoint: String,
     client_id: String,
-    client_secret: Option<String>,
+    client_secret: String,
     refresh_token: Arc<Mutex<String>>,
 }
 
@@ -75,16 +80,32 @@ impl Debug for RefreshCredentialProvider {
 }
 
 impl RefreshCredentialProvider {
-    /// Create a provider for an Aliyun Drive public client.
+    /// Create a provider for an Aliyun Drive confidential client.
     ///
-    /// `client_id` and `refresh_token` must be non-empty. The first-party token
-    /// endpoint is used until [`RefreshCredentialProvider::with_token_endpoint`]
-    /// selects another trusted endpoint.
-    pub fn new(client_id: impl Into<String>, refresh_token: impl Into<String>) -> Result<Self> {
+    /// `client_id`, `client_secret`, and `refresh_token` must be non-empty. The
+    /// first-party token endpoint is used until
+    /// [`RefreshCredentialProvider::with_token_endpoint`] selects another
+    /// trusted endpoint.
+    ///
+    /// Public clients use the official PKCE flow, which returns an access token
+    /// without a refresh token. Supply that access token through
+    /// [`crate::StaticCredentialProvider`] instead.
+    pub fn new(
+        client_id: impl Into<String>,
+        client_secret: impl Into<String>,
+        refresh_token: impl Into<String>,
+    ) -> Result<Self> {
         let client_id = client_id.into();
         if client_id.is_empty() {
             return Err(Error::config_invalid(
                 "Aliyun Drive client ID must not be empty",
+            ));
+        }
+
+        let client_secret = client_secret.into();
+        if client_secret.is_empty() {
+            return Err(Error::config_invalid(
+                "Aliyun Drive client secret must not be empty",
             ));
         }
 
@@ -98,24 +119,9 @@ impl RefreshCredentialProvider {
         Ok(Self {
             token_endpoint: DEFAULT_TOKEN_ENDPOINT.to_string(),
             client_id,
-            client_secret: None,
+            client_secret,
             refresh_token: Arc::new(Mutex::new(refresh_token)),
         })
-    }
-
-    /// Add the client secret for a confidential client.
-    ///
-    /// The secret must not be empty when provided. Public clients omit it.
-    pub fn with_client_secret(mut self, client_secret: impl Into<String>) -> Result<Self> {
-        let client_secret = client_secret.into();
-        if client_secret.is_empty() {
-            return Err(Error::config_invalid(
-                "Aliyun Drive client secret must not be empty when provided",
-            ));
-        }
-
-        self.client_secret = Some(client_secret);
-        Ok(self)
     }
 
     /// Replace the token endpoint while preserving the latest refresh token.
@@ -137,7 +143,7 @@ impl RefreshCredentialProvider {
         let started_at = Timestamp::now();
         let request_body = serde_json::to_vec(&TokenRequest {
             client_id: &self.client_id,
-            client_secret: self.client_secret.as_deref(),
+            client_secret: &self.client_secret,
             grant_type: "refresh_token",
             refresh_token: current_refresh_token,
         })
@@ -215,8 +221,7 @@ impl ProvideCredential for RefreshCredentialProvider {
 #[derive(Serialize)]
 struct TokenRequest<'a> {
     client_id: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    client_secret: Option<&'a str>,
+    client_secret: &'a str,
     grant_type: &'a str,
     refresh_token: &'a str,
 }

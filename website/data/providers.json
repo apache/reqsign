@@ -601,7 +601,7 @@
       },
       "integration_tests": {
         "level": "mock",
-        "notes": "Static and refresh credentials, vendor JSON request shape, required User-Agent, trusted endpoint, expiry, serialized refresh-token rotation, redaction, and header signing are asserted with fabricated tokens and a mock transport; no live Aliyun Drive traffic is required.",
+        "notes": "Static and confidential-client refresh credentials, vendor JSON request shape, required User-Agent, trusted endpoint, expiry, serialized refresh-token rotation, redaction, and header signing are asserted with fabricated tokens and a mock transport; no live Aliyun Drive traffic is required.",
         "refs": [
           "services/aliyun-drive/tests"
         ]
@@ -618,7 +618,7 @@
         },
         {
           "id": "refresh",
-          "label": "OAuth refresh token with a vendor JSON exchange",
+          "label": "Confidential-client OAuth refresh token with a vendor JSON exchange",
           "provider": "RefreshCredentialProvider"
         }
       ],

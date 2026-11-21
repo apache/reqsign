@@ -37,11 +37,10 @@ The default provider has no ambient source. Supply the identity explicitly:
 
 ```rust
 use reqsign::{aliyun_drive, default_context};
-use reqsign_aliyun_drive::StaticCredentialProvider;
 
 let ctx = default_context();
 let signer = aliyun_drive::default_signer(ctx)
-    .with_credential_provider(StaticCredentialProvider::new("access-token"));
+    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
 
 // The caller owns the drive ID, file path, and request body.
 let mut req = http::Request::builder()
@@ -62,8 +61,7 @@ Aliyun Drive Open Platform documents OAuth authorization and its token endpoint,
 but no CLI, SDK, environment-variable, or local-file credential discovery
 contract. Reqsign therefore does not invent an ambient source. Use
 `StaticCredentialProvider` for a caller-managed access token, or
-`RefreshCredentialProvider` for a refresh token that the application stores and
-rotates.
+`RefreshCredentialProvider` for a confidential-client refresh token.
 
 An explicit provider fails closed: an invalid token or refresh configuration
 returns an error instead of silently switching to a different identity.
@@ -81,9 +79,12 @@ User-Agent: reqsign-aliyun-drive/<version>
 {"client_id":"...","client_secret":"...","grant_type":"refresh_token","refresh_token":"..."}
 ```
 
-`client_secret` is omitted for a public client. The endpoint requires a
-non-empty `User-Agent`. Use `with_token_endpoint` only to select another
-explicitly trusted HTTPS endpoint.
+All three confidential-client credentials are required. Aliyun Drive's
+official PKCE public-client flow returns a 30-day access token without a refresh
+token, so public clients use `StaticCredentialProvider` with that access token,
+optionally with its absolute expiration. The endpoint requires a non-empty
+`User-Agent`. Use `with_token_endpoint` only to select another explicitly
+trusted HTTPS endpoint for the same confidential-client protocol.
 
 A successful response returns `access_token`, `token_type`, `expires_in`, and a
 new single-use `refresh_token`. The provider keeps only the latest refresh token
@@ -91,16 +92,24 @@ in memory. Clones share that state and exchanges are serialized, so concurrent
 callers use the latest rotated token. A successful, parseable response commits a
 non-empty rotated token even when the accompanying access token or expiry is
 unusable, because the previous refresh token was consumed. Tokens are never
-persisted. `reqsign_core::Signer` owns access-token caching and refresh on
-expiry.
+persisted, and Reqsign exposes no getter or persistence callback.
+`reqsign::Signer` owns access-token caching and refresh on expiry.
+
+After a successful refresh, the initially configured refresh token may already
+have been consumed. Restarting with that original value can therefore fail.
+Restart with a fresh authorized grant, or let the application manage and persist
+its own refresh exchange and supply the resulting access token through
+`StaticCredentialProvider`.
 
 ```rust
-use reqsign_core::Signer;
-use reqsign_aliyun_drive::{RefreshCredentialProvider, RequestSigner};
+use reqsign::{Signer, aliyun_drive, default_context};
 
-let provider = RefreshCredentialProvider::new("client-id", "refresh-token")?
-    .with_client_secret("client-secret")?;
-let signer = Signer::new(reqsign::default_context(), provider, RequestSigner);
+let provider = aliyun_drive::RefreshCredentialProvider::new(
+    "client-id",
+    "client-secret",
+    "refresh-token",
+)?;
+let signer = Signer::new(default_context(), provider, aliyun_drive::RequestSigner);
 ```
 
 ## Request behavior

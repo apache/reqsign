@@ -85,10 +85,12 @@ async fn refresh_uses_the_wasm_clock_and_mock_transport() {
         requests: Arc::new(Mutex::new(Vec::new())),
     };
     let context = Context::new().with_http_send(http.clone());
-    let provider = RefreshCredentialProvider::new("wasm-client-id", "wasm-refresh-token")
-        .expect("provider must build")
-        .with_client_secret("wasm-client-secret")
-        .expect("client secret must be accepted");
+    let provider = RefreshCredentialProvider::new(
+        "wasm-client-id",
+        "wasm-client-secret",
+        "wasm-refresh-token",
+    )
+    .expect("provider must build");
     let signer = Signer::new(context, provider, RequestSigner);
     let mut parts = request();
 
@@ -105,6 +107,8 @@ async fn refresh_uses_the_wasm_clock_and_mock_transport() {
     assert_eq!(requests.len(), 1);
     let body: serde_json::Value =
         serde_json::from_slice(&requests[0]).expect("token request body must be JSON");
+    assert_eq!(body["client_id"], "wasm-client-id");
+    assert_eq!(body["client_secret"], "wasm-client-secret");
     assert_eq!(body["grant_type"], "refresh_token");
     assert_eq!(body["refresh_token"], "wasm-refresh-token");
 }

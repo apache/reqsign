@@ -30,10 +30,17 @@ User-Agent: reqsign-aliyun-drive/<version>
 {"client_id":"...","client_secret":"...","grant_type":"refresh_token","refresh_token":"..."}
 ```
 
-`client_secret` is omitted for a public client. The response returns
-`access_token`, `token_type`, `expires_in`, and a new single-use
-`refresh_token`. A provider keeps only the latest refresh token in memory,
-clones share it, and exchanges are serialized. Tokens are never persisted.
+All three confidential-client credentials are required. Public clients use the
+official PKCE flow, which returns a 30-day access token without a refresh token;
+supply that access token through `StaticCredentialProvider`.
+
+The response returns `access_token`, `token_type`, `expires_in`, and a new
+single-use `refresh_token`. A provider keeps only the latest refresh token in
+memory, clones share it, and exchanges are serialized. Tokens are never
+persisted, and there is no getter or persistence callback. After a successful
+exchange, restarting with the originally configured refresh token may fail
+because that token was consumed. Restart with a fresh authorized grant, or
+manage and persist the exchange in the application and supply an access token.
 Access-token caching is provided by `reqsign_core::Signer`.
 
 ## License

@@ -175,9 +175,8 @@ let signer = aliyun::default_signer(ctx.clone(), "mybucket");
 
 // Aliyun Drive (supply an explicit provider; there is no ambient source)
 use reqsign::aliyun_drive;
-use reqsign_aliyun_drive::StaticCredentialProvider;
 let signer = aliyun_drive::default_signer(ctx.clone())
-    .with_credential_provider(StaticCredentialProvider::new("access-token"));
+    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
 
 // Huawei Cloud OBS
 use reqsign::huaweicloud;

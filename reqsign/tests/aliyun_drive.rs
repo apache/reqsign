@@ -104,8 +104,11 @@ async fn facade_refresh_provider_uses_the_context_transport() -> Result<()> {
         requests: Arc::new(Mutex::new(Vec::new())),
     };
     let ctx = Context::new().with_http_send(http.clone());
-    let provider = RefreshCredentialProvider::new("fake-client-id", "fake-refresh-token")?
-        .with_client_secret("fake-client-secret")?;
+    let provider = RefreshCredentialProvider::new(
+        "fake-client-id",
+        "fake-client-secret",
+        "fake-refresh-token",
+    )?;
     let signer = default_signer(ctx).with_credential_provider(provider);
     let mut parts = request();
 
@@ -119,6 +122,8 @@ async fn facade_refresh_provider_uses_the_context_transport() -> Result<()> {
     assert_eq!(requests.len(), 1);
     let body: serde_json::Value =
         serde_json::from_slice(&requests[0]).expect("token request body must be JSON");
+    assert_eq!(body["client_id"], "fake-client-id");
+    assert_eq!(body["client_secret"], "fake-client-secret");
     assert_eq!(body["grant_type"], "refresh_token");
     assert_eq!(body["refresh_token"], "fake-refresh-token");
     Ok(())

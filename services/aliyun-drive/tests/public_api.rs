@@ -161,10 +161,8 @@ fn context(envs: HashMap<String, String>) -> Context {
 }
 
 fn provider() -> RefreshCredentialProvider {
-    RefreshCredentialProvider::new(CLIENT_ID, REFRESH_TOKEN)
+    RefreshCredentialProvider::new(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)
         .expect("provider must build")
-        .with_client_secret(CLIENT_SECRET)
-        .expect("client secret must be accepted")
 }
 
 fn request() -> http::request::Parts {
@@ -278,27 +276,6 @@ async fn refresh_exchange_uses_vendor_json_with_user_agent_and_rotates() -> Resu
     let body = decoded_json(&request.body);
     assert_eq!(body["client_id"], CLIENT_ID);
     assert_eq!(body["client_secret"], CLIENT_SECRET);
-    assert_eq!(body["grant_type"], "refresh_token");
-    assert_eq!(body["refresh_token"], REFRESH_TOKEN);
-    Ok(())
-}
-
-#[tokio::test]
-async fn public_client_omits_the_client_secret() -> Result<()> {
-    let mock = MockHttpSend::immediate([token_response(
-        ACCESS_TOKEN,
-        "bearer",
-        Some(3600),
-        Some("fake-refresh-token-A2"),
-    )]);
-    let ctx = Context::new().with_http_send(mock.clone());
-    let provider = RefreshCredentialProvider::new(CLIENT_ID, REFRESH_TOKEN)?;
-
-    provider.provide_credential(&ctx).await?;
-
-    let body = decoded_json(&mock.requests()[0].body);
-    assert_eq!(body["client_id"], CLIENT_ID);
-    assert!(body.get("client_secret").is_none());
     assert_eq!(body["grant_type"], "refresh_token");
     assert_eq!(body["refresh_token"], REFRESH_TOKEN);
     Ok(())
@@ -672,7 +649,7 @@ async fn transport_errors_do_not_expose_sources() -> Result<()> {
 
 #[tokio::test]
 async fn invalid_endpoint_and_configuration_errors_are_redacted() -> Result<()> {
-    let provider = RefreshCredentialProvider::new(CLIENT_ID, REFRESH_TOKEN)?;
+    let provider = RefreshCredentialProvider::new(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)?;
     for endpoint in [
         "http://token.example/oauth/access_token".to_string(),
         "https://user:secret@token.example/oauth/access_token".to_string(),
@@ -690,12 +667,12 @@ async fn invalid_endpoint_and_configuration_errors_are_redacted() -> Result<()> 
     }
 
     for error in [
-        RefreshCredentialProvider::new("", REFRESH_TOKEN).expect_err("empty client ID"),
-        RefreshCredentialProvider::new(CLIENT_ID, "").expect_err("empty refresh token"),
-        provider
-            .clone()
-            .with_client_secret("")
+        RefreshCredentialProvider::new("", CLIENT_SECRET, REFRESH_TOKEN)
+            .expect_err("empty client ID"),
+        RefreshCredentialProvider::new(CLIENT_ID, "", REFRESH_TOKEN)
             .expect_err("empty client secret"),
+        RefreshCredentialProvider::new(CLIENT_ID, CLIENT_SECRET, "")
+            .expect_err("empty refresh token"),
     ] {
         assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
     }

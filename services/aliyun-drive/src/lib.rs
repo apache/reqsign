@@ -47,9 +47,12 @@
 //! {"client_id":"...","client_secret":"...","grant_type":"refresh_token","refresh_token":"..."}
 //! ```
 //!
-//! `client_secret` is omitted for a public client. The endpoint requires a
-//! non-empty `User-Agent`. [`RefreshCredentialProvider::with_token_endpoint`]
-//! can select another explicitly trusted HTTPS endpoint.
+//! All three confidential-client credentials are required. Aliyun Drive's
+//! official PKCE public-client flow returns a 30-day access token without a
+//! refresh token, so public clients use [`StaticCredentialProvider`] with the
+//! access token they obtained. The endpoint requires a non-empty `User-Agent`.
+//! [`RefreshCredentialProvider::with_token_endpoint`] can select another
+//! explicitly trusted HTTPS endpoint.
 //!
 //! A successful exchange returns an access token, its lifetime in `expires_in`,
 //! and a new single-use refresh token. A provider keeps only the latest refresh
@@ -57,8 +60,13 @@
 //! concurrent callers use the latest rotated token. A successful, parseable
 //! response commits a non-empty rotated token even when the accompanying access
 //! token or expiry is unusable, because the previous token was consumed.
-//! Tokens are never persisted. Access-token caching and refresh-on-expiry belong
-//! to [`reqsign_core::Signer`].
+//! Tokens are never persisted and Reqsign exposes no getter or persistence
+//! callback. After a successful exchange, restarting with the original
+//! configured refresh token may fail because that token was consumed. Restart
+//! with a fresh authorized grant, or let the application manage and persist its
+//! own exchange and supply the resulting access token through
+//! [`StaticCredentialProvider`]. Access-token caching and refresh-on-expiry
+//! belong to [`reqsign_core::Signer`].
 //!
 //! ## Request signing
 //!
@@ -85,8 +93,11 @@
 //!
 //! # async fn example() -> Result<()> {
 //! let ctx = Context::new().with_http_send(reqsign_core::NoopHttpSend);
-//! let provider = RefreshCredentialProvider::new("client-id", "refresh-token")?
-//!     .with_client_secret("client-secret")?;
+//! let provider = RefreshCredentialProvider::new(
+//!     "client-id",
+//!     "client-secret",
+//!     "refresh-token",
+//! )?;
 //! let signer = Signer::new(ctx, provider, RequestSigner);
 //!
 //! let mut req = http::Request::get(

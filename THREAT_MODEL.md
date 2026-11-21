@@ -227,7 +227,10 @@ first-party endpoint, and tokens are never persisted. A successful, parseable
 token response commits a non-empty rotated refresh token even when the
 accompanying access token or expiry is unusable, because Aliyun Drive makes the
 previous refresh token single-use. Access-token caching and refresh-on-expiry
-remain in `Signer`.
+remain in `Signer`. Reqsign exposes no refresh-token getter or persistence
+callback. After a successful exchange, restarting with the initially configured
+token may require a fresh authorized grant, or an application that manages and
+persists its own exchange and supplies an access token.
 
 ### 4.3 Credential redaction and observability
 
