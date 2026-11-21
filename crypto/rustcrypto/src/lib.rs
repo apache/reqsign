@@ -51,37 +51,6 @@ impl RustCryptoProvider {
     }
 }
 
-// The ordinary RSA decoder requires each CRT prime to fit in half of the
-// modulus width. Valid legacy and test keys can have unbalanced primes, as the
-// RFC 9421 RSA test key does. Decode those components without the half-width
-// assumption and validate them through the wide-prime constructor.
-#[cfg(not(target_arch = "wasm32"))]
-fn decode_unbalanced_pkcs1_key(
-    pem: &str,
-) -> std::result::Result<rsa::PrivateKey, rsa::pkcs1::Error> {
-    use rsa::PrivateKey;
-    use rsa::pkcs1::DecodeRsaPrivateKey;
-    use rsa::pkcs1::RsaPrivateKeyOwned;
-
-    let key = RsaPrivateKeyOwned::from_pkcs1_pem(pem)?;
-    let bits = u32::try_from(key.modulus.as_bytes().len())
-        .map_err(|_| rsa::pkcs1::Error::KeyMalformed)?
-        * 8;
-    let uint = |value: &rsa::pkcs1::der::asn1::Uint| {
-        rsa::BoxedUint::from_be_slice(value.as_bytes(), bits)
-            .map_err(|_| rsa::pkcs1::Error::KeyMalformed)
-    };
-    let primes = vec![uint(&key.prime1)?, uint(&key.prime2)?];
-
-    PrivateKey::from_components_with_wide_primes(
-        uint(&key.modulus)?,
-        uint(&key.public_exponent)?,
-        uint(&key.private_exponent)?,
-        primes,
-    )
-    .map_err(|_| rsa::pkcs1::Error::KeyMalformed)
-}
-
 impl CryptoProvider for RustCryptoProvider {
     fn sha1(&self, input: &[u8]) -> Result<[u8; 20]> {
         Ok(Sha1::digest(input).into())
@@ -119,7 +88,6 @@ impl CryptoProvider for RustCryptoProvider {
         })?;
         let private_key = PrivateKey::from_pkcs8_pem(pem)
             .or_else(|_| PrivateKey::from_pkcs1_pem(pem))
-            .or_else(|_| decode_unbalanced_pkcs1_key(pem))
             .map_err(|e| {
                 Error::credential_invalid("failed to parse RSA private key PEM").with_source(e)
             })?;

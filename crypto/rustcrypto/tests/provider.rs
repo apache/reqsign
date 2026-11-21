@@ -31,7 +31,6 @@ use sha2::{Digest, Sha256};
 const RSA_PKCS8: &[u8] = include_bytes!("fixtures/rsa_pkcs8.pem");
 const RSA_PKCS1: &[u8] = include_bytes!("fixtures/rsa_pkcs1.pem");
 const EC_PKCS8: &[u8] = include_bytes!("fixtures/ec_p256_pkcs8.pem");
-const RSA_UNBALANCED_PKCS1: &[u8] = include_bytes!("fixtures/rsa_unbalanced_pkcs1.pem");
 
 fn provider() -> RustCryptoProvider {
     RustCryptoProvider::new()
@@ -137,16 +136,6 @@ fn rsa_signs_both_pkcs8_and_pkcs1_pem() {
                 .expect("signature must verify");
         }
     }
-}
-
-#[test]
-fn rsa_signs_unbalanced_pkcs1_key() {
-    const EXPECTED: &str = "6a1ba4a5318e2391e2864cdfa5c1db1c1712fefeb6408d6dfcfeae062cb41993e56e14149bd332c901e0f93ec70cc0e03672bad08c4cfa4c28e2a4700bd3a4ac08f218e1231432ddfaf8e8d3d16142ffd937541e8c9daa05a43e9f620cb46b28edf11d42cb8b89e0135f265511e94e23dc088e318bca0f119f4d041425ae7b210e17a1dd5b8878e0135338c8f933bc141a180372710fa6ea03474637128316e2c777b192195546ab424f4bc29ab654646385a4dc9a400a5ed6c86c6ce92483f7696984924bc7d42e233f4d0c1b41c4c77e72a5350b2c99bb4730074d6dd6fd569f3fdd028ef1ecac300c108350fd92036f7818376fa32e33f146cec6717664f1";
-
-    let signature = provider()
-        .rsa_pkcs1v15_sha256_sign(RSA_UNBALANCED_PKCS1, b"reqsign-unbalanced-pkcs1-vector")
-        .expect("unbalanced RFC 9421 test key must sign");
-    assert_eq!(hex(&signature), EXPECTED);
 }
 
 #[test]
