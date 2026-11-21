@@ -36,9 +36,8 @@ const B25_SIGNATURE_INPUT: &str = include_str!("../tests/fixtures/b25_signature_
 const B25_SIGNATURE: &str = include_str!("../tests/fixtures/b25_signature.txt");
 const B25_SECRET: &str = include_str!("../tests/fixtures/shared_secret.b64");
 const PROXY_BASE: &str = include_str!("../tests/fixtures/proxy_base.txt");
-const PROXY_SIGNATURE_INPUT: &str = include_str!("../tests/fixtures/proxy_signature_input.txt");
-const PROXY_SIGNATURE: &str = include_str!("../tests/fixtures/proxy_signature.txt");
-const RSA_PRIVATE_KEY: &str = include_str!("../tests/fixtures/rsa_private.pem");
+const RSA_BALANCED_PRIVATE_KEY: &str = include_str!("../tests/fixtures/rsa_balanced_pkcs8.pem");
+const RSA_BALANCED_SIGNATURE: &str = include_str!("../tests/fixtures/rsa_balanced_signature.txt");
 
 const SEARCH_DIGEST: &str = "sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:";
 const FORWARDED_VALUE: &str = "for=192.0.2.123;host=example.com;proto=https";
@@ -127,7 +126,7 @@ async fn matches_rfc_9421_b25_hmac_vector() {
 }
 
 #[tokio::test]
-async fn matches_rfc_9421_proxy_sig_rsa_vector() {
+async fn public_signer_signs_normal_rsa_pem() {
     let request_signer = RequestSigner::new(
         "proxy_sig",
         [
@@ -142,7 +141,8 @@ async fn matches_rfc_9421_proxy_sig_rsa_vector() {
     )
     .unwrap()
     .with_time(Timestamp::from_second(1_618_884_480).unwrap());
-    let credential = Credential::rsa_v1_5_sha256("test-key-rsa", RSA_PRIVATE_KEY).unwrap();
+    let credential =
+        Credential::rsa_v1_5_sha256("test-key-rsa-balanced", RSA_BALANCED_PRIVATE_KEY).unwrap();
     let signer = Signer::new(
         signing_context(),
         StaticCredentialProvider::new(credential),
@@ -155,18 +155,19 @@ async fn matches_rfc_9421_proxy_sig_rsa_vector() {
         .await
         .unwrap();
 
-    assert_eq!(
-        parts
-            .headers
-            .get(SIGNATURE_INPUT)
-            .unwrap()
-            .to_str()
-            .unwrap(),
-        format!("proxy_sig={}", fixture(PROXY_SIGNATURE_INPUT))
-    );
+    let signature_input = parts
+        .headers
+        .get(SIGNATURE_INPUT)
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(signature_input.starts_with("proxy_sig=("));
+    assert!(signature_input.contains(";created=1618884480;"));
+    assert!(signature_input.contains(";keyid=\"test-key-rsa-balanced\";"));
+    assert!(signature_input.contains(";alg=\"rsa-v1_5-sha256\";expires=1618884540"));
     assert_eq!(
         parts.headers.get(SIGNATURE).unwrap().to_str().unwrap(),
-        format!("proxy_sig={}", fixture(PROXY_SIGNATURE))
+        format!("proxy_sig=:{}:", fixture(RSA_BALANCED_SIGNATURE))
     );
 }
 
@@ -317,6 +318,20 @@ fn rejects_relative_unsupported_and_userinfo_uris() {
 }
 
 #[test]
+fn rejects_origin_form_targets_without_an_absolute_uri() {
+    let parts = http::Request::builder()
+        .method("GET")
+        .uri("/resource")
+        .header(HOST, "example.net")
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0;
+    let error = base_for_err(&parts, &[Component::Method]).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::RequestInvalid);
+}
+
+#[test]
 fn rejects_duplicate_or_inconsistent_host_headers() {
     let mut parts = http::Request::builder()
         .method("GET")
@@ -345,18 +360,99 @@ fn rejects_duplicate_or_inconsistent_host_headers() {
 }
 
 #[test]
-fn accepts_host_header_equal_to_uri_after_normalization() {
+fn rejects_host_authority_representation_mismatch() {
+    for (uri, host) in [
+        ("https://example.net/resource", "EXAMPLE.NET:443"),
+        ("https://example.net:443/resource", "example.net"),
+        ("https://example.net/resource", "example.net:443"),
+    ] {
+        let parts = http::Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header(HOST, host)
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+        let error = base_for_err(&parts, &[Component::Authority]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::RequestInvalid, "{uri} {host}");
+    }
+}
+
+#[test]
+fn rejects_invalid_and_out_of_range_host_ports() {
+    for host in ["example.net:invalid", "example.net:65536", "example.net:"] {
+        let parts = http::Request::builder()
+            .method("GET")
+            .uri("https://example.net/resource")
+            .header(HOST, host)
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+        let error = base_for_err(&parts, &[Component::Authority]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::RequestInvalid, "{host}");
+    }
+}
+
+#[test]
+fn rejects_invalid_and_out_of_range_uri_ports() {
+    for uri in [
+        "https://example.net:invalid/resource",
+        "https://example.net:65536/resource",
+        "https://example.net:/resource",
+    ] {
+        let parts = http::Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(())
+            .expect("the test URI shape must reach the signer port validation")
+            .into_parts()
+            .0;
+        let error = base_for_err(&parts, &[Component::Authority]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::RequestInvalid, "{uri}");
+    }
+}
+
+#[test]
+fn accepts_absolute_uri_with_origin_form_reconstruction_context() {
     let parts = http::Request::builder()
         .method("GET")
-        .uri("https://example.com/resource")
-        .header(HOST, "EXAMPLE.com:443")
+        .uri("https://example.net:443/resource?b=2&a=1")
+        .header(HOST, "example.net:443")
         .body(())
         .unwrap()
         .into_parts()
         .0;
 
-    let base = base_for(&parts, &[Component::Authority]);
-    assert!(base.contains("\"@authority\": example.com\n"));
+    let base = base_for(
+        &parts,
+        &[
+            Component::TargetUri,
+            Component::Authority,
+            Component::Path,
+            Component::Query,
+        ],
+    );
+    assert!(base.contains("\"@target-uri\": https://example.net:443/resource?b=2&a=1\n"));
+    assert!(base.contains("\"@authority\": example.net\n"));
+    assert!(base.contains("\"@path\": /resource\n"));
+    assert!(base.contains("\"@query\": ?b=2&a=1\n"));
+
+    let parts = http::Request::builder()
+        .method("GET")
+        .uri("https://example.net")
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0;
+    let base = base_for(
+        &parts,
+        &[Component::TargetUri, Component::Path, Component::Query],
+    );
+    assert!(base.contains("\"@target-uri\": https://example.net/\n"));
+    assert!(base.contains("\"@path\": /\n"));
+    assert!(base.contains("\"@query\": ?\n"));
 }
 
 #[tokio::test]
@@ -484,7 +580,7 @@ fn signature_bases_match_official_rfc_vectors() {
 
     let parts = official_proxy_request();
     let target = TargetContext::from_parts(&parts).unwrap();
-    let credential = Credential::rsa_v1_5_sha256("test-key-rsa", RSA_PRIVATE_KEY).unwrap();
+    let credential = Credential::rsa_v1_5_sha256("test-key-rsa", b"unused").unwrap();
     let components = [
         Component::Method,
         Component::Authority,

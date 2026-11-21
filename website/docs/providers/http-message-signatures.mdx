@@ -78,13 +78,23 @@ RSASSA-PKCS1-v1_5 SHA-256. It supports ordinary request fields and the
 derived components. Percent escapes, query order, and repeated query
 parameters are preserved.
 
+The signer requires an absolute HTTP or HTTPS URI. `@target-uri` is rebuilt from
+the scheme, the authority exactly as written, and the origin-form path/query,
+with an empty path normalized to `/`. A present `Host` header must be unique and
+byte-identical to the URI authority; case-only or explicit/default-port
+differences are rejected because an HTTP/1.1 origin-form receiver could
+reconstruct a different target URI. Origin-form request targets without an
+absolute URI are not supported.
+
 Verification, response signing, multiple signatures in one call, component
 parameters, `@request-target`, and body I/O are out of scope. To cover a body,
 compute a `Content-Digest` before signing and include it in the component list.
 
 HMAC uses raw shared-key bytes. RSA accepts unencrypted PKCS#1 or PKCS#8 PEM
 and uses the context's `CryptoProvider`. The RustCrypto provider supports RSA on
-native targets but returns `ConfigInvalid` for it on `wasm32-unknown-unknown`;
-the HMAC path works on WASM.
+native targets but returns `ConfigInvalid` for it on `wasm32-unknown-unknown`.
+The HMAC path runs on `wasm32-unknown-unknown` when hosted by a JavaScript
+runtime through wasm-bindgen, such as a browser or Node. Jiff reads the clock
+from that host; a bare WASM runtime without a JavaScript clock is unsupported.
 
 <ProviderDetails id="http-message-signatures" />

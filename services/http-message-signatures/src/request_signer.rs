@@ -47,8 +47,18 @@ const MAX_SAFE_UNIX_SECOND: i64 = 253_402_207_200;
 /// parameter by default, and `expires` when a duration is supplied.
 ///
 /// The request URI must be an absolute HTTP or HTTPS URI. Its wire path, query
-/// order, query repeats, and percent escapes are used unchanged. A `Host`
-/// header, when present, must be unique and consistent with the URI authority.
+/// order, query repeats, and percent escapes are used unchanged. `@target-uri`
+/// is reconstructed as `<scheme>://<authority><origin-form>`, using the
+/// authority exactly as represented in the URI and an empty path as `/`.
+///
+/// A `Host` header, when present, must be unique and byte-identical to the URI
+/// authority after trimming optional whitespace. This keeps the reconstructed
+/// target URI equal to the URI an HTTP/1.1 origin-form receiver would build
+/// from its request-target and `Host` field. A case-only or explicit/default
+/// port difference is rejected as ambiguous instead of being silently
+/// normalized into a different target URI. Origin-form request targets without
+/// a URI authority are not accepted; callers must provide the absolute target
+/// URI and the matching `Host` representation.
 ///
 /// ## Body coverage
 ///
@@ -127,7 +137,7 @@ impl RequestSigner {
     }
 
     fn signing_time(&self) -> Timestamp {
-        self.time.unwrap_or_else(Timestamp::now)
+        self.time.unwrap_or_else(crate::clock::now)
     }
 }
 
@@ -234,15 +244,9 @@ impl TargetContext {
         let authority = uri
             .authority()
             .ok_or_else(|| Error::request_invalid("request URI must contain an authority"))?;
+        let authority_raw = authority.as_str().to_string();
         let authority = normalize_authority(authority, scheme_name)?;
-        validate_host_header(&parts.headers, &authority, scheme_name)?;
-
-        let target_uri = uri.to_string();
-        if target_uri.contains('#') {
-            return Err(Error::request_invalid(
-                "request URI must not contain a fragment",
-            ));
-        }
+        validate_host_header(&parts.headers, &authority_raw)?;
 
         let path = uri.path();
         let path = if path.is_empty() {
@@ -250,10 +254,17 @@ impl TargetContext {
         } else {
             path.to_string()
         };
-        let query = match uri.path_and_query().and_then(|target| target.query()) {
+        let raw_query = uri.path_and_query().and_then(|target| target.query());
+        let query = match raw_query {
             Some(query) => format!("?{query}"),
             None => "?".to_string(),
         };
+        let target_uri = reconstruct_target_uri(
+            &scheme_name.to_ascii_lowercase(),
+            &authority_raw,
+            &path,
+            raw_query,
+        )?;
 
         Ok(Self {
             method: parts.method.as_str().to_string(),
@@ -310,6 +321,7 @@ fn normalize_authority(authority: &Authority, scheme: &str) -> Result<String> {
             "request authority contains an unsupported host",
         ));
     }
+    let port = explicit_port(authority)?;
 
     let default_port = if scheme.eq_ignore_ascii_case("https") {
         443
@@ -317,21 +329,52 @@ fn normalize_authority(authority: &Authority, scheme: &str) -> Result<String> {
         80
     };
     let mut normalized = host.to_ascii_lowercase();
-    if let Some(port) = authority.port_u16() {
+    if let Some(port) = port {
         if port != default_port {
             normalized.push(':');
             normalized.push_str(&port.to_string());
         }
-    } else if raw.ends_with(':') {
-        return Err(Error::request_invalid(
-            "request authority contains an invalid port",
-        ));
     }
 
     Ok(normalized)
 }
 
-fn validate_host_header(headers: &HeaderMap, expected: &str, scheme: &str) -> Result<()> {
+fn explicit_port(authority: &Authority) -> Result<Option<u16>> {
+    let raw = authority.as_str();
+    if raw.is_empty() || raw.contains('@') {
+        return Err(Error::request_invalid(
+            "request authority must not contain userinfo or be empty",
+        ));
+    }
+
+    let host = authority.host();
+    if host.is_empty() || host.contains('%') {
+        return Err(Error::request_invalid(
+            "request authority contains an unsupported host",
+        ));
+    }
+
+    let suffix = raw
+        .strip_prefix(host)
+        .ok_or_else(|| Error::request_invalid("request authority contains a malformed host"))?;
+    if suffix.is_empty() {
+        return Ok(None);
+    }
+
+    let port = suffix
+        .strip_prefix(':')
+        .ok_or_else(|| Error::request_invalid("request authority contains a malformed port"))?;
+    if port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Error::request_invalid(
+            "request authority contains a malformed port",
+        ));
+    }
+    port.parse::<u16>()
+        .map(Some)
+        .map_err(|_| Error::request_invalid("request authority contains an out-of-range port"))
+}
+
+fn validate_host_header(headers: &HeaderMap, expected: &str) -> Result<()> {
     let mut values = headers.get_all(HOST).iter();
     let Some(value) = values.next() else {
         return Ok(());
@@ -352,14 +395,45 @@ fn validate_host_header(headers: &HeaderMap, expected: &str, scheme: &str) -> Re
     let host = value
         .parse::<Authority>()
         .map_err(|_| Error::request_invalid("Host header is not a valid authority"))?;
-    let host = normalize_authority(&host, scheme)?;
-    if host != expected {
+    explicit_port(&host)?;
+    if host.as_str() != expected {
         return Err(Error::request_invalid(
-            "Host header is inconsistent with the request URI authority",
+            "Host header representation is inconsistent with the request URI authority",
         ));
     }
 
     Ok(())
+}
+
+fn reconstruct_target_uri(
+    scheme: &str,
+    authority: &str,
+    path: &str,
+    query: Option<&str>,
+) -> Result<String> {
+    if path.is_empty() || !path.starts_with('/') {
+        return Err(Error::request_invalid(
+            "request URI path must be empty or an absolute path",
+        ));
+    }
+
+    let mut target_uri = String::new();
+    target_uri.push_str(scheme);
+    target_uri.push_str("://");
+    target_uri.push_str(authority);
+    target_uri.push_str(path);
+    if let Some(query) = query {
+        target_uri.push('?');
+        target_uri.push_str(query);
+    }
+    if target_uri.contains('#') {
+        return Err(Error::request_invalid(
+            "request target URI must not contain a fragment",
+        ));
+    }
+    validate_derived_value("target URI", &target_uri)?;
+
+    Ok(target_uri)
 }
 
 fn canonical_header_value(headers: &HeaderMap, name: &HeaderName) -> Result<String> {
@@ -540,6 +614,18 @@ mod tests {
         assert!(safe_deadline(now, Some(Duration::MAX)) > now);
         assert!(safe_deadline(now, Some(Duration::from_nanos(1))) > now);
         assert_eq!(safe_deadline(now, None), now);
+    }
+
+    #[test]
+    fn explicit_ports_are_parsed_strictly() {
+        for raw in ["example.net:invalid", "example.net:65536", "example.net:"] {
+            let authority: Authority = raw.parse().expect("authority parser accepts the shape");
+            assert!(explicit_port(&authority).is_err(), "{raw}");
+        }
+        for raw in ["example.net", "example.net:0", "example.net:65535"] {
+            let authority: Authority = raw.parse().expect("authority must parse");
+            assert!(explicit_port(&authority).is_ok(), "{raw}");
+        }
     }
 
     #[test]

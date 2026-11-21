@@ -865,11 +865,11 @@
       "credential_granting": [],
       "wasm": {
         "supported": true,
-        "verified_by": "CI checks reqsign-http-message-signatures and builds the facade feature for wasm32-unknown-unknown. HMAC is supported; the RustCrypto RSA operation returns ConfigInvalid on wasm."
+        "verified_by": "CI builds the crate and facade feature for wasm32-unknown-unknown and runs a public HMAC Signer test under wasm-bindgen in Node. The RustCrypto RSA operation returns ConfigInvalid on wasm."
       },
       "integration_tests": {
         "level": "fixture",
-        "notes": "RFC 9421 official HMAC and RSA signature vectors, canonicalization, and failure-path tests.",
+        "notes": "Exact RFC 9421 HMAC vector, RFC 9421 section 4.3 canonical base/parameter checks, normal RSA PEM through the public Signer, URI/Host and failure-path tests, and an offline OpenSSL check of the official section 4.3 RSA signature.",
         "refs": [
           "services/http-message-signatures/tests"
         ]

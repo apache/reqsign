@@ -39,14 +39,25 @@
 //! operation on native targets and returns `ConfigInvalid` for it on
 //! `wasm32-unknown-unknown`.
 //!
+//! On `wasm32-unknown-unknown`, request signing requires a JavaScript host such
+//! as a browser or Node through wasm-bindgen. Jiff is built with its `js`
+//! feature to read the current time from that host; bare WASM runtimes without
+//! a JavaScript clock are not supported.
+//!
 //! ## Covered components
 //!
 //! A policy covers an ordered, nonempty, duplicate-free list of ordinary
 //! request fields and these derived components: `@method`, `@target-uri`,
 //! `@authority`, `@scheme`, `@path`, and `@query`. The URI must be absolute
 //! and use HTTP or HTTPS. Existing percent escapes, query ordering, and
-//! repeated query parameters are preserved. A present `Host` header must be
-//! unique and consistent with the URI authority.
+//! repeated query parameters are preserved. `@target-uri` is reconstructed
+//! from the URI scheme, the authority exactly as represented, and the
+//! origin-form path and query (with an empty path normalized to `/`). A
+//! present `Host` header must be unique and byte-identical to that authority
+//! representation; case-only or explicit/default-port differences are rejected
+//! because an HTTP/1.1 origin-form receiver could reconstruct a different
+//! target URI. Origin-form request targets without an absolute URI are not
+//! supported.
 //!
 //! ## Body coverage
 //!
@@ -97,6 +108,7 @@
 
 #![warn(missing_docs)]
 
+mod clock;
 mod component;
 mod credential;
 mod request_signer;
