@@ -110,8 +110,9 @@ async fn main() -> Result<()> {
 
     // Example 3: Sign with specific expiration (for pre-signed URLs)
     println!("\nExample 3: Sign with 1 hour expiration");
+    // Leave x-amz-content-sha256 unset so the presigned GET uses
+    // UNSIGNED-PAYLOAD without requiring a payload header from the receiver.
     let req = http::Request::get(&url)
-        .header("x-amz-content-sha256", reqsign_aws_v4::EMPTY_STRING_SHA256)
         .body(reqwest::Body::from(""))
         .unwrap();
 

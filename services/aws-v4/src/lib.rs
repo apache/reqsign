@@ -32,6 +32,7 @@
 //! ```no_run
 //! use reqsign_aws_v4::{DefaultCredentialProvider, EMPTY_STRING_SHA256, RequestSigner};
 //! use reqsign_core::{Context, Signer};
+//! use reqsign_crypto_rustcrypto::RustCryptoProvider;
 //! use reqsign_file_read_tokio::TokioFileRead;
 //! use reqsign_http_send_reqwest::ReqwestHttpSend;
 //!
@@ -39,6 +40,7 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create context
 //!     let ctx = Context::new()
+//!         .with_crypto(RustCryptoProvider::new())
 //!         .with_file_read(TokioFileRead::default())
 //!         .with_http_send(ReqwestHttpSend::default());
 //!
@@ -66,14 +68,30 @@
 //!
 //! ## Payload Signing
 //!
-//! `RequestSigner` receives request parts, not the request body. Set
-//! `x-amz-content-sha256` before signing when the signature must cover the
-//! payload: use [`EMPTY_STRING_SHA256`] for an empty body and
-//! [`reqsign_core::hash::hex_sha256`] for non-empty bytes. When the header is
-//! absent, header authentication adds `x-amz-content-sha256: UNSIGNED-PAYLOAD`
-//! (including for empty bodies), while presigning uses that value in the
-//! canonical request without adding the header. See [`RequestSigner`] for
-//! service and endpoint caveats.
+//! `RequestSigner` receives request parts, not the request body. The caller
+//! owns the body and may stream it, so the signer cannot hash it without
+//! buffering or implementing a streaming signature. When
+//! `x-amz-content-sha256` is absent, header authentication adds
+//! `x-amz-content-sha256: UNSIGNED-PAYLOAD` (including for an empty body), while
+//! presigning uses that value in the canonical request without adding the
+//! header.
+//!
+//! `UNSIGNED-PAYLOAD` is an Amazon S3 payload mode. Other AWS services define
+//! their own payload requirements, and some require the actual payload hash;
+//! check the service's SigV4 documentation.
+//!
+//! To sign the actual payload, set `x-amz-content-sha256` before signing to the
+//! lowercase hex SHA-256 of the exact transmitted bytes. Use
+//! [`EMPTY_STRING_SHA256`] for an empty body (SHA-256 of the empty string:
+//! `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`) and
+//! [`reqsign_core::hash::hex_sha256`] for non-empty bytes. Hash after any
+//! content encoding or compression, and do not change the payload after
+//! signing. Chunked or streaming payload signatures are not implemented.
+//!
+//! The SigV4 digest does not replace TLS, and S3's `Content-MD5` and
+//! `x-amz-checksum-*` headers are separate Base64-encoded integrity checks
+//! whose support depends on the operation, bucket, and transfer mode. See
+//! [`RequestSigner`] for the detailed payload and checksum contract.
 //!
 //! ## Credential Sources
 //!

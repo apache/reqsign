@@ -31,7 +31,9 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 /// # Payload signing
 ///
 /// The signer receives an `http::request::Parts` and does not read the body.
-/// If `x-amz-content-sha256` is present, its value is preserved and used as the
+/// The caller owns the body and may stream it, so hashing it here would require
+/// buffering the whole body or implementing a streaming signature. If
+/// `x-amz-content-sha256` is present, its value is preserved and used as the
 /// SigV4 payload hash. Otherwise, header signing adds
 /// `x-amz-content-sha256: UNSIGNED-PAYLOAD`, including for an empty body.
 /// Presigning does not add the header, but canonicalizes the missing header as
@@ -39,12 +41,25 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 ///
 /// `UNSIGNED-PAYLOAD` is an Amazon S3 payload mode, and the signer uses the
 /// same default for every service name. Other AWS services define their own
-/// payload requirements, so check the [AWS SigV4 documentation] when an
-/// endpoint requires a signed payload.
+/// payload requirements, and some require the actual payload hash. Check the
+/// [AWS SigV4 documentation] and the service API reference when an endpoint
+/// requires a signed payload.
 ///
-/// To sign the actual payload, hash the exact bytes that will be sent and set
-/// the header before signing. Use [`EMPTY_STRING_SHA256`] for an empty body and
-/// [`reqsign_core::hash::hex_sha256`] for non-empty bytes:
+/// To sign the actual payload, set the header before signing to the lowercase
+/// hex SHA-256 of the exact transmitted bytes. Use [`EMPTY_STRING_SHA256`] for
+/// an empty body; its value is the SHA-256 of the empty string,
+/// `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. Use
+/// [`reqsign_core::hash::hex_sha256`] for non-empty bytes. Hash after content
+/// encoding or compression, and do not change the payload after signing.
+/// Chunked or streaming payload signatures are not implemented.
+///
+/// The SigV4 signature covers the method, URI, signed headers, and declared
+/// payload hash; it does not encrypt the body or replace TLS, and the HTTP
+/// client owns transport security. It is not an S3 upload checksum. S3's
+/// `Content-MD5` and `x-amz-checksum-*` headers are separate integrity checks:
+/// their values are Base64 encoded, and their support depends on the operation,
+/// bucket type, and transfer mode. `RequestSigner` does not add those headers.
+/// See the [S3 upload integrity guide] for the operation-specific rules.
 ///
 /// ```
 /// use reqsign_aws_v4::EMPTY_STRING_SHA256;
@@ -62,16 +77,20 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 ///     .header("x-amz-content-sha256", payload_hash)
 ///     .body(body)
 ///     .expect("request must be valid");
-/// # let _ = request;
+///
+/// let empty_request = http::Request::put("https://s3.amazonaws.com/mybucket/empty.txt")
+///     .header("x-amz-content-sha256", EMPTY_STRING_SHA256)
+///     .body(())
+///     .expect("request must be valid");
+/// # let _ = (request, empty_request);
 /// ```
 ///
 /// If the header is set before presigning, it is included in
 /// `X-Amz-SignedHeaders`, and the caller must send the same header with the
-/// presigned request. Hash the bytes after any content encoding or compression,
-/// and do not change the payload after signing. Chunked or streaming payload
-/// signing is not implemented.
+/// presigned request.
 ///
 /// [AWS SigV4 documentation]: https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html
+/// [S3 upload integrity guide]: https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html
 /// [`EMPTY_STRING_SHA256`]: crate::EMPTY_STRING_SHA256
 #[derive(Debug)]
 pub struct RequestSigner {

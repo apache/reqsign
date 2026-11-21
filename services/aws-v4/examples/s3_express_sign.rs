@@ -89,8 +89,12 @@ async fn main() -> Result<()> {
     // Example: PUT object to S3 Express bucket
     println!("\nExample: PUT object to S3 Express One Zone");
     let content = "Hello from S3 Express!";
+    let payload_hash = reqsign_core::hash::hex_sha256(
+        &reqsign_crypto_rustcrypto::RustCryptoProvider::new(),
+        content.as_bytes(),
+    )?;
     let req = http::Request::put(&url)
-        .header("x-amz-content-sha256", reqsign_aws_v4::EMPTY_STRING_SHA256)
+        .header("x-amz-content-sha256", payload_hash)
         .header("content-length", content.len().to_string())
         .body(reqwest::Body::from(content))
         .unwrap();
