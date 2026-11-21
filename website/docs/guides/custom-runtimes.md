@@ -83,8 +83,12 @@ Reqsign's core and a defined subset of providers compile for
 sandboxes. CI verifies this exact set on every commit:
 
 - `reqsign-core`, `reqsign-aws-core`
-- Providers: **AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Tencent
-  COS** (facade features `aws`, `aws-v4a`, `azure`, `aliyun`, `tencent`)
+- Providers: **AWS SigV4, AWS SigV4a, Azure Storage, Cloudflare, Aliyun OSS,
+  Tencent COS** (facade features `aws`, `aws-v4a`, `azure`, `cloudflare`,
+  `aliyun`, `tencent`)
+
+Cloudflare environment and static credentials plus header signing need no
+JavaScript clock.
 
 The [provider matrix](/docs/providers/) marks WASM status per provider;
 treat providers outside this set as unsupported there until the catalog says

@@ -304,6 +304,19 @@ contact the network. IMDSv2 region fallback requires explicit opt-in and applies
 a deadline to the complete metadata-token and region exchange. Exposed endpoint
 settings remain the caller's responsibility to interpret.
 
+The Cloudflare default credential provider reads only `CLOUDFLARE_API_TOKEN`
+through the context environment. It does not read `CLOUDFLARE_API_KEY` or
+`CLOUDFLARE_EMAIL`: Cloudflare's global API key authenticates with a different
+header pair rather than the bearer token that the KV and D1 endpoints use. The
+account, database, and namespace identifiers stay in the caller-built request
+URL, so credential discovery never selects a resource. A present but unusable
+token, or an invalid prepended provider, fails instead of falling through to
+another source. Cloudflare assigns each token its permissions and optional
+expiry when the token is created; Reqsign neither reads nor tracks that expiry,
+so an expired token fails at the API. The signed `Authorization` header is
+marked sensitive, and forwarding it to a different host is the caller's
+responsibility.
+
 If a trusted caller configures a malicious file path, command, environment
 implementation, metadata endpoint, HTTP client, or custom provider, using that
 source is caller responsibility. If Reqsign ignores explicit source removal,

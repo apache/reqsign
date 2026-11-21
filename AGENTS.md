@@ -3,8 +3,8 @@
 ## Project Overview
 
 Apache Reqsign — a Rust library for signing HTTP API requests across
-cloud providers (AWS, Azure, Google, Aliyun, Huawei, Tencent, Oracle,
-Volcengine).
+cloud providers (AWS, Azure, Cloudflare, Google, Aliyun, Huawei, Tencent,
+Oracle, Volcengine).
 
 ## Architecture
 
@@ -80,12 +80,14 @@ servers checked into `services/aws-v4/tests/mocks/`.
 ## WASM Compatibility
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
-`aliyun`, `tencent`) must compile for `wasm32-unknown-unknown`. CI verifies
-this supported subset.
+`aliyun`, `tencent`, `cloudflare`) must compile for `wasm32-unknown-unknown`.
+CI verifies this supported subset. Cloudflare environment, static, and header
+signing need no JavaScript clock.
 
 ## Versioning
 
 - Service crates and core share a lockstep major version (`3.0.0`).
+- `reqsign-cloudflare` starts an independent `1.0.0` version line.
 - `reqsign-http-send-reqwest` has its own major (`4.0.0`).
 - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
   version lines, starting at `1.0.0`.
