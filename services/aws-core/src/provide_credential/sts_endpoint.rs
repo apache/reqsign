@@ -66,9 +66,12 @@ impl StsEndpoint {
 
     /// Parse a configured endpoint URL.
     ///
-    /// The URL must use `http` or `https` and name a host (a port is allowed). It may carry a
-    /// path prefix, which the STS operation path `/` is appended to, so
-    /// `https://host/prefix` sends requests to `/prefix/`. User information, a query, or a
+    /// The URL must use `http` or `https` and name a host, with an optional port from 1 to
+    /// 65535. It may carry a path prefix. As in Smithy, one trailing `/` is removed and the STS
+    /// operation path `/` is appended, so `https://host/prefix` and `https://host/prefix/` send
+    /// requests to `/prefix/`, and `https://host/prefix//` to `/prefix//`. A `.` or `..` segment
+    /// (also percent-encoded) is rejected, because an HTTP client may normalize it away after
+    /// signing, so the signed and sent paths would differ. User information, a query, or a
     /// fragment is rejected. Errors name the setting's source, never the URL.
     pub(crate) fn parse(url: &str, source: &str) -> Result<Self> {
         let invalid = || {
@@ -91,10 +94,17 @@ impl StsEndpoint {
         if authority.host().is_empty() || authority.as_str().contains('@') {
             return Err(invalid());
         }
-        if uri.query().is_some() {
+        // Anything after the host is a port, which must be numeric and in 1..=65535;
+        // `Authority::port()` alone ignores a non-numeric one.
+        if authority.as_str() != authority.host()
+            && !authority.port_u16().is_some_and(|port| port != 0)
+        {
             return Err(invalid());
         }
-        let prefix = uri.path().trim_end_matches('/');
+        if uri.query().is_some() || uri.path().split('/').any(is_dot_segment) {
+            return Err(invalid());
+        }
+        let prefix = uri.path().strip_suffix('/').unwrap_or(uri.path());
         Ok(Self {
             base: format!("{scheme}://{}{prefix}", authority.as_str()),
         })
@@ -188,6 +198,13 @@ async fn configured_sts_endpoint(
         }
     }
     Ok(None)
+}
+
+/// Whether a path segment is `.` or `..`, including the percent-encoded forms WHATWG URL parsers
+/// treat as dots.
+fn is_dot_segment(segment: &str) -> bool {
+    let segment = segment.to_ascii_lowercase().replace("%2e", ".");
+    segment == "." || segment == ".."
 }
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
@@ -435,6 +452,16 @@ s3 =
                 "https://gw.example.com:8443/a/b",
                 "https://gw.example.com:8443/a/b/",
             ),
+            // As in Smithy, only one trailing slash is removed before the operation path.
+            (
+                "https://sts.example.com/prefix//",
+                "https://sts.example.com/prefix//",
+            ),
+            ("https://sts.example.com//", "https://sts.example.com//"),
+            (
+                "https://sts.example.com:65535",
+                "https://sts.example.com:65535/",
+            ),
         ] {
             assert_eq!(resolve(&ctx, Some(input)).await, expected, "{input}");
         }
@@ -456,6 +483,16 @@ s3 =
             "https://sts.example.com/?a=secret",
             "https://sts.example.com/#secret",
             "https://",
+            // Ports must be numeric and in 1..=65535.
+            "https://sts.example.com:secret",
+            "https://sts.example.com:99999",
+            "https://sts.example.com:0",
+            // Dot segments would be normalized by the HTTP client after signing.
+            "https://sts.example.com/a/../secret",
+            "https://sts.example.com/./secret",
+            "https://sts.example.com/secret/..",
+            "https://sts.example.com/%2E%2e/secret",
+            "https://sts.example.com/.%2E/secret",
         ] {
             let err = resolve_sts_endpoint(&ctx, Some(input), None, None, false)
                 .await
@@ -550,5 +587,61 @@ endpoint_url = https://prod.example.com/sts
             .await
             .expect("endpoint must resolve");
         assert_eq!(missing.url(), "https://sts.amazonaws.com/");
+    }
+
+    #[tokio::test]
+    async fn profile_default_and_inline_comments_follow_the_sdk_parser() {
+        // `[profile default]` fully replaces `[default]`: its ignore flag wins, so the
+        // environment endpoint is not used.
+        let config = "\
+[default]
+endpoint_url = https://unprefixed-default.example.com
+
+[profile default]
+ignore_configured_endpoint_urls = true
+";
+        let ctx = context(&ALL_ENVS, ConfigFile::new(config));
+        assert_eq!(resolve(&ctx, None).await, "https://sts.amazonaws.com/");
+
+        // Without `[profile default]`, `[default]` applies.
+        let ctx = context(
+            &[],
+            ConfigFile::new("[default]\nendpoint_url = https://unprefixed-default.example.com\n"),
+        );
+        assert_eq!(
+            resolve(&ctx, None).await,
+            "https://unprefixed-default.example.com/"
+        );
+
+        // An inline comment after whitespace does not hide a valid `true`.
+        for line in [
+            "ignore_configured_endpoint_urls = true # keep endpoints local",
+            "ignore_configured_endpoint_urls = true ; keep endpoints local",
+            "IGNORE_CONFIGURED_ENDPOINT_URLS=true\t# upper-case name",
+        ] {
+            let config = format!("[default]\n{line}\n");
+            let ctx = context(&ALL_ENVS, ConfigFile::new(&config));
+            assert_eq!(
+                resolve(&ctx, None).await,
+                "https://sts.amazonaws.com/",
+                "{line}"
+            );
+        }
+
+        // Comments in headers and endpoint lines are stripped too.
+        let config = "\
+[profile dev] # the dev profile
+endpoint_url = https://dev.example.com ; inline comment
+services = dev-services # services comment
+
+[services dev-services]
+sts =
+  endpoint_url = https://dev-sts.example.com
+";
+        let ctx = context(&[("AWS_PROFILE", "dev")], ConfigFile::new(config));
+        assert_eq!(resolve(&ctx, None).await, "https://dev-sts.example.com/");
+        let config = "[profile dev]\nendpoint_url = https://dev.example.com ; inline comment\n";
+        let ctx = context(&[("AWS_PROFILE", "dev")], ConfigFile::new(config));
+        assert_eq!(resolve(&ctx, None).await, "https://dev.example.com/");
     }
 }

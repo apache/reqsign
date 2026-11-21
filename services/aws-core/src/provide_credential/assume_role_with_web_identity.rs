@@ -115,7 +115,12 @@ impl Debug for AssumeRoleWithWebIdentityCredentialProvider {
             .field("policy_arns", &self.policy_arns)
             .field("region", &self.region)
             .field("use_regional_sts_endpoint", &self.use_regional_sts_endpoint)
-            .field("sts_endpoint", &self.sts_endpoint)
+            // Redacted: the setter stores the URL before it is validated, so it may carry
+            // credentials or other sensitive values.
+            .field(
+                "sts_endpoint",
+                &self.sts_endpoint.as_ref().map(|_| "<redacted>"),
+            )
             .field("profile", &self.profile)
             .finish()
     }
@@ -841,7 +846,31 @@ mod tests {
             "the path prefix joins the STS operation path"
         );
 
+        let http = CaptureHttpSend::new(http_body);
+        provider()
+            .with_sts_endpoint("https://gateway.example.com:8443/sts//")
+            .provide_credential(&ctx(&[], http.clone()))
+            .await?
+            .expect("credential must be loaded");
+        assert_eq!(
+            http.uri().as_deref(),
+            Some("https://gateway.example.com:8443/sts//"),
+            "repeated trailing slashes keep all but one, as in Smithy"
+        );
+
         Ok(())
+    }
+
+    #[test]
+    fn debug_redacts_the_explicit_sts_endpoint() {
+        let provider = AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_sts_endpoint("https://user:secret-token@sts.example.com:notaport");
+        let debug = format!("{provider:?}");
+        assert!(!debug.contains("secret-token"), "{debug}");
+        assert!(
+            debug.contains("sts_endpoint: Some(\"<redacted>\")"),
+            "{debug}"
+        );
     }
 
     #[tokio::test]

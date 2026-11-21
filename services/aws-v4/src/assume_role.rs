@@ -224,6 +224,7 @@ mod tests {
     use aws_credential_types::Credentials as AwsCredentials;
     use aws_sigv4::http_request::{
         PayloadChecksumKind, PercentEncodingMode, SignableBody, SignableRequest, SigningSettings,
+        UriPathNormalizationMode,
     };
     use aws_sigv4::sign::v4;
     use bytes::Bytes;
@@ -264,10 +265,19 @@ mod tests {
     }
 
     fn sign_with_aws_sdk(
-        mut request: http::Request<Bytes>,
+        request: http::Request<Bytes>,
         session_token: Option<&str>,
     ) -> http::Request<Bytes> {
+        sign_with_aws_sdk_path_mode(request, session_token, UriPathNormalizationMode::Enabled)
+    }
+
+    fn sign_with_aws_sdk_path_mode(
+        mut request: http::Request<Bytes>,
+        session_token: Option<&str>,
+        uri_path_normalization_mode: UriPathNormalizationMode,
+    ) -> http::Request<Bytes> {
         let mut settings = SigningSettings::default();
+        settings.uri_path_normalization_mode = uri_path_normalization_mode;
         settings.percent_encoding_mode = PercentEncodingMode::Double;
         settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         let identity = AwsCredentials::new(
@@ -976,6 +986,49 @@ mod tests {
             );
             assert!(requests[0].headers.contains_key(AUTHORIZATION));
         }
+    }
+
+    #[tokio::test]
+    async fn fixed_provider_keeps_repeated_trailing_slashes_in_the_signed_path() {
+        let http = MockHttpSend::new([success_response("ASIAPROVIDERSLASH01")]);
+        let context = crate::test_context().with_http_send(http.clone());
+        let (source, _) = FixedCredentialProvider::new(source_credential(None));
+        AssumeRoleCredentialProvider::new(
+            ROLE_ARN.to_string(),
+            Signer::new(
+                context.clone(),
+                source,
+                RequestSigner::new("sts", REGION).with_time(signing_time()),
+            ),
+        )
+        .with_sts_endpoint("https://gateway.example.com/sts//")
+        .provide_credential(&context)
+        .await
+        .expect("fixed provider must succeed")
+        .expect("fixed provider must return a credential");
+
+        let requests = http.requests();
+        let uri = "https://gateway.example.com/sts//?Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fcustomer-reader&Version=2011-06-15&RoleSessionName=reqsign&DurationSeconds=3600";
+        assert_eq!(requests[0].uri.to_string(), uri);
+        let unsigned = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(uri)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(
+                HeaderName::from_static("x-amz-content-sha256"),
+                crate::EMPTY_STRING_SHA256,
+            )
+            .body(Bytes::new())
+            .expect("request must build");
+        // Reqsign signs the path it sends, without normalizing it, so the canonical URI keeps
+        // `/sts//`: the AWS SDK agrees with its path normalization disabled.
+        assert_eq!(
+            requests[0].headers.get(AUTHORIZATION),
+            sign_with_aws_sdk_path_mode(unsigned, None, UriPathNormalizationMode::Disabled)
+                .headers()
+                .get(AUTHORIZATION),
+            "the sent path and the signed path must agree"
+        );
     }
 
     #[tokio::test]
