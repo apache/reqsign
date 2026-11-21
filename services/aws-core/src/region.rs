@@ -80,7 +80,9 @@ impl IMDSv2RegionProvider {
     }
 
     async fn discover(&self, ctx: &Context) -> Result<String> {
-        let token = self.client.load_ec2_metadata_token(ctx).await?;
+        let Some(token) = self.client.load_ec2_metadata_token(ctx, false).await? else {
+            return Err(Error::unexpected("IMDSv2 token unavailable"));
+        };
         let endpoint = self.client.get_endpoint(ctx);
         let request = http::Request::builder()
             .uri(format!(

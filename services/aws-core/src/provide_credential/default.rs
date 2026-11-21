@@ -39,6 +39,9 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// 6. ECS (IAM Roles for Tasks) & Container credentials
 /// 7. EC2 IMDSv2
 ///
+/// IMDSv2 is the default. The IMDS provider can opt in to an IMDSv1 fallback;
+/// see [`IMDSv2CredentialProvider::with_imdsv1_fallback`].
+///
 /// A selected profile with `role_arn` is resolved through `source_profile`
 /// until a supported source is reached, then each role is assumed in order.
 /// Role-chain and SSO errors stop resolution to avoid silently switching
@@ -249,6 +252,16 @@ impl DefaultCredentialProviderBuilder {
     }
 
     /// Override the EC2 IMDSv2 credential provider slot.
+    ///
+    /// The default slot requires IMDSv2. To allow an explicit IMDSv1 fallback:
+    ///
+    /// ```
+    /// use reqsign_aws_core::{DefaultCredentialProvider, IMDSv2CredentialProvider};
+    ///
+    /// let provider = DefaultCredentialProvider::builder()
+    ///     .imds(IMDSv2CredentialProvider::new().with_imdsv1_fallback())
+    ///     .build();
+    /// ```
     pub fn imds(mut self, provider: IMDSv2CredentialProvider) -> Self {
         self.imds = Some(provider);
         self

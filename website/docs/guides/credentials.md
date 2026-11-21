@@ -69,6 +69,22 @@ There are no `configure_*` or `disable_*(bool)` methods by design: a removed
 slot stays removed, and every slot is controlled by one positive and one
 removal method.
 
+### IMDSv1 fallback
+
+The AWS IMDS provider uses IMDSv2 by default. To allow IMDSv1 when the IMDSv2
+token request returns HTTP 403, 404, or 405, opt in on the IMDS slot:
+
+```rust
+use reqsign::aws::{DefaultCredentialProvider, IMDSv2CredentialProvider};
+
+let provider = DefaultCredentialProvider::builder()
+    .imds(IMDSv2CredentialProvider::new().with_imdsv1_fallback())
+    .build();
+```
+
+Other token, transport, metadata, role, and credential failures are returned
+without falling back. Enable this only for instances where IMDSv2 is unavailable.
+
 ## Fixed credentials
 
 When the credential is decided elsewhere — tests, WASM, a control plane that
