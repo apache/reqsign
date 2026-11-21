@@ -26,6 +26,11 @@
 //! [`RequestSigner`] adds only a sensitive `Authorization: Bearer` header. It
 //! rejects `expires_in` because Dropbox does not support query authentication;
 //! signing never changes the URI or any other header.
+//!
+//! On `wasm32-unknown-unknown`, this crate enables Jiff's `js` feature. Runtime
+//! signing or refresh requires a wasm-bindgen JavaScript host such as a browser
+//! or Node; a bare WASM runtime without a JavaScript clock can compile the
+//! crate but is not a supported runtime.
 
 mod constants;
 

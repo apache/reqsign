@@ -190,3 +190,5 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo test --target wasm32-unknown-unknown -p reqsign-http-send-reqwest --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-oauth2 --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-dropbox --test wasm

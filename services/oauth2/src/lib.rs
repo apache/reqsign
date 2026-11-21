@@ -51,6 +51,11 @@
 //! Access-token caching belongs to [`reqsign_core::Signer`]. This crate does
 //! not keep a second access-token cache, and it performs no implicit retry.
 //!
+//! On `wasm32-unknown-unknown`, this crate enables Jiff's `js` feature. A
+//! refresh requires a wasm-bindgen JavaScript host such as a browser or Node;
+//! a bare WASM runtime without a JavaScript clock can compile the crate but is
+//! not a supported runtime.
+//!
 //! ## Expiration
 //!
 //! [`AccessToken::expires_at`] is either the absolute expiration derived from

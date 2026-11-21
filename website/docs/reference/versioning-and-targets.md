@@ -73,10 +73,11 @@ do.
 defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS
 SigV4a, Azure Storage, Aliyun OSS, Tencent COS, and Dropbox providers. The
 shared `reqsign-oauth2` crate and the `oauth2` facade feature are checked in
-the same subset. The
+the same subset. Dropbox and OAuth2 runtime signing or refresh additionally
+requires a wasm-bindgen JavaScript host for the clock; see the
+[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The
 [provider matrix](/docs/providers/) is the authoritative per-provider
-status; the [Custom runtimes & WASM guide](/docs/guides/custom-runtimes/)
-covers building and browser-backed contexts.
+status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core
 assumes Tokio. Runtime coupling lives only in the optional context crates;

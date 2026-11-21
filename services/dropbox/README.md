@@ -62,6 +62,12 @@ rejected instead of being cached as a token with an unknown lifetime.
 Refresh-token rotation is serialized per shared provider, and access-token
 caching belongs to `reqsign_core::Signer`.
 
+On `wasm32-unknown-unknown`, this crate enables Jiff's `js` feature. Runtime
+signing or refresh requires a wasm-bindgen JavaScript host such as a browser or
+Node; a bare WASM runtime without a JavaScript clock can compile the crate but
+is not a supported runtime. CI exercises the public default signer path under
+`wasm-bindgen-test` in Node.
+
 ## License
 
 Licensed under [Apache License, Version 2.0](./LICENSE).

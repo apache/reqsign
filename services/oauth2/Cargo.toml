@@ -34,8 +34,15 @@ reqsign-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# Enable Jiff's JavaScript clock for the wasm-bindgen-hosted target. The
+# existing reqsign-core Timestamp::now() then reads time from the JS host.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+jiff = { workspace = true, features = ["js"] }
+
 [dev-dependencies]
 asyncband = { workspace = true, features = ["oneshot"] }
 bytes = { workspace = true }
 futures = { workspace = true }
-tokio = { workspace = true, features = ["full"] }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = { version = "0.3" }

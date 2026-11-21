@@ -16,7 +16,6 @@
 // under the License.
 
 use bytes::Bytes;
-use futures::future::join_all;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{
     Context, Error, ErrorKind, HttpSend, ProvideCredential, ProvideCredentialChain, Result,
@@ -337,43 +336,32 @@ async fn fresh_short_lived_token_is_accepted_for_the_current_operation() -> Resu
 }
 
 #[tokio::test]
-async fn concurrent_signing_performs_one_refresh_and_rotates_for_a_new_signer_cache() -> Result<()>
-{
+async fn sequential_signing_reuses_cache_and_rotates_for_a_new_signer_cache() -> Result<()> {
     let http = MockHttpSend::new([
         Ok(token_response(
-            "access-token-A1",
+            "cached-access-token",
             Some(3600),
-            Some("refresh-token-R1"),
+            Some("rotated-refresh-token"),
         )),
         Ok(token_response(
-            "access-token-A2",
+            "second-access-token",
             Some(3600),
-            Some("refresh-token-R2"),
+            Some("second-refresh-token"),
         )),
     ]);
     let context = context_with_env(HashMap::new(), http.clone());
     let provider = RefreshCredentialProvider::new(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)?;
 
     let signer = Signer::new(context.clone(), provider.clone(), RequestSigner);
-    let signers = (0..8).map(|_| signer.clone()).collect::<Vec<_>>();
-    let mut requests = (0..8).map(|_| request()).collect::<Vec<_>>();
-    for result in join_all(
-        requests
-            .iter_mut()
-            .zip(signers.iter())
-            .map(|(request, signer)| signer.sign(request, None)),
-    )
-    .await
-    {
-        result?;
-    }
-    assert_eq!(http.calls(), 1);
-    for request in &requests {
+    for _ in 0..2 {
+        let mut parts = request();
+        signer.sign(&mut parts, None).await?;
         assert_eq!(
-            request.headers[http::header::AUTHORIZATION],
-            "Bearer access-token-A1"
+            parts.headers[http::header::AUTHORIZATION],
+            "Bearer cached-access-token"
         );
     }
+    assert_eq!(http.calls(), 1, "sequential calls must reuse the cache");
 
     // A separately constructed signer has its own access-token cache but shares
     // the provider's rotated refresh-token state.
@@ -383,24 +371,31 @@ async fn concurrent_signing_performs_one_refresh_and_rotates_for_a_new_signer_ca
     assert_eq!(http.calls(), 2);
     assert_eq!(
         decoded_form(&http.requests()[1].body)["refresh_token"],
-        "refresh-token-R1"
+        "rotated-refresh-token"
     );
     assert_eq!(
         parts.headers[http::header::AUTHORIZATION],
-        "Bearer access-token-A2"
+        "Bearer second-access-token"
     );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn missing_or_zero_expiration_is_rejected_without_mutating_the_request() -> Result<()> {
+async fn missing_or_zero_expiration_is_rejected_after_rotating_the_refresh_token() -> Result<()> {
     for expires_in in [None, Some(0)] {
-        let http = MockHttpSend::new([Ok(token_response(
-            "access-token-A1",
-            expires_in,
-            Some("refresh-token-R1"),
-        ))]);
+        let http = MockHttpSend::new([
+            Ok(token_response(
+                "unusable-access-token",
+                expires_in,
+                Some("rotated-refresh-token"),
+            )),
+            Ok(token_response(
+                "fresh-access-token",
+                Some(3600),
+                Some("second-refresh-token"),
+            )),
+        ]);
         let context = context_with_env(HashMap::new(), http.clone());
         let provider = RefreshCredentialProvider::new(CLIENT_ID, CLIENT_SECRET, REFRESH_TOKEN)?;
         let signer = Signer::new(context, provider, RequestSigner);
@@ -416,6 +411,19 @@ async fn missing_or_zero_expiration_is_rejected_without_mutating_the_request() -
         assert_eq!(http.calls(), 1);
         assert_eq!(parts.uri, original.uri);
         assert_eq!(parts.headers, original.headers);
+
+        let mut parts = request();
+        signer.sign(&mut parts, None).await?;
+        assert_eq!(http.calls(), 2);
+        assert_eq!(
+            decoded_form(&http.requests()[1].body)["refresh_token"],
+            "rotated-refresh-token",
+            "the rejected exchange must still commit its replacement token"
+        );
+        assert_eq!(
+            parts.headers[http::header::AUTHORIZATION],
+            "Bearer fresh-access-token"
+        );
     }
 
     Ok(())

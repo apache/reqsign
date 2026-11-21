@@ -45,6 +45,14 @@ expiration instead of caching the token as permanent. `AccessToken::is_valid`
 uses a 120-second refresh window; `AccessToken::is_valid_at` checks the true
 expiration without that window.
 
+## WASM
+
+On `wasm32-unknown-unknown`, this crate enables Jiff's `js` feature. Running a
+refresh requires a wasm-bindgen JavaScript host such as a browser or Node; a
+bare WASM runtime without a JavaScript clock can compile the crate but is not a
+supported runtime. CI exercises a public `RefreshTokenGrant::refresh` call with
+a synthetic mock transport under `wasm-bindgen-test` in Node.
+
 ## Example
 
 ```rust,no_run

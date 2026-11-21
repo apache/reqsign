@@ -76,4 +76,9 @@ Dropbox uses header authentication only. Signing adds a sensitive
 URI or other headers. Refresh-token rotation is serialized per shared provider,
 and the access-token cache belongs to `Signer`.
 
+On `wasm32-unknown-unknown`, this provider enables Jiff's JavaScript clock.
+Runtime signing requires a wasm-bindgen JavaScript host such as a browser or
+Node; a bare WASM runtime without a JavaScript clock is not supported. CI
+exercises the public default signer path under `wasm-bindgen-test` in Node.
+
 <ProviderDetails id="dropbox" />
