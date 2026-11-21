@@ -314,7 +314,7 @@ NAME
      reqsign-aws-v4a reqsign-azure-storage \
      reqsign-command-execute-tokio reqsign-file-read-tokio reqsign-google \
      reqsign-http-send-reqwest reqsign-huaweicloud-obs reqsign-oracle \
-     reqsign-tencent-cos reqsign-volcengine-tos
+     reqsign-tencent-cos reqsign-volcengine-tos reqsign-yandex-disk
    do
      cargo info "$c" --registry crates-io | sed -n '1,4p'
    done

@@ -170,6 +170,16 @@ let ctx = default_context();
 let signer = aliyun::default_signer(ctx, "mybucket");
 ```
 
+#### Yandex Disk
+
+```rust
+use reqsign::{default_context, yandex_disk};
+
+// Yandex Disk has no documented automatic token source; pass the OAuth token explicitly.
+let ctx = default_context();
+let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
+```
+
 ## Features
 
 - Pure Rust with minimal dependencies.
@@ -186,6 +196,7 @@ let signer = aliyun::default_signer(ctx, "mybucket");
   - Oracle Cloud: `reqsign-oracle`
   - Tencent COS: `reqsign-tencent-cos`
   - Volcengine TOS: `reqsign-volcengine-tos`
+  - Yandex Disk: `reqsign-yandex-disk`
 
 ## Contributing
 

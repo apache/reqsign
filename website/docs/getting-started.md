@@ -50,6 +50,7 @@ cargo add http anyhow
 | `oracle` | Oracle Cloud |
 | `tencent` | Tencent COS |
 | `volcengine` | Volcengine TOS |
+| `yandex-disk` | Yandex Disk |
 | `full` | Everything above |
 
 The default features include `default-context`, which wires a ready-to-use
@@ -110,6 +111,7 @@ composes that provider's own credential chain — the
 | [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer(ctx)` |
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
+| [Yandex Disk](/docs/providers/yandex-disk/) | `yandex_disk::default_signer(ctx, access_token)` |
 
 A default signer is an ordinary `Signer`: replace any component and keep the
 rest —
