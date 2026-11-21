@@ -187,6 +187,68 @@ impl SharedConfig {
     }
 }
 
+/// Endpoint settings of the selected profile for one service, read from the shared config file only.
+///
+/// Values are raw: no environment variable or explicit override is applied, and
+/// `ignore_configured_endpoint_urls` is not interpreted. Empty values are absent.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ProfileEndpointSettings {
+    /// The profile's `ignore_configured_endpoint_urls`.
+    pub(crate) ignore_configured_endpoint_urls: Option<String>,
+    /// `endpoint_url` under the service's key in the `[services ...]` section the profile names.
+    pub(crate) service_endpoint_url: Option<String>,
+    /// The profile's global `endpoint_url`.
+    pub(crate) endpoint_url: Option<String>,
+}
+
+impl SharedConfig {
+    /// Read the selected profile's endpoint settings for `service_key` (for example `sts`).
+    ///
+    /// This reads only the shared config file, with the same profile and path selection as
+    /// [`Self::load`]. A missing file, profile, or `services` section yields absent values.
+    pub(crate) async fn load_endpoint_settings(
+        &self,
+        ctx: &Context,
+        service_key: &str,
+    ) -> Result<ProfileEndpointSettings> {
+        let name = self.profile_name(ctx);
+        let config = self.load_config_file(ctx).await?;
+        let Some(profile) = config.section(Some(config_section(&name))) else {
+            return Ok(ProfileEndpointSettings::default());
+        };
+        let service_endpoint_url = profile
+            .get("services")
+            .map(str::trim)
+            .filter(|services| !services.is_empty())
+            .and_then(|services| config.section(Some(format!("services {services}"))))
+            .and_then(|section| section.get(service_key))
+            .and_then(|nested| nested_setting(nested, "endpoint_url"));
+        Ok(ProfileEndpointSettings {
+            ignore_configured_endpoint_urls: non_empty(
+                profile.get("ignore_configured_endpoint_urls"),
+            ),
+            service_endpoint_url,
+            endpoint_url: non_empty(profile.get("endpoint_url")),
+        })
+    }
+}
+
+fn non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+/// Read `key` from a nested setting block such as `sts =\n  endpoint_url = ...`.
+fn nested_setting(block: &str, key: &str) -> Option<String> {
+    block
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .find(|(name, _)| name.trim() == key)
+        .and_then(|(_, value)| non_empty(Some(value)))
+}
+
 /// A selected AWS profile with resolved region and global endpoint settings.
 ///
 /// Raw properties may contain secrets. Debug output omits all property values.

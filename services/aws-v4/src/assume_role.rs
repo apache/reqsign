@@ -230,7 +230,7 @@ mod tests {
     use http::HeaderMap;
     use http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderName};
     use reqsign_core::hash::hex_sha256;
-    use reqsign_core::{ErrorKind, Granter, HttpSend, ProvideCredential, Signer};
+    use reqsign_core::{ErrorKind, Granter, HttpSend, ProvideCredential, Signer, StaticEnv};
 
     use super::*;
     use crate::AssumeRoleCredentialProvider;
@@ -908,6 +908,74 @@ mod tests {
             requests[0].uri.to_string(),
             "https://sts.amazonaws.com/?Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fcustomer-reader&Version=2011-06-15&RoleSessionName=reqsign&DurationSeconds=3600"
         );
+    }
+
+    #[tokio::test]
+    async fn fixed_provider_sends_to_the_configured_sts_endpoint() {
+        let expected_query = "?Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fcustomer-reader&Version=2011-06-15&RoleSessionName=reqsign&DurationSeconds=3600";
+        // (explicit endpoint, environment, expected request URL)
+        type EndpointCase<'a> = (Option<&'a str>, &'a [(&'a str, &'a str)], &'a str);
+        let cases: [EndpointCase<'_>; 3] = [
+            (
+                None,
+                &[("AWS_ENDPOINT_URL_STS", "http://sts.internal:8333")],
+                "http://sts.internal:8333/",
+            ),
+            (
+                Some("https://sts.example.com:8443"),
+                &[
+                    ("AWS_ENDPOINT_URL_STS", "http://sts.internal:8333"),
+                    ("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "true"),
+                ],
+                "https://sts.example.com:8443/",
+            ),
+            (
+                None,
+                &[
+                    ("AWS_ENDPOINT_URL", "http://sts.internal:8333"),
+                    ("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "true"),
+                ],
+                "https://sts.amazonaws.com/",
+            ),
+        ];
+        for (explicit, envs, expected) in cases {
+            let http = MockHttpSend::new([success_response("ASIAPROVIDERENDPT01")]);
+            let context = crate::test_context()
+                .with_http_send(http.clone())
+                .with_env(StaticEnv {
+                    home_dir: None,
+                    envs: envs
+                        .iter()
+                        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                        .collect(),
+                });
+            let (source, _) = FixedCredentialProvider::new(source_credential(None));
+            let mut provider = AssumeRoleCredentialProvider::new(
+                ROLE_ARN.to_string(),
+                Signer::new(
+                    context.clone(),
+                    source,
+                    RequestSigner::new("sts", REGION).with_time(signing_time()),
+                ),
+            );
+            if let Some(endpoint) = explicit {
+                provider = provider.with_sts_endpoint(endpoint);
+            }
+
+            provider
+                .provide_credential(&context)
+                .await
+                .expect("fixed provider must succeed")
+                .expect("fixed provider must return a credential");
+
+            let requests = http.requests();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(
+                requests[0].uri.to_string(),
+                format!("{expected}{expected_query}")
+            );
+            assert!(requests[0].headers.contains_key(AUTHORIZATION));
+        }
     }
 
     #[tokio::test]
