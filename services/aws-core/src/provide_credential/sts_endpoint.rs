@@ -82,7 +82,9 @@ impl StsEndpoint {
                 )
         };
         let url = url.trim();
-        if url.contains('#') {
+        // A fragment is never sent, and a backslash may be reinterpreted as a path separator by
+        // the HTTP adapter after signing.
+        if url.contains('#') || url.contains('\\') {
             return Err(invalid());
         }
         let uri: http::Uri = url.parse().map_err(|_| invalid())?;
@@ -94,12 +96,22 @@ impl StsEndpoint {
         if authority.host().is_empty() || authority.as_str().contains('@') {
             return Err(invalid());
         }
-        // Anything after the host is a port, which must be numeric and in 1..=65535;
-        // `Authority::port()` alone ignores a non-numeric one.
-        if authority.as_str() != authority.host()
-            && !authority.port_u16().is_some_and(|port| port != 0)
-        {
-            return Err(invalid());
+        // Anything after the host is a port: ASCII digits only (so no sign, as in `+443`), with no
+        // leading zero (an HTTP client re-serializes `00443` as `443` after signing), in
+        // 1..=65535. `Authority::port()` alone ignores a non-numeric one.
+        if authority.as_str() != authority.host() {
+            let port = authority
+                .as_str()
+                .strip_prefix(authority.host())
+                .and_then(|rest| rest.strip_prefix(':'))
+                .ok_or_else(invalid)?;
+            if port.is_empty()
+                || port.starts_with('0')
+                || !port.bytes().all(|byte| byte.is_ascii_digit())
+                || !port.parse::<u16>().is_ok_and(|port| port != 0)
+            {
+                return Err(invalid());
+            }
         }
         if uri.query().is_some() || uri.path().split('/').any(is_dot_segment) {
             return Err(invalid());
@@ -487,6 +499,13 @@ s3 =
             "https://sts.example.com:secret",
             "https://sts.example.com:99999",
             "https://sts.example.com:0",
+            "https://sts.example.com:+443",
+            "https://sts.example.com:00443",
+            "https://sts.example.com:-1",
+            "https://sts.example.com:",
+            // A backslash could become a path separator after signing.
+            "https://sts.example.com/a\\b",
+            "https://sts.example.com\\secret",
             // Dot segments would be normalized by the HTTP client after signing.
             "https://sts.example.com/a/../secret",
             "https://sts.example.com/./secret",
