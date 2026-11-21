@@ -287,9 +287,10 @@ removed fail without selecting a later provider. The STS requests use only the
 regional endpoint implied by the selected signing region.
 
 `AssumeRoleCredentialProvider` and `AssumeRoleWithWebIdentityCredentialProvider`
-send STS requests to the endpoint configured on the provider; otherwise to the
-first of `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL`, the selected profile's `sts`
-service `endpoint_url`, and the profile's `endpoint_url`, unless
+send STS requests to the endpoint configured on the provider, including any path
+prefix it carries; otherwise to the first of `AWS_ENDPOINT_URL_STS`,
+`AWS_ENDPOINT_URL`, the selected profile's `sts` service `endpoint_url`, and the
+profile's `endpoint_url`, unless
 `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` or the profile's
 `ignore_configured_endpoint_urls` is true; and otherwise to the regional or
 partition default. Endpoint settings in the environment and the shared config

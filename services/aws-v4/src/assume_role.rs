@@ -979,6 +979,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fixed_provider_signs_the_prefixed_path_for_its_signing_region() {
+        let http = MockHttpSend::new([success_response("ASIAPROVIDERPREFIX1")]);
+        let context = crate::test_context().with_http_send(http.clone());
+        let (source, _) = FixedCredentialProvider::new(source_credential(None));
+        AssumeRoleCredentialProvider::new(
+            ROLE_ARN.to_string(),
+            Signer::new(
+                context.clone(),
+                source,
+                RequestSigner::new("sts", REGION).with_time(signing_time()),
+            ),
+        )
+        .with_sts_endpoint("https://gateway.example.com:8443/sts")
+        .provide_credential(&context)
+        .await
+        .expect("fixed provider must succeed")
+        .expect("fixed provider must return a credential");
+
+        let requests = http.requests();
+        assert_eq!(requests.len(), 1);
+        let uri = "https://gateway.example.com:8443/sts/?Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fcustomer-reader&Version=2011-06-15&RoleSessionName=reqsign&DurationSeconds=3600";
+        assert_eq!(requests[0].uri.to_string(), uri);
+
+        // The AWS SDK, signing the same final path for the same region, agrees.
+        let unsigned = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(uri)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(
+                HeaderName::from_static("x-amz-content-sha256"),
+                crate::EMPTY_STRING_SHA256,
+            )
+            .body(Bytes::new())
+            .expect("request must build");
+        let sdk_request = sign_with_aws_sdk(unsigned, None);
+        assert_eq!(
+            requests[0].headers.get(AUTHORIZATION),
+            sdk_request.headers().get(AUTHORIZATION),
+            "the signature must cover /sts/ in {REGION}"
+        );
+        let authorization = requests[0].headers[AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be text");
+        assert!(authorization.contains("/us-east-1/sts/aws4_request"));
+    }
+
+    #[tokio::test]
     async fn fixed_provider_accepts_valid_iam_role_paths_and_preserves_retryability() {
         let success_http = MockHttpSend::new([success_response("ASIAVALIDROLEPATH01")]);
         let success_context = crate::test_context().with_http_send(success_http);

@@ -32,8 +32,9 @@ use crate::provide_credential::sts_endpoint::resolve_sts_endpoint;
 /// therefore also redirect STS; set `AWS_ENDPOINT_URL_STS` (or the profile's `sts` service
 /// endpoint) to send STS elsewhere, or set `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true` (or the
 /// profile's `ignore_configured_endpoint_urls = true`) to ignore every configured endpoint
-/// except the explicit one. The STS signer signs for the region it was built with, whatever
-/// the endpoint.
+/// except the explicit one. The profile is `AWS_PROFILE`, else `default`. An endpoint may
+/// carry a path prefix: `https://host/prefix` sends the request to `/prefix/`, and that final
+/// path is what the STS signer signs, for the region it was built with, whatever the endpoint.
 ///
 /// Use [`reqsign_core::Granter`] with the SigV4 crate's explicit AssumeRole
 /// granter when the source credential and grant are supplied per vending
@@ -119,7 +120,7 @@ impl AssumeRoleCredentialProvider {
     ///
     /// This takes precedence over every environment and profile endpoint setting, including
     /// `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS`. The URL needs an `https` or `http` scheme and a
-    /// host, and no path or query.
+    /// host, may carry a path prefix, and has no query.
     ///
     /// An `http://` endpoint sends the signed request, and receives the temporary
     /// credentials, in cleartext. Use it only on a network you trust to carry them.
@@ -173,6 +174,7 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
         let endpoint = resolve_sts_endpoint(
             ctx,
             self.sts_endpoint.as_deref(),
+            None,
             self.region.as_deref(),
             self.use_regional_sts_endpoint,
         )

@@ -72,7 +72,11 @@ enum WebIdentityTokenSource {
 /// The STS endpoint follows the AWS SDKs' endpoint settings: an endpoint set with
 /// [`Self::with_sts_endpoint`], then `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL`, the selected
 /// profile's `sts` service `endpoint_url` and its global `endpoint_url`, and finally the
-/// regional or partition default. The global `AWS_ENDPOINT_URL` and profile `endpoint_url`
+/// regional or partition default. The selected profile is the one given to
+/// `DefaultCredentialProviderBuilder::with_profile`, else `AWS_PROFILE`, else `default`; it is
+/// read only after a role and a subject token are found, and only when the explicit endpoint
+/// or the environment does not already decide the endpoint. An endpoint may carry a path
+/// prefix: `https://host/prefix` sends the request to `/prefix/`. The global `AWS_ENDPOINT_URL` and profile `endpoint_url`
 /// therefore also redirect STS; set `AWS_ENDPOINT_URL_STS` (or the profile's `sts` service
 /// endpoint) to send STS elsewhere, or set `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true` (or the
 /// profile's `ignore_configured_endpoint_urls = true`) to ignore every configured endpoint
@@ -91,6 +95,8 @@ pub struct AssumeRoleWithWebIdentityCredentialProvider {
     region: Option<String>,
     use_regional_sts_endpoint: Option<bool>,
     sts_endpoint: Option<String>,
+    /// Profile whose STS endpoint settings apply; `None` selects `AWS_PROFILE`, then `default`.
+    profile: Option<String>,
 }
 
 impl Debug for AssumeRoleWithWebIdentityCredentialProvider {
@@ -110,6 +116,7 @@ impl Debug for AssumeRoleWithWebIdentityCredentialProvider {
             .field("region", &self.region)
             .field("use_regional_sts_endpoint", &self.use_regional_sts_endpoint)
             .field("sts_endpoint", &self.sts_endpoint)
+            .field("profile", &self.profile)
             .finish()
     }
 }
@@ -132,6 +139,7 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
             region: None,
             use_regional_sts_endpoint: None,
             sts_endpoint: None,
+            profile: None,
         }
     }
 
@@ -213,12 +221,19 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
     ///
     /// This takes precedence over every environment and profile endpoint setting, including
     /// `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS`. The URL needs an `https` or `http` scheme and a
-    /// host, and no path or query.
+    /// host, may carry a path prefix, and has no query.
     ///
     /// An `http://` endpoint sends the web identity token, and receives the temporary
     /// credentials, in cleartext. Use it only on a network you trust to carry them.
     pub fn with_sts_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.sts_endpoint = Some(endpoint.into());
+        self
+    }
+
+    /// Select the profile whose STS endpoint settings apply, ahead of `AWS_PROFILE` and
+    /// `default`. Set by `DefaultCredentialProviderBuilder::with_profile`.
+    pub(crate) fn with_profile(mut self, profile: String) -> Self {
+        self.profile = Some(profile);
         self
     }
 }
@@ -313,6 +328,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
         let endpoint = resolve_sts_endpoint(
             ctx,
             self.sts_endpoint.as_deref(),
+            self.profile.as_deref(),
             region.as_deref(),
             use_regional,
         )
@@ -813,6 +829,75 @@ mod tests {
             .expect("credential must be loaded");
         assert_eq!(http.uri().as_deref(), Some("https://sts.amazonaws.com/"));
 
+        let http = CaptureHttpSend::new(http_body);
+        provider()
+            .with_sts_endpoint("https://gateway.example.com:8443/sts")
+            .provide_credential(&ctx(&[], http.clone()))
+            .await?
+            .expect("credential must be loaded");
+        assert_eq!(
+            http.uri().as_deref(),
+            Some("https://gateway.example.com:8443/sts/"),
+            "the path prefix joins the STS operation path"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_selected_profile_supplies_the_sts_endpoint() -> Result<()> {
+        #[derive(Debug)]
+        struct Config;
+        impl FileRead for Config {
+            async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+                assert_eq!(path, "/home/test/.aws/config");
+                Ok(b"[profile ambient]\nendpoint_url = https://ambient.example.com\n\n[profile prod]\nservices = prod-services\n\n[services prod-services]\nsts =\n  endpoint_url = http://sts.prod.internal:8333/prefix\n".to_vec())
+            }
+        }
+        let http_body = r#"<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials><AccessKeyId>a</AccessKeyId><SecretAccessKey>s</SecretAccessKey><SessionToken>t</SessionToken><Expiration>2124-05-25T11:45:17Z</Expiration></Credentials></AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>"#;
+        let http = CaptureHttpSend::new(http_body);
+        let ctx = crate::test_context()
+            .with_file_read(Config)
+            .with_http_send(http.clone())
+            .with_env(StaticEnv {
+                home_dir: Some(PathBuf::from("/home/test")),
+                envs: HashMap::from([("AWS_PROFILE".to_string(), "ambient".to_string())]),
+            });
+
+        AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_role_arn("arn:aws:iam::123456789012:role/test-role")
+            .with_subject_token("subject-token")
+            .with_profile("prod".to_string())
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+        assert_eq!(
+            http.uri().as_deref(),
+            Some("http://sts.prod.internal:8333/prefix/")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn without_a_role_and_token_no_endpoint_configuration_is_read() -> Result<()> {
+        #[derive(Debug)]
+        struct NoFileRead;
+        impl FileRead for NoFileRead {
+            async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+                panic!("no file may be read, got {path}")
+            }
+        }
+        let ctx = crate::test_context()
+            .with_file_read(NoFileRead)
+            .with_env(StaticEnv {
+                home_dir: Some(PathBuf::from("/home/test")),
+                envs: HashMap::new(),
+            });
+        let loaded = AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_profile("prod".to_string())
+            .provide_credential(&ctx)
+            .await?;
+        assert!(loaded.is_none());
         Ok(())
     }
 
