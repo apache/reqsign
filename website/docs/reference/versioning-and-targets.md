@@ -72,8 +72,9 @@ do.
 **WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a
 defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS
 SigV4a, Azure Storage, GitHub, Aliyun OSS, and Tencent COS providers. GitHub
-CLI discovery needs a `CommandExecute` adapter and is unavailable in bare WASM
-runtimes, while environment, static, and anonymous signing work. The
+environment, static, and anonymous signing work without a JavaScript clock;
+GitHub CLI discovery needs a `CommandExecute` adapter and is unavailable in bare
+WASM runtimes. The
 [provider matrix](/docs/providers/) is the authoritative per-provider
 status; the [Custom runtimes & WASM guide](/docs/guides/custom-runtimes/)
 covers building and browser-backed contexts.

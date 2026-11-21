@@ -53,14 +53,20 @@ impl Debug for Credential {
 impl Credential {
     /// Create a bearer-token credential from a raw token.
     ///
-    /// Pass the token itself, not an `Authorization` header value. Returns an
-    /// error for an empty token. Header syntax is validated when a request is
-    /// signed, so a malformed token produces a signing error instead of being
-    /// sent to GitHub.
+    /// Pass the token itself, not an `Authorization` header value. The token
+    /// must be non-empty and contain only visible ASCII characters. Rejecting
+    /// other input keeps malformed environment, CLI, and static values from
+    /// becoming request authentication material and keeps `Debug` redaction
+    /// from slicing a non-ASCII string at an invalid byte boundary.
     pub fn new(token: impl Into<String>) -> Result<Self> {
         let token = token.into();
         if token.is_empty() {
             return Err(Error::config_invalid("GitHub token must not be empty"));
+        }
+        if !token.bytes().all(|byte| byte.is_ascii_graphic()) {
+            return Err(Error::config_invalid(
+                "GitHub token must contain only visible ASCII characters",
+            ));
         }
 
         Ok(Self { token: Some(token) })
@@ -68,8 +74,9 @@ impl Credential {
 
     /// Create an explicit anonymous credential for public GitHub resources.
     ///
-    /// Anonymous requests carry no `Authorization` header and are subject to
-    /// GitHub's unauthenticated rate limit.
+    /// Signing with this credential removes any existing `Authorization`
+    /// header. Anonymous requests are subject to GitHub's unauthenticated rate
+    /// limit.
     pub fn anonymous() -> Self {
         Self { token: None }
     }
@@ -92,12 +99,6 @@ impl Credential {
         let Some(token) = &self.token else {
             return Ok(None);
         };
-
-        if token.chars().any(char::is_whitespace) {
-            return Err(Error::config_invalid(
-                "GitHub token must not contain whitespace",
-            ));
-        }
 
         let mut value: http::HeaderValue = format!("Bearer {token}")
             .parse()

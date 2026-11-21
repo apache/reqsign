@@ -22,7 +22,9 @@ pub(crate) const GH_TOKEN: &str = "GH_TOKEN";
 /// The token variable used by GitHub and the GitHub CLI.
 pub(crate) const GITHUB_TOKEN: &str = "GITHUB_TOKEN";
 
-/// The only host this crate discovers credentials for and signs requests to.
+/// The GitHub.com host used by the built-in credential providers. The signer
+/// itself does not restrict the request host; caller-supplied credentials may
+/// be used with another GitHub host.
 pub(crate) const GITHUB_HOST: &str = "github.com";
 
 /// The GitHub CLI program invoked for stored-token discovery.

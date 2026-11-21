@@ -3,29 +3,50 @@
 GitHub.com token discovery and request signing for Reqsign.
 
 The default credential chain reads `GH_TOKEN` before `GITHUB_TOKEN` through
-`Context`. When the context has a command executor, it then reads the stored
-GitHub.com token with `gh auth token --hostname github.com --no-refresh`.
-Discovery is scoped to GitHub.com, runs the CLI directly instead of through a
-shell, and does not parse the CLI's configuration files; the CLI remains the
-source of truth for account and host selection. It does not refresh or rewrite
-the CLI credential store; run `gh auth refresh` separately when the stored token
-has expired, then recreate the signer so it loads the renewed token. If no token
-is found, the chain ends with an explicit anonymous credential for public
-resources.
+`Context`. When the context has a command executor, it resolves the active
+stored account with `gh config get user --host github.com`, then reads that
+account's token with
+`gh auth token --hostname github.com --user <user> --no-refresh`. The explicit
+user prevents `GH_TOKEN` or `GITHUB_TOKEN` in the child process environment
+from shadowing the stored credential. Safe stored-token discovery requires
+GitHub CLI 2.40.0 or newer.
 
-`RequestSigner` adds only a sensitive `Authorization: Bearer` header. It does
-not add or replace `User-Agent` (GitHub requires the caller to send one),
-`Accept`, or `X-GitHub-Api-Version`, and it rejects `expires_in` because GitHub
-has no query authentication.
+The default slots stop at the first error instead of silently selecting a
+different identity. A malformed environment token, malformed or failed
+stored-token discovery, or an invalid prepended or static provider fails
+signing. Only an absent credential reaches the explicit anonymous slot. Add a
+`CommandExecute` adapter to the context to enable GitHub CLI discovery; without
+one, that slot yields no credential.
 
-This crate targets `https://api.github.com`. It ignores `GH_HOST`,
-`GH_ENTERPRISE_TOKEN`, and `GITHUB_ENTERPRISE_TOKEN`; use
+`--no-refresh` keeps discovery read-only and is used on GitHub CLI 2.103.0 and
+newer. Older supported versions do not refresh when printing a stored token, so
+the provider retries without the flag only after the CLI reports that specific
+flag as unknown. Run `gh auth refresh` separately when the stored token has
+expired, then recreate the signer so it loads the renewed token.
+
+`RequestSigner` adds a sensitive `Authorization: Bearer` header for a token
+credential and removes any existing `Authorization` header for an explicit
+anonymous credential, so a reused request cannot carry stale authentication
+material. Other headers and the URI are unchanged. It does not add or replace
+`User-Agent` (GitHub requires the caller to send one), `Accept`, or
+`X-GitHub-Api-Version`, and it rejects `expires_in` because GitHub has no query
+authentication. GitHub credentials in this crate carry no expiration and
+signing writes no protocol time, so signing has no clock dependency.
+
+The built-in providers discover GitHub.com credentials only. They ignore
+`GH_HOST`, `GH_ENTERPRISE_TOKEN`, and `GITHUB_ENTERPRISE_TOKEN`; use
 `StaticCredentialProvider` or a custom provider for GitHub Enterprise Server.
 `GH_TOKEN` and `GITHUB_TOKEN` are interpreted as the GitHub CLI's GitHub.com
-token; pass the intended token explicitly when you use multiple hosts. A token
-carries the host and scopes or repository permissions assigned by GitHub;
-Reqsign neither requests nor inspects them. The caller owns the HTTP client and
-its redirect policy, and must not forward the signed header to another host.
+token; pass the intended token explicitly when you use multiple hosts. The
+signer does not restrict the request host, so caller-supplied credentials may
+be used with another GitHub host. A token carries the host and scopes or
+repository permissions assigned by GitHub; Reqsign neither requests nor
+inspects them. The caller owns the HTTP client and its redirect policy, and must
+not forward the signed header to another host.
+
+On `wasm32-unknown-unknown`, environment, static, and anonymous signing work
+without a JavaScript clock. GitHub CLI discovery requires a `CommandExecute`
+adapter and is unavailable in bare WASM runtimes.
 
 ## Quick Start
 
@@ -34,6 +55,7 @@ use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_github::{DefaultCredentialProvider, RequestSigner};
 
 # async fn example() -> reqsign_core::Result<()> {
+// Add a CommandExecute adapter to enable GitHub CLI discovery.
 let context = Context::new().with_env(OsEnv);
 let signer = Signer::new(
     context,

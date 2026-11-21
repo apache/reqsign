@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use wasm_bindgen_test::*;
 
 #[wasm_bindgen_test]
-async fn env_token_signs_with_the_wasm_clock() {
+async fn env_token_signs_without_a_clock() {
     let context = Context::new().with_env(StaticEnv {
         home_dir: None,
         envs: HashMap::from([("GH_TOKEN".to_string(), "wasm-github-token".to_string())]),
@@ -80,6 +80,10 @@ async fn no_token_falls_back_to_anonymous_without_a_command_adapter() {
         RequestSigner,
     );
     let mut parts = http::Request::get("https://api.github.com/repos/apache/reqsign")
+        .header(
+            http::header::AUTHORIZATION,
+            "Bearer stale-wasm-github-token",
+        )
         .body(())
         .expect("request must build")
         .into_parts()

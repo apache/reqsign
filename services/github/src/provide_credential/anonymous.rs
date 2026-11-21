@@ -21,8 +21,10 @@ use reqsign_core::{Context, ProvideCredential, Result};
 /// Provides an explicit anonymous credential for public GitHub resources.
 ///
 /// This is the last slot in the default chain so that public reads keep
-/// working without a token. Anonymous requests are limited to public data and
-/// GitHub's unauthenticated rate limit.
+/// working without a token. Signing with this credential removes any existing
+/// `Authorization` header and leaves other headers and the URI unchanged.
+/// Anonymous requests are limited to public data and GitHub's unauthenticated
+/// rate limit.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct AnonymousCredentialProvider;
 

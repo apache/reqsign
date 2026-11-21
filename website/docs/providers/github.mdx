@@ -54,20 +54,33 @@ signer.sign(&mut req, None).await?;
 ```
 
 The default chain reads `GH_TOKEN` before `GITHUB_TOKEN`. If neither is set
-and the context has a `CommandExecute` adapter, it asks the GitHub CLI for the
-stored GitHub.com token with
-`gh auth token --hostname github.com --no-refresh`. The command runs directly,
-never through a shell; the explicit host keeps discovery independent of
-`GH_HOST` and local Git remotes; and `--no-refresh` keeps discovery read-only.
-Reqsign does not parse the CLI's configuration files; the CLI remains the source
-of truth for account and host selection. If the stored token has expired, run
-`gh auth refresh` to renew it, then recreate the signer so it loads the new
-token.
+and the context has a `CommandExecute` adapter, it resolves the active stored
+account with `gh config get user --host github.com`, then reads that account's
+token with
+`gh auth token --hostname github.com --user <user> --no-refresh`. The explicit
+user prevents `GH_TOKEN` or `GITHUB_TOKEN` in the child process environment
+from shadowing the stored credential; safe stored-token discovery requires
+GitHub CLI 2.40.0 or newer. The commands run directly, never through a shell;
+the explicit host keeps discovery independent of `GH_HOST` and local Git
+remotes; and Reqsign does not parse the CLI's configuration files.
 
-With no token, the chain ends with anonymous access. Anonymous requests carry no
-`Authorization` header, can read public resources, and are subject to GitHub's
-60-requests-per-hour unauthenticated rate limit. Remove the fallback with
-`.no_anonymous()` when every request must be authenticated.
+`--no-refresh` keeps discovery read-only on GitHub CLI 2.103.0 and newer. Older
+supported versions do not refresh when printing a stored token, so the provider
+retries without the flag only after the CLI reports that specific flag as
+unknown. If the stored token has expired, run `gh auth refresh`, then recreate
+the signer so it loads the new token.
+
+The default slots stop at the first error instead of silently selecting a
+different identity. A malformed environment token, malformed or failed
+stored-token discovery, or an invalid prepended or static provider fails
+signing. Only an absent credential reaches anonymous access.
+
+With no token, the chain ends with anonymous access. Signing with an anonymous
+credential removes any existing `Authorization` header and leaves other headers
+and the URI unchanged, so a reused request cannot carry stale authentication
+material. Anonymous requests can read public resources and are subject to
+GitHub's 60-requests-per-hour unauthenticated rate limit. Remove the fallback
+with `.no_anonymous()` when every request must be authenticated.
 
 ## Explicit credentials
 
@@ -99,23 +112,34 @@ default chain.
 
 ## Request behavior
 
-`RequestSigner` adds only a sensitive `Authorization: Bearer` header. It does
-not add or replace `User-Agent` (GitHub requires the caller to send one),
-`Accept`, or `X-GitHub-Api-Version`, so keep those request headers in the
-caller. GitHub has no query authentication, so signing rejects `expires_in`.
+`RequestSigner` adds a sensitive `Authorization: Bearer` header for a token
+credential and removes any existing `Authorization` header for an explicit
+anonymous credential. Other headers and the URI are unchanged. It does not add
+or replace `User-Agent` (GitHub requires the caller to send one), `Accept`, or
+`X-GitHub-Api-Version`, so keep those request headers in the caller. GitHub has
+no query authentication, so signing rejects `expires_in`. GitHub credentials in
+this crate carry no expiration and signing writes no protocol time, so signing
+has no clock dependency.
 
 ## Host and scope
 
-This provider targets GitHub.com and `https://api.github.com`. It ignores
+The built-in providers discover GitHub.com credentials only. They ignore
 `GH_HOST`, `GH_ENTERPRISE_TOKEN`, and `GITHUB_ENTERPRISE_TOKEN`; use
 `StaticCredentialProvider` or a custom provider for GitHub Enterprise Server.
 `GH_TOKEN` and `GITHUB_TOKEN` are interpreted as the GitHub CLI's GitHub.com
-token; pass the intended token explicitly when you use multiple hosts. GitHub
-assigns each token's host and its OAuth scopes or fine-grained repository
-permissions. Reqsign neither requests nor inspects them, and it does not
-implement GitHub App installation-token exchange.
+token; pass the intended token explicitly when you use multiple hosts. The
+signer does not restrict the request host, so caller-supplied credentials may
+be used with another GitHub host. GitHub assigns each token's host and its OAuth
+scopes or fine-grained repository permissions. Reqsign neither requests nor
+inspects them, and it does not implement GitHub App installation-token exchange.
 
 The caller owns the HTTP client and its redirect policy. Do not forward the
 signed `Authorization` header to a different host.
+
+## WASM
+
+Environment, static, and anonymous signing work on `wasm32-unknown-unknown`
+without a JavaScript clock. GitHub CLI discovery requires a `CommandExecute`
+adapter and is unavailable in bare WASM runtimes.
 
 <ProviderDetails id="github" />

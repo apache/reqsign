@@ -23,7 +23,9 @@ use std::fmt::{self, Debug, Formatter};
 ///
 /// Use this provider with [`reqsign_core::Signer::with_credential_provider`] or
 /// [`crate::DefaultCredentialProvider::push_front`] to override ambient
-/// discovery. `Debug` output never contains the token.
+/// discovery. The token must be non-empty visible ASCII. An invalid explicit
+/// value fails instead of falling back to a lower-priority source. `Debug`
+/// output never contains the token.
 #[derive(Clone)]
 pub struct StaticCredentialProvider {
     token: String,
@@ -50,7 +52,7 @@ impl ProvideCredential for StaticCredentialProvider {
 
     async fn provide_credential(&self, _ctx: &Context) -> Result<Option<Self::Credential>> {
         Credential::new(self.token.clone()).map(Some).map_err(|_| {
-            reqsign_core::Error::config_invalid("static GitHub token must not be empty")
+            reqsign_core::Error::config_invalid("static GitHub token is not a usable bearer token")
         })
     }
 }

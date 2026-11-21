@@ -27,9 +27,14 @@ pub type DefaultSigner = Signer<Credential>;
 /// Create a default GitHub signer with the supplied runtime context.
 ///
 /// The default credential provider reads `GH_TOKEN`, then `GITHUB_TOKEN`
-/// through the context environment, asks the GitHub CLI for its stored
-/// GitHub.com token when a command executor is available, and finally falls
-/// back to anonymous access for public resources. Replace the provider with
+/// through the context environment. When a command executor is available, it
+/// resolves the active stored GitHub.com account with
+/// `gh config get user --host github.com` and reads the token with
+/// `gh auth token --hostname github.com --user <user> --no-refresh`; safe
+/// stored-token discovery requires GitHub CLI 2.40.0 or newer. Only an absent
+/// credential reaches anonymous access, which removes any existing
+/// `Authorization` header. A malformed configured source fails signing instead
+/// of silently selecting a different identity. Replace the provider with
 /// [`StaticCredentialProvider`] or a custom provider when the token is managed
 /// explicitly.
 pub fn default_signer(ctx: Context) -> DefaultSigner {

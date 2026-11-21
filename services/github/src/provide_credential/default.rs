@@ -19,22 +19,42 @@ use crate::Credential;
 use crate::provide_credential::{
     AnonymousCredentialProvider, EnvCredentialProvider, GhCliCredentialProvider,
 };
-use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
+use reqsign_core::{
+    Context, ProvideCredential, ProvideCredentialChain, ProvideCredentialDyn, Result,
+};
 
 /// Default credential provider for GitHub.com.
 ///
 /// The default chain is:
 ///
 /// 1. `GH_TOKEN`, then `GITHUB_TOKEN` through [`Context`] environment access;
-/// 2. the stored GitHub.com token from `gh auth token`, when the context has a
+/// 2. the stored GitHub.com token from the GitHub CLI, when the context has a
 ///    command executor;
 /// 3. an explicit anonymous credential for public resources.
 ///
-/// Use the builder to replace or remove individual slots. A removed slot is
-/// never re-enabled during `build()`.
+/// The default slots stop at the first error instead of silently selecting a
+/// different identity. A malformed environment token, an unusable stored CLI
+/// token, or a malformed prepended provider therefore fails the signer. An
+/// absent credential is not an error: the anonymous slot is the only fallback.
+///
+/// [`DefaultCredentialProvider::with_chain`] keeps the caller-supplied
+/// [`ProvideCredentialChain`] and its own error policy. Use the builder to
+/// replace or remove individual default slots. A removed slot is never
+/// re-enabled during `build()`.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
-    chain: ProvideCredentialChain<Credential>,
+    front: Vec<Box<dyn ProvideCredentialDyn<Credential = Credential>>>,
+    source: CredentialSource,
+}
+
+#[derive(Debug)]
+enum CredentialSource {
+    Default {
+        env: Option<EnvCredentialProvider>,
+        gh_cli: Option<GhCliCredentialProvider>,
+        anonymous: Option<AnonymousCredentialProvider>,
+    },
+    Chain(ProvideCredentialChain<Credential>),
 }
 
 impl Default for DefaultCredentialProvider {
@@ -55,17 +75,38 @@ impl DefaultCredentialProvider {
     }
 
     /// Create with a custom credential chain.
+    ///
+    /// The supplied chain keeps [`ProvideCredentialChain`]'s error policy: a
+    /// provider error is logged and the chain continues to the next provider.
     pub fn with_chain(chain: ProvideCredentialChain<Credential>) -> Self {
-        Self { chain }
+        Self {
+            front: Vec::new(),
+            source: CredentialSource::Chain(chain),
+        }
     }
 
-    /// Add a credential provider to the front of the default chain.
+    /// Add a credential provider to the front of the chain.
+    ///
+    /// The prepended provider is tried before every default source. Its errors
+    /// are returned instead of falling through to a lower-priority source, so
+    /// an explicitly configured invalid credential cannot silently change the
+    /// signing identity.
     pub fn push_front(
         mut self,
         provider: impl ProvideCredential<Credential = Credential> + 'static,
     ) -> Self {
-        self.chain = self.chain.push_front(provider);
+        self.front.insert(0, Box::new(provider));
         self
+    }
+
+    async fn provide_from_front(&self, ctx: &Context) -> Result<Option<Credential>> {
+        for provider in &self.front {
+            if let Some(credential) = provider.provide_credential_dyn(ctx).await? {
+                return Ok(Some(credential));
+            }
+        }
+
+        Ok(None)
     }
 }
 
@@ -73,7 +114,34 @@ impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        self.chain.provide_credential(ctx).await
+        if let Some(credential) = self.provide_from_front(ctx).await? {
+            return Ok(Some(credential));
+        }
+
+        match &self.source {
+            CredentialSource::Default {
+                env,
+                gh_cli,
+                anonymous,
+            } => {
+                if let Some(provider) = env {
+                    if let Some(credential) = provider.provide_credential(ctx).await? {
+                        return Ok(Some(credential));
+                    }
+                }
+                if let Some(provider) = gh_cli {
+                    if let Some(credential) = provider.provide_credential(ctx).await? {
+                        return Ok(Some(credential));
+                    }
+                }
+                if let Some(provider) = anonymous {
+                    return provider.provide_credential(ctx).await;
+                }
+
+                Ok(None)
+            }
+            CredentialSource::Chain(chain) => chain.provide_credential(ctx).await,
+        }
     }
 }
 
@@ -142,17 +210,13 @@ impl DefaultCredentialProviderBuilder {
 
     /// Build the provider with the configured slots.
     pub fn build(self) -> DefaultCredentialProvider {
-        let mut chain = ProvideCredentialChain::new();
-        if let Some(provider) = self.env {
-            chain = chain.push(provider);
+        DefaultCredentialProvider {
+            front: Vec::new(),
+            source: CredentialSource::Default {
+                env: self.env,
+                gh_cli: self.gh_cli,
+                anonymous: self.anonymous,
+            },
         }
-        if let Some(provider) = self.gh_cli {
-            chain = chain.push(provider);
-        }
-        if let Some(provider) = self.anonymous {
-            chain = chain.push(provider);
-        }
-
-        DefaultCredentialProvider::with_chain(chain)
     }
 }

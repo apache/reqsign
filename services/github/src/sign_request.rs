@@ -23,11 +23,12 @@ use std::time::Duration;
 /// Signs GitHub.com REST API requests with a bearer token.
 ///
 /// Header authentication only. It inserts a sensitive `Authorization: Bearer`
-/// header when the credential is a token, leaves an anonymous request
-/// unchanged, and never modifies the URI or other headers. It does not add
-/// `User-Agent` (GitHub requires the caller to send one), `Accept`, or
-/// `X-GitHub-Api-Version`. Query authentication and `expires_in` are not
-/// supported and are rejected.
+/// header when the credential is a token and removes any existing
+/// `Authorization` header for an explicit anonymous credential, so a reused
+/// request cannot carry stale authentication material. Other headers and the
+/// URI are unchanged. It does not add `User-Agent` (GitHub requires the caller
+/// to send one), `Accept`, or `X-GitHub-Api-Version`. Query authentication and
+/// `expires_in` are not supported and are rejected.
 #[derive(Debug, Default)]
 pub struct RequestSigner;
 
@@ -39,7 +40,9 @@ impl SignRequest for RequestSigner {
         _credential: &Self::Credential,
         _expires_in: Option<Duration>,
     ) -> Timestamp {
-        Timestamp::now()
+        // GitHub credentials carry no expiration in this crate and the signer
+        // writes no protocol time, so signing has no clock dependency.
+        Timestamp::default()
     }
 
     async fn sign_request(
@@ -65,9 +68,14 @@ impl SignRequest for RequestSigner {
             ));
         }
 
-        if let Some(authorization) = credential.bearer_header_value()? {
-            req.headers
-                .insert(http::header::AUTHORIZATION, authorization);
+        match credential.bearer_header_value()? {
+            Some(authorization) => {
+                req.headers
+                    .insert(http::header::AUTHORIZATION, authorization);
+            }
+            None => {
+                req.headers.remove(http::header::AUTHORIZATION);
+            }
         }
 
         Ok(())

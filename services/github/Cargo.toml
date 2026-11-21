@@ -30,11 +30,6 @@ rust-version.workspace = true
 http = { workspace = true }
 reqsign-core = { workspace = true }
 
-# Enable Jiff's JavaScript clock for the wasm-bindgen-hosted target. The
-# existing reqsign-core Timestamp::now() then reads time from the JS host.
-[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-jiff = { workspace = true, features = ["js"] }
-
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 

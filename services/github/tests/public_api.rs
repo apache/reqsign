@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use reqsign_core::time::Timestamp;
 use reqsign_core::{
     CommandExecute, CommandOutput, Context, Error, ErrorKind, ProvideCredential,
     ProvideCredentialChain, Result, SignRequest, Signer, StaticEnv,
@@ -24,6 +25,7 @@ use reqsign_github::{
     GhCliCredentialProvider, RequestSigner, StaticCredentialProvider,
 };
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -60,31 +62,31 @@ impl std::fmt::Debug for MockCommandExecute {
 }
 
 impl MockCommandExecute {
+    fn sequence(results: impl IntoIterator<Item = MockCommandResult>) -> Self {
+        Self {
+            calls: Arc::new(StdMutex::new(Vec::new())),
+            results: Arc::new(StdMutex::new(results.into_iter().collect())),
+        }
+    }
+
     fn success(stdout: impl Into<Vec<u8>>) -> Self {
-        Self::with_result(MockCommandResult::Output(CommandOutput {
+        Self::sequence([MockCommandResult::Output(CommandOutput {
             status: 0,
             stdout: stdout.into(),
             stderr: Vec::new(),
-        }))
+        })])
     }
 
-    fn failure(status: i32, stdout: impl Into<Vec<u8>>, stderr: impl Into<Vec<u8>>) -> Self {
-        Self::with_result(MockCommandResult::Output(CommandOutput {
+    fn failure(status: i32, stderr: impl Into<Vec<u8>>) -> Self {
+        Self::sequence([MockCommandResult::Output(CommandOutput {
             status,
-            stdout: stdout.into(),
+            stdout: Vec::new(),
             stderr: stderr.into(),
-        }))
+        })])
     }
 
     fn adapter_error(message: impl Into<String>) -> Self {
-        Self::with_result(MockCommandResult::AdapterError(message.into()))
-    }
-
-    fn with_result(result: MockCommandResult) -> Self {
-        Self {
-            calls: Arc::new(StdMutex::new(Vec::new())),
-            results: Arc::new(StdMutex::new(VecDeque::from([result]))),
-        }
+        Self::sequence([MockCommandResult::AdapterError(message.into())])
     }
 
     fn calls(&self) -> Vec<RecordedCommand> {
@@ -112,6 +114,30 @@ impl CommandExecute for MockCommandExecute {
     }
 }
 
+fn user_result(user: &str) -> MockCommandResult {
+    MockCommandResult::Output(CommandOutput {
+        status: 0,
+        stdout: format!("{user}\n").into_bytes(),
+        stderr: Vec::new(),
+    })
+}
+
+fn token_result(token: &str) -> MockCommandResult {
+    MockCommandResult::Output(CommandOutput {
+        status: 0,
+        stdout: format!("{token}\n").into_bytes(),
+        stderr: Vec::new(),
+    })
+}
+
+fn failure_result(status: i32, stderr: impl Into<Vec<u8>>) -> MockCommandResult {
+    MockCommandResult::Output(CommandOutput {
+        status,
+        stdout: Vec::new(),
+        stderr: stderr.into(),
+    })
+}
+
 fn context(envs: HashMap<String, String>) -> Context {
     Context::new().with_env(StaticEnv {
         home_dir: None,
@@ -136,27 +162,34 @@ fn request() -> http::request::Parts {
         .0
 }
 
-async fn sign_with(
+fn stale_request() -> http::request::Parts {
+    let mut parts = request();
+    parts.headers.insert(
+        AUTHORIZATION,
+        http::HeaderValue::from_static("Bearer stale-token-D4"),
+    );
+    parts
+}
+
+async fn sign_parts(
     provider: impl ProvideCredential<Credential = Credential>,
     ctx: Context,
+    mut parts: http::request::Parts,
 ) -> Result<http::request::Parts> {
     let signer = Signer::new(ctx, provider, RequestSigner);
-    let mut parts = request();
     signer.sign(&mut parts, None).await?;
     Ok(parts)
 }
 
 #[tokio::test]
-async fn static_token_signs_bearer_and_preserves_the_request() -> Result<()> {
-    let original = request();
-    let signer = Signer::new(
-        Context::new(),
+async fn token_signing_replaces_stale_authorization_and_preserves_request() -> Result<()> {
+    let original = stale_request();
+    let parts = sign_parts(
         StaticCredentialProvider::new(STATIC_TOKEN),
-        RequestSigner,
-    );
-    let mut parts = original.clone();
-
-    signer.sign(&mut parts, None).await?;
+        Context::new(),
+        original.clone(),
+    )
+    .await?;
 
     let authorization = parts
         .headers
@@ -179,27 +212,40 @@ async fn static_token_signs_bearer_and_preserves_the_request() -> Result<()> {
 }
 
 #[tokio::test]
-async fn anonymous_signing_leaves_the_request_unchanged() -> Result<()> {
-    let original = request();
-    let signer = Signer::new(
-        Context::new(),
+async fn anonymous_signing_removes_stale_authorization_and_preserves_other_headers() -> Result<()> {
+    let original = stale_request();
+    let parts = sign_parts(
         AnonymousCredentialProvider::new(),
-        RequestSigner,
-    );
-    let mut parts = original.clone();
-
-    signer.sign(&mut parts, None).await?;
+        Context::new(),
+        original.clone(),
+    )
+    .await?;
 
     assert!(!parts.headers.contains_key(AUTHORIZATION));
     assert_eq!(parts.uri, original.uri);
     assert_eq!(parts.method, original.method);
-    assert_eq!(parts.headers, original.headers);
+    assert_eq!(parts.headers[http::header::USER_AGENT], "opendal-test");
+    assert_eq!(parts.headers["x-github-api-version"], "2022-11-28");
+    assert_eq!(
+        parts.headers[http::header::ACCEPT],
+        "application/vnd.github.raw+json"
+    );
+
+    let unsigned = request();
+    let parts = sign_parts(
+        AnonymousCredentialProvider::new(),
+        Context::new(),
+        unsigned.clone(),
+    )
+    .await?;
+    assert!(!parts.headers.contains_key(AUTHORIZATION));
+    assert_eq!(parts.headers, unsigned.headers);
     Ok(())
 }
 
 #[tokio::test]
 async fn expires_in_is_rejected_without_mutating_the_request() -> Result<()> {
-    let original = request();
+    let original = stale_request();
     let signer = Signer::new(
         Context::new(),
         StaticCredentialProvider::new(STATIC_TOKEN),
@@ -220,7 +266,7 @@ async fn expires_in_is_rejected_without_mutating_the_request() -> Result<()> {
 
 #[tokio::test]
 async fn missing_credential_is_rejected_without_mutating_the_request() -> Result<()> {
-    let original = request();
+    let original = stale_request();
     let mut parts = original.clone();
 
     let error = RequestSigner
@@ -232,6 +278,15 @@ async fn missing_credential_is_rejected_without_mutating_the_request() -> Result
     assert_eq!(parts.uri, original.uri);
     assert_eq!(parts.headers, original.headers);
     Ok(())
+}
+
+#[test]
+fn request_signer_does_not_read_the_wall_clock() {
+    let credential = Credential::anonymous();
+    assert_eq!(
+        RequestSigner.required_valid_until(&credential, None),
+        Timestamp::default()
+    );
 }
 
 #[tokio::test]
@@ -272,7 +327,7 @@ async fn env_prefers_gh_token_then_github_token() -> Result<()> {
     ];
 
     for (envs, expected) in cases {
-        let parts = sign_with(DefaultCredentialProvider::new(), context(envs)).await?;
+        let parts = sign_parts(DefaultCredentialProvider::new(), context(envs), request()).await?;
         match expected {
             Some(expected) => assert_eq!(
                 parts.headers[AUTHORIZATION].to_str().expect("header text"),
@@ -285,54 +340,192 @@ async fn env_prefers_gh_token_then_github_token() -> Result<()> {
 }
 
 #[tokio::test]
-async fn gh_cli_discovery_is_host_scoped_and_read_only() -> Result<()> {
-    let command = MockCommandExecute::success(format!("{CLI_TOKEN}\n").into_bytes());
-    let ctx = context_with_command(HashMap::new(), command.clone());
+async fn gh_cli_discovery_is_host_scoped_and_env_independent() -> Result<()> {
+    let command = MockCommandExecute::sequence([user_result("cli-user"), token_result(CLI_TOKEN)]);
+    let ctx = context_with_command(
+        HashMap::from([("GH_TOKEN".to_string(), ENV_TOKEN.to_string())]),
+        command.clone(),
+    );
+    let provider = DefaultCredentialProvider::builder().no_env().build();
 
-    let parts = sign_with(DefaultCredentialProvider::new(), ctx).await?;
+    let parts = sign_parts(provider, ctx, request()).await?;
 
     assert_eq!(
         parts.headers[AUTHORIZATION].to_str().expect("header text"),
         format!("Bearer {CLI_TOKEN}")
     );
-    let calls = command.calls();
     assert_eq!(
-        calls,
-        vec![RecordedCommand {
-            program: "gh".to_string(),
-            args: ["auth", "token", "--hostname", GITHUB_HOST, "--no-refresh"]
+        command.calls(),
+        vec![
+            RecordedCommand {
+                program: "gh".to_string(),
+                args: ["config", "get", "user", "--host", GITHUB_HOST]
+                    .map(str::to_string)
+                    .to_vec(),
+            },
+            RecordedCommand {
+                program: "gh".to_string(),
+                args: [
+                    "auth",
+                    "token",
+                    "--hostname",
+                    GITHUB_HOST,
+                    "--user",
+                    "cli-user",
+                    "--no-refresh",
+                ]
                 .map(str::to_string)
                 .to_vec(),
-        }]
+            },
+        ]
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn gh_cli_unavailable_or_failed_falls_back_to_anonymous() -> Result<()> {
-    for command in [
+async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()> {
+    let cases = vec![
+        MockCommandExecute::adapter_error("SENTINEL_CONFIG_ADAPTER"),
+        MockCommandExecute::failure(1, b"SENTINEL_CONFIG_STDERR".to_vec()),
         MockCommandExecute::success(Vec::new()),
-        MockCommandExecute::success(b" \n".to_vec()),
-        MockCommandExecute::failure(1, Vec::new(), b"SENTINEL_STDERR".to_vec()),
-        MockCommandExecute::adapter_error("SENTINEL_ADAPTER"),
-    ] {
+        MockCommandExecute::sequence([user_result("--help")]),
+        MockCommandExecute::sequence([user_result("bad user")]),
+        MockCommandExecute::sequence([
+            user_result("cli-user"),
+            MockCommandResult::AdapterError("SENTINEL_TOKEN_ADAPTER".to_string()),
+        ]),
+        MockCommandExecute::sequence([
+            user_result("cli-user"),
+            failure_result(
+                1,
+                b"no oauth token found for github.com account cli-user".to_vec(),
+            ),
+        ]),
+    ];
+
+    for command in cases {
         let ctx = context_with_command(HashMap::new(), command);
-        let parts = sign_with(DefaultCredentialProvider::new(), ctx).await?;
+        let parts = sign_parts(DefaultCredentialProvider::new(), ctx, request()).await?;
         assert!(!parts.headers.contains_key(AUTHORIZATION));
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn gh_cli_malformed_output_is_reported_without_leaking_it() {
+async fn gh_cli_other_token_failure_is_reported_without_leaking() {
+    let command = MockCommandExecute::sequence([
+        user_result("cli-user"),
+        failure_result(1, b"the token is expired SENTINEL_STDERR".to_vec()),
+    ]);
+    let ctx = context_with_command(HashMap::new(), command);
+
+    let error = GhCliCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await
+        .expect_err("a failed stored-token read must not become anonymous access");
+
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    let debug = format!("{error:?}");
+    assert!(!debug.contains("SENTINEL_STDERR"));
+    assert!(!debug.contains("expired SENTINEL"));
+}
+
+#[tokio::test]
+async fn default_provider_rejects_failed_stored_token_read() -> Result<()> {
+    let command = MockCommandExecute::sequence([
+        user_result("cli-user"),
+        failure_result(1, b"the token is expired SENTINEL_STDERR".to_vec()),
+    ]);
+    let ctx = context_with_command(HashMap::new(), command);
+    let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+    let original = stale_request();
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a failed stored-token read must not become anonymous access");
+
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+    Ok(())
+}
+
+#[tokio::test]
+async fn gh_cli_retries_without_no_refresh_only_when_the_flag_is_unknown() -> Result<()> {
+    let command = MockCommandExecute::sequence([
+        user_result("cli-user"),
+        failure_result(1, b"unknown flag: --no-refresh".to_vec()),
+        token_result(CLI_TOKEN),
+    ]);
+    let ctx = context_with_command(HashMap::new(), command.clone());
+
+    let parts = sign_parts(DefaultCredentialProvider::new(), ctx, request()).await?;
+
+    assert_eq!(
+        parts.headers[AUTHORIZATION].to_str().expect("header text"),
+        format!("Bearer {CLI_TOKEN}")
+    );
+    let calls = command.calls();
+    assert_eq!(calls.len(), 3);
+    assert!(calls[1].args.contains(&"--no-refresh".to_string()));
+    assert!(!calls[2].args.contains(&"--no-refresh".to_string()));
+    assert_eq!(
+        calls[2].args,
+        [
+            "auth",
+            "token",
+            "--hostname",
+            GITHUB_HOST,
+            "--user",
+            "cli-user",
+        ]
+        .map(str::to_string)
+        .to_vec()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn gh_cli_rejects_unsupported_user_flag_without_retry() {
+    let command = MockCommandExecute::sequence([
+        user_result("cli-user"),
+        failure_result(1, b"unknown flag: --user SENTINEL_STDERR".to_vec()),
+    ]);
+    let ctx = context_with_command(HashMap::new(), command.clone());
+
+    let error = GhCliCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await
+        .expect_err("an unsupported --user flag must not be retried unsafely");
+
+    assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+    let debug = format!("{error:?}");
+    assert!(debug.contains("2.40.0"));
+    assert!(!debug.contains("SENTINEL_STDERR"));
+    assert_eq!(command.calls().len(), 2);
+}
+
+#[tokio::test]
+async fn gh_cli_malformed_successful_output_is_reported_without_leaking_it() {
     let cases = [
         b"first\nsecond".to_vec(),
         b"token with spaces".to_vec(),
         b"nonutf8\xff".to_vec(),
+        "🚀🚀🚀🚀".as_bytes().to_vec(),
     ];
 
     for stdout in cases {
-        let ctx = context_with_command(HashMap::new(), MockCommandExecute::success(stdout));
+        let command = MockCommandExecute::sequence([
+            user_result("cli-user"),
+            MockCommandResult::Output(CommandOutput {
+                status: 0,
+                stdout,
+                stderr: Vec::new(),
+            }),
+        ]);
+        let ctx = context_with_command(HashMap::new(), command);
         let error = GhCliCredentialProvider::new()
             .provide_credential(&ctx)
             .await
@@ -344,12 +537,85 @@ async fn gh_cli_malformed_output_is_reported_without_leaking_it() {
         assert!(!debug.contains("second"));
         assert!(!debug.contains("token with spaces"));
         assert!(!debug.contains("nonutf8"));
+        assert!(!debug.contains("🚀"));
     }
 }
 
 #[tokio::test]
+async fn default_provider_rejects_malformed_cli_output_instead_of_anonymous() -> Result<()> {
+    let command = MockCommandExecute::sequence([
+        user_result("cli-user"),
+        MockCommandResult::Output(CommandOutput {
+            status: 0,
+            stdout: b"first\nsecond".to_vec(),
+            stderr: Vec::new(),
+        }),
+    ]);
+    let ctx = context_with_command(HashMap::new(), command);
+    let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+    let original = stale_request();
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("malformed CLI output must not become anonymous access");
+
+    assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+    Ok(())
+}
+
+#[tokio::test]
+async fn prepended_invalid_static_credential_does_not_fall_back() -> Result<()> {
+    for token in ["", "🚀🚀🚀🚀"] {
+        let ctx = context(HashMap::from([(
+            "GH_TOKEN".to_string(),
+            ENV_TOKEN.to_string(),
+        )]));
+        let provider =
+            DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(token));
+        let signer = Signer::new(ctx, provider, RequestSigner);
+        let original = stale_request();
+        let mut parts = original.clone();
+
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("an invalid prepended credential must not fall back");
+
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn malformed_env_token_is_not_silently_replaced() -> Result<()> {
+    let ctx = context(HashMap::from([
+        ("GH_TOKEN".to_string(), "🚀🚀🚀🚀".to_string()),
+        ("GITHUB_TOKEN".to_string(), "good-token".to_string()),
+    ]));
+    let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+    let original = stale_request();
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("GH_TOKEN takes precedence and is malformed");
+
+    assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+    Ok(())
+}
+
+#[tokio::test]
 async fn default_chain_falls_back_to_anonymous_and_no_anonymous_removes_it() -> Result<()> {
-    let parts = sign_with(DefaultCredentialProvider::new(), Context::new()).await?;
+    let parts = sign_parts(DefaultCredentialProvider::new(), Context::new(), request()).await?;
     assert!(!parts.headers.contains_key(AUTHORIZATION));
 
     let provider = DefaultCredentialProvider::builder()
@@ -358,7 +624,7 @@ async fn default_chain_falls_back_to_anonymous_and_no_anonymous_removes_it() -> 
         .no_anonymous()
         .build();
     let signer = Signer::new(Context::new(), provider, RequestSigner);
-    let original = request();
+    let original = stale_request();
     let mut parts = original.clone();
 
     let error = signer
@@ -374,13 +640,16 @@ async fn default_chain_falls_back_to_anonymous_and_no_anonymous_removes_it() -> 
 
 #[tokio::test]
 async fn removed_slots_are_not_reenabled_during_build() -> Result<()> {
-    let ctx = context_with_command(
-        HashMap::from([("GH_TOKEN".to_string(), ENV_TOKEN.to_string())]),
-        MockCommandExecute::success(format!("{CLI_TOKEN}\n").into_bytes()),
-    );
+    let envs = HashMap::from([("GH_TOKEN".to_string(), ENV_TOKEN.to_string())]);
 
+    let command = MockCommandExecute::sequence([user_result("cli-user"), token_result(CLI_TOKEN)]);
     let provider = DefaultCredentialProvider::builder().no_env().build();
-    let parts = sign_with(provider, ctx.clone()).await?;
+    let parts = sign_parts(
+        provider,
+        context_with_command(envs.clone(), command),
+        request(),
+    )
+    .await?;
     assert_eq!(
         parts.headers[AUTHORIZATION].to_str().expect("header text"),
         format!("Bearer {CLI_TOKEN}")
@@ -390,11 +659,11 @@ async fn removed_slots_are_not_reenabled_during_build() -> Result<()> {
         .no_env()
         .no_gh_cli()
         .build();
-    let parts = sign_with(provider, ctx.clone()).await?;
+    let parts = sign_parts(provider, context(envs.clone()), request()).await?;
     assert!(!parts.headers.contains_key(AUTHORIZATION));
 
     let provider = DefaultCredentialProvider::builder().no_anonymous().build();
-    let parts = sign_with(provider, ctx.clone()).await?;
+    let parts = sign_parts(provider, context(envs.clone()), request()).await?;
     assert_eq!(
         parts.headers[AUTHORIZATION].to_str().expect("header text"),
         format!("Bearer {ENV_TOKEN}")
@@ -405,7 +674,7 @@ async fn removed_slots_are_not_reenabled_during_build() -> Result<()> {
         .gh_cli(GhCliCredentialProvider::new())
         .anonymous(AnonymousCredentialProvider::new())
         .build();
-    let parts = sign_with(provider, ctx).await?;
+    let parts = sign_parts(provider, context(envs), request()).await?;
     assert_eq!(
         parts.headers[AUTHORIZATION].to_str().expect("header text"),
         format!("Bearer {ENV_TOKEN}")
@@ -422,7 +691,7 @@ async fn push_front_and_with_chain_override_default_sources() -> Result<()> {
 
     let provider =
         DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new("front-token"));
-    let parts = sign_with(provider, ctx.clone()).await?;
+    let parts = sign_parts(provider, ctx.clone(), request()).await?;
     assert_eq!(
         parts.headers[AUTHORIZATION].to_str().expect("header text"),
         "Bearer front-token"
@@ -430,7 +699,7 @@ async fn push_front_and_with_chain_override_default_sources() -> Result<()> {
 
     let chain = ProvideCredentialChain::new().push(StaticCredentialProvider::new("chain-token"));
     let provider = DefaultCredentialProvider::with_chain(chain);
-    let parts = sign_with(provider, ctx).await?;
+    let parts = sign_parts(provider, ctx, request()).await?;
     assert_eq!(
         parts.headers[AUTHORIZATION].to_str().expect("header text"),
         "Bearer chain-token"
@@ -438,29 +707,39 @@ async fn push_front_and_with_chain_override_default_sources() -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct FailingProvider {
+    calls: Arc<AtomicUsize>,
+}
+
+impl ProvideCredential for FailingProvider {
+    type Credential = Credential;
+
+    async fn provide_credential(&self, _ctx: &Context) -> Result<Option<Self::Credential>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Err(Error::config_invalid("injected provider failure"))
+    }
+}
+
 #[tokio::test]
-async fn malformed_env_token_is_not_silently_replaced() -> Result<()> {
-    let ctx = context(HashMap::from([
-        ("GH_TOKEN".to_string(), "bad token".to_string()),
-        ("GITHUB_TOKEN".to_string(), "good-token".to_string()),
-    ]));
-    let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
-    let original = request();
-    let mut parts = original.clone();
+async fn with_chain_keeps_the_caller_chain_error_contract() -> Result<()> {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let chain = ProvideCredentialChain::new()
+        .push(FailingProvider {
+            calls: calls.clone(),
+        })
+        .push(AnonymousCredentialProvider::new());
+    let provider = DefaultCredentialProvider::with_chain(chain);
 
-    let error = signer
-        .sign(&mut parts, None)
-        .await
-        .expect_err("GH_TOKEN takes precedence and is malformed");
+    let parts = sign_parts(provider, Context::new(), request()).await?;
 
-    assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
-    assert_eq!(parts.uri, original.uri);
-    assert_eq!(parts.headers, original.headers);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(!parts.headers.contains_key(AUTHORIZATION));
     Ok(())
 }
 
 #[tokio::test]
-async fn debug_and_signing_errors_do_not_leak_tokens() -> Result<()> {
+async fn credential_validation_rejects_non_ascii_and_debug_is_safe() -> Result<()> {
     let credential = Credential::new(STATIC_TOKEN)?;
     assert_eq!(credential.token(), Some(STATIC_TOKEN));
     assert!(!credential.is_anonymous());
@@ -471,23 +750,25 @@ async fn debug_and_signing_errors_do_not_leak_tokens() -> Result<()> {
     assert_eq!(anonymous.token(), None);
     assert_eq!(anonymous.bearer_header_value()?, None);
 
+    let error = Credential::new("").expect_err("empty token must fail");
+    assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+
+    for token in ["🚀🚀🚀🚀", "token\u{7f}", "token with spaces"] {
+        let error = Credential::new(token).expect_err("invalid token must fail");
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+        assert!(!format!("{error:?}").contains(token));
+    }
+
     let provider = StaticCredentialProvider::new(STATIC_TOKEN);
     assert!(!format!("{provider:?}").contains(STATIC_TOKEN));
 
-    let credential = Credential::new("bad token with spaces")?;
-    let original = request();
-    let mut parts = original.clone();
-    let error = RequestSigner
-        .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+    let provider = StaticCredentialProvider::new("🚀🚀🚀🚀");
+    assert!(!format!("{provider:?}").contains("🚀"));
+    let error = provider
+        .provide_credential(&Context::new())
         .await
-        .expect_err("invalid header characters must fail");
-
+        .expect_err("invalid static token must fail");
     assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
-    assert!(!format!("{error:?}").contains("bad token with spaces"));
-    assert_eq!(parts.uri, original.uri);
-    assert_eq!(parts.headers, original.headers);
-
-    let error = Credential::new("").expect_err("empty token must fail");
-    assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+    assert!(!format!("{error:?}").contains("🚀"));
     Ok(())
 }

@@ -81,8 +81,9 @@ servers checked into `services/aws-v4/tests/mocks/`.
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
 `aliyun`, `tencent`, `github`) must compile for `wasm32-unknown-unknown`. CI
-verifies this supported subset. GitHub CLI discovery still requires a
-`CommandExecute` adapter at runtime; it is unavailable in bare WASM runtimes.
+verifies this supported subset. GitHub environment, static, and anonymous
+signing need no JavaScript clock; GitHub CLI discovery still requires a
+`CommandExecute` adapter at runtime and is unavailable in bare WASM runtimes.
 
 ## Versioning
 
