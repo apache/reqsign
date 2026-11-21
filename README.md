@@ -182,6 +182,7 @@ let signer = aliyun::default_signer(ctx, "mybucket");
   - Azure Storage services: `reqsign-azure-storage`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
+  - HTTP Message Signatures (RFC 9421): `reqsign-http-message-signatures`
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
   - Tencent COS: `reqsign-tencent-cos`

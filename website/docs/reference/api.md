@@ -47,6 +47,7 @@ rustdoc owns signatures.
 - [`reqsign-google`](https://docs.rs/reqsign-google)
 - [`reqsign-aliyun-oss`](https://docs.rs/reqsign-aliyun-oss)
 - [`reqsign-huaweicloud-obs`](https://docs.rs/reqsign-huaweicloud-obs)
+- [`reqsign-http-message-signatures`](https://docs.rs/reqsign-http-message-signatures)
 - [`reqsign-openstack-keystone`](https://docs.rs/reqsign-openstack-keystone)
 - [`reqsign-oracle`](https://docs.rs/reqsign-oracle)
 - [`reqsign-tencent-cos`](https://docs.rs/reqsign-tencent-cos)

@@ -46,6 +46,7 @@ cargo add http anyhow
 | `google-credential-access-boundary-client-side` | Client-side CAB downscoping (implies `google`) |
 | `aliyun` | Aliyun OSS |
 | `huaweicloud` | Huawei Cloud OBS |
+| `http-message-signatures` | RFC 9421 request signatures |
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
 | `tencent` | Tencent COS |
@@ -106,6 +107,7 @@ composes that provider's own credential chain — the
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | `huaweicloud::default_signer(ctx, bucket)` |
+| [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | `http_message_signatures::RequestSigner::new(label, components)` |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer(ctx)` |
 | [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer(ctx)` |
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |

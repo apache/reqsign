@@ -828,6 +828,59 @@
       "credential_provider_crate": "reqsign-volcengine-tos"
     },
     {
+      "id": "http-message-signatures",
+      "display_name": "HTTP Message Signatures (RFC 9421)",
+      "family": "HTTP standards",
+      "blurb": "RFC 9421 request signatures with caller-selected covered components.",
+      "service_scope": "HTTP APIs that accept RFC 9421 request signatures, with the caller choosing the signature label, covered components, and an HMAC-SHA256 or RSA PKCS#1 v1.5 SHA-256 credential.",
+      "signing_schemes": [
+        "RFC 9421 HMAC-SHA256",
+        "RFC 9421 RSASSA-PKCS1-v1_5 SHA-256"
+      ],
+      "crates": [
+        "reqsign-http-message-signatures"
+      ],
+      "facade_features": [
+        {
+          "name": "http-message-signatures",
+          "capability": "Enables reqsign-http-message-signatures."
+        }
+      ],
+      "default_signer": {
+        "available": false,
+        "notes": "No default signer: the signature label and covered components are caller policy."
+      },
+      "credential_sources": [
+        {
+          "id": "static",
+          "label": "Caller-supplied HMAC or RSA credential",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Adds Signature-Input and Signature request headers. The caller supplies any Content-Digest. expires_in adds a checked expires parameter; it does not select query authentication."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-http-message-signatures and builds the facade feature for wasm32-unknown-unknown. HMAC is supported; the RustCrypto RSA operation returns ConfigInvalid on wasm."
+      },
+      "integration_tests": {
+        "level": "fixture",
+        "notes": "RFC 9421 official HMAC and RSA signature vectors, canonicalization, and failure-path tests.",
+        "refs": [
+          "services/http-message-signatures/tests"
+        ]
+      },
+      "source_refs": [
+        "services/http-message-signatures"
+      ],
+      "last_verified": "2026-11-21",
+      "credential_provider_crate": "reqsign-http-message-signatures"
+    },
+    {
       "id": "openstack-keystone",
       "display_name": "OpenStack Keystone",
       "family": "OpenStack",
