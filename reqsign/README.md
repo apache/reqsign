@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent and Oracle services.
+Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent, Oracle and Seafile services.
 
 ## Features
 
@@ -13,6 +13,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Huawei Cloud**: Object Storage Service (OBS)
 - **Tencent Cloud**: Cloud Object Storage (COS)
 - **Oracle**: Oracle Cloud services
+- **Seafile**: Seafile Web API services
 
 ## Request URI Contract
 
@@ -187,7 +188,11 @@ let signer = tencent::default_signer(ctx.clone());
 
 // Oracle Cloud
 use reqsign::oracle;
-let signer = oracle::default_signer(ctx);
+let signer = oracle::default_signer(ctx.clone());
+
+// Seafile
+use reqsign::seafile;
+let signer = seafile::default_signer(ctx.clone());
 ```
 
 ## Feature Flags
@@ -203,6 +208,7 @@ let signer = oracle::default_signer(ctx);
 - `huaweicloud`: Enable Huawei Cloud OBS support
 - `openstack`: Enable OpenStack Keystone support
 - `oracle`: Enable Oracle Cloud support
+- `seafile`: Enable Seafile support
 - `tencent`: Enable Tencent COS support
 
 ## WASM Support

@@ -885,6 +885,70 @@
         }
       ],
       "credential_provider_crate": "reqsign-openstack-keystone"
+    },
+    {
+      "id": "seafile",
+      "display_name": "Seafile",
+      "family": "Seafile",
+      "blurb": "Account-token exchange and Token header signing for self-hosted Seafile.",
+      "service_scope": "Self-hosted Seafile Web API requests authenticated with an account token or repository API token.",
+      "signing_schemes": [
+        "Authorization: Token header"
+      ],
+      "crates": [
+        "reqsign-seafile"
+      ],
+      "facade_features": [
+        {
+          "name": "seafile",
+          "capability": "Enables reqsign-seafile."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::seafile::default_signer(ctx)"
+      },
+      "credential_sources": [
+        {
+          "id": "config_file",
+          "label": "Seafile CLI user configuration (~/.seafile.conf)",
+          "provider": "ConfigFileCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts a sensitive Authorization: Token header; Seafile has no query authentication, so expires_in is rejected."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-seafile, builds the facade with --features seafile, and runs its wasm signing test for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Account-token exchange, configuration-file discovery, caching, and header redaction are asserted against an injected mock HttpSend and file reader; no live Seafile API is used.",
+        "refs": [
+          "services/seafile/tests"
+        ]
+      },
+      "source_refs": [
+        "services/seafile"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static account or repository API token",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "account",
+          "label": "Configured username and password exchange",
+          "provider": "AccountTokenCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-seafile"
     }
   ]
 }

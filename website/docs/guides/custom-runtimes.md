@@ -84,7 +84,8 @@ sandboxes. CI verifies this exact set on every commit:
 
 - `reqsign-core`, `reqsign-aws-core`
 - Providers: **AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Tencent
-  COS** (facade features `aws`, `aws-v4a`, `azure`, `aliyun`, `tencent`)
+  COS, Seafile** (facade features `aws`, `aws-v4a`, `azure`, `aliyun`, `tencent`,
+  `seafile`)
 
 The [provider matrix](/docs/providers/) marks WASM status per provider;
 treat providers outside this set as unsupported there until the catalog says

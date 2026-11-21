@@ -1,0 +1,103 @@
+---
+title: Seafile
+description: Account-token exchange and Token header signing for self-hosted Seafile.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="seafile" />
+
+## Get started
+
+```bash
+cargo add reqsign --features seafile
+```
+
+```rust
+use reqsign::{default_context, seafile};
+
+// Reads the [account] token from ~/.seafile.conf.
+let ctx = default_context();
+let signer = seafile::default_signer(ctx);
+
+let mut req = http::Request::builder()
+    .method(http::Method::GET)
+    .uri("https://files.example.com/api2/repos/")
+    .body(())?
+    .into_parts()
+    .0;
+
+// Sign in place, then send with the HTTP client you already use.
+signer.sign(&mut req, None).await?;
+```
+
+The default chain reads the `token` from the `[account]` section of
+`~/.seafile.conf`, the user configuration file read by Seafile's first-party
+`seaf-cli`. Seafile does not document a standard credential environment variable
+or login command, so the default chain does not invent one.
+
+## Account token exchange
+
+Use `AccountTokenCredentialProvider` when the caller has a username and
+password and wants Reqsign to obtain the account token:
+
+```rust
+use reqsign::{Context, Signer};
+use reqsign_http_send_reqwest::ReqwestHttpSend;
+use reqsign_seafile::{AccountTokenCredentialProvider, RequestSigner};
+
+let ctx = Context::new().with_http_send(ReqwestHttpSend::default());
+let signer = Signer::new(
+    ctx,
+    AccountTokenCredentialProvider::new(
+        "https://files.example.com/seafile",
+        "user@example.com",
+        "password",
+    ),
+    RequestSigner,
+);
+```
+
+The provider posts form-encoded `username` and `password` fields to
+`{server}/api2/auth-token/` and reads the `token` field from the JSON
+response. The current OpenAPI document describes a JSON request body, but
+Seafile's server-side example, `seaf-cli`, and the Python SDK post form fields;
+this crate follows those executable clients. The `server` value may include a
+reverse-proxy base path, which is preserved. Use HTTPS in production; an
+explicit `http://` endpoint sends the login secret in cleartext. Two-factor
+authentication is not part of this exchange, so use a token obtained separately
+when the server requires it.
+
+## Scope and compatibility
+
+`RequestSigner` adds a sensitive `Authorization: Token <token>` header and leaves
+the URI and other headers unchanged. Seafile 11 and newer also accept `Bearer`,
+but `Token` works with older self-hosted servers and matches existing OpenDAL
+behavior. Seafile has no query authentication, so `expires_in` is rejected.
+
+Repository id discovery, repository-scoped upload and download links, and
+business request construction remain with the caller. Account and repository
+API tokens have no documented expiration; `Signer` caches the token until the
+signer is recreated or its provider is replaced.
+
+<ProviderDetails id="seafile" />

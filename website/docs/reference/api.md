@@ -49,6 +49,7 @@ rustdoc owns signatures.
 - [`reqsign-huaweicloud-obs`](https://docs.rs/reqsign-huaweicloud-obs)
 - [`reqsign-openstack-keystone`](https://docs.rs/reqsign-openstack-keystone)
 - [`reqsign-oracle`](https://docs.rs/reqsign-oracle)
+- [`reqsign-seafile`](https://docs.rs/reqsign-seafile)
 - [`reqsign-tencent-cos`](https://docs.rs/reqsign-tencent-cos)
 - [`reqsign-volcengine-tos`](https://docs.rs/reqsign-volcengine-tos)
 

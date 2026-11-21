@@ -48,6 +48,7 @@ cargo add http anyhow
 | `huaweicloud` | Huawei Cloud OBS |
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
+| `seafile` | Seafile |
 | `tencent` | Tencent COS |
 | `volcengine` | Volcengine TOS |
 | `full` | Everything above |
@@ -108,6 +109,7 @@ composes that provider's own credential chain — the
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | `huaweicloud::default_signer(ctx, bucket)` |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer(ctx)` |
 | [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer(ctx)` |
+| [Seafile](/docs/providers/seafile/) | `seafile::default_signer(ctx)` |
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
 

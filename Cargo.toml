@@ -42,6 +42,7 @@ reqsign-http-send-reqwest = { version = "4.0.9", path = "context/http-send-reqwe
 reqsign-huaweicloud-obs = { version = "3.1.0", path = "services/huaweicloud-obs" }
 reqsign-openstack-keystone = { version = "3.0.1", path = "services/openstack-keystone" }
 reqsign-oracle = { version = "3.1.0", path = "services/oracle" }
+reqsign-seafile = { version = "1.0.0", path = "services/seafile" }
 reqsign-tencent-cos = { version = "3.1.0", path = "services/tencent-cos" }
 reqsign-volcengine-tos = { version = "3.2.0", path = "services/volcengine-tos" }
 

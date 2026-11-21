@@ -184,6 +184,7 @@ let signer = aliyun::default_signer(ctx, "mybucket");
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
+  - Seafile: `reqsign-seafile`
   - Tencent COS: `reqsign-tencent-cos`
   - Volcengine TOS: `reqsign-volcengine-tos`
 
