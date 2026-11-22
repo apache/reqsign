@@ -77,6 +77,8 @@ interpreted:
 - Vercel Blob and Vercel Artifacts reject `expires_in`; header signing is their
   only mode.
 - Yandex Disk rejects `expires_in`; header signing is its only mode.
+- Baidu Netdisk rejects `expires_in`; its signer adds a static `access_token`
+  query parameter and has no separate presign lifetime.
 
 The [provider matrix](/docs/providers/) carries the authoritative
 header/query flags, and the

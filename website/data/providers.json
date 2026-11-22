@@ -1687,6 +1687,59 @@
         }
       ],
       "credential_provider_crate": "reqsign-koofr"
+    },
+    {
+      "id": "baidu-netdisk",
+      "display_name": "Baidu Netdisk",
+      "family": "Baidu",
+      "blurb": "Static access-token query signing for the Baidu Netdisk Open Platform.",
+      "service_scope": "Baidu Netdisk Open Platform xpan API requests authenticated with an access_token query parameter; OAuth refresh, paths, storage operations, headers, and business requests remain caller-owned.",
+      "signing_schemes": [
+        "Baidu Netdisk access_token query parameter"
+      ],
+      "crates": [
+        "reqsign-baidu-netdisk"
+      ],
+      "facade_features": [
+        {
+          "name": "baidu-netdisk",
+          "capability": "Enables reqsign-baidu-netdisk."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::baidu_netdisk::default_signer(ctx, access_token)"
+      },
+      "credential_sources": [],
+      "request_auth": {
+        "header": false,
+        "query": true,
+        "notes": "Removes existing access_token parameters and appends one form-encoded access_token query parameter while preserving unrelated wire query bytes and all headers. expires_in is rejected; OAuth refresh and persistence stay with the caller."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-baidu-netdisk and the facade baidu-netdisk feature for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Static credential loading, query encoding and preservation, re-signing, atomic failures, and Debug redaction are asserted with synthetic credentials; no live Baidu API is used.",
+        "refs": [
+          "services/baidu-netdisk/tests"
+        ]
+      },
+      "source_refs": [
+        "services/baidu-netdisk"
+      ],
+      "last_verified": "2026-11-22",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access token",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-baidu-netdisk"
     }
   ]
 }

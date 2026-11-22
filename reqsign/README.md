@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Upyun, Oracle, Vercel and Seafile services.
+Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Baidu Netdisk, Tencent, Upyun, Oracle, Vercel and Seafile services.
 
 ## Features
 
@@ -8,6 +8,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 
 - **AWS**: Signature V4 for AWS services
 - **Azure**: Azure Storage services
+- **Baidu Netdisk**: Static access-token query signing
 - **Cloudflare**: Cloudflare API v4 requests with an API token, including KV and D1
 - **Dropbox**: OAuth 2.0 bearer authentication
 - **GitHub**: GitHub.com bearer tokens and anonymous public access
@@ -181,6 +182,10 @@ let signer = cloudflare::default_signer(ctx.clone());
 use reqsign::b2;
 let signer = b2::default_signer(ctx.clone());
 
+// Baidu Netdisk (supply the access token explicitly; there is no ambient source)
+use reqsign::baidu_netdisk;
+let signer = baidu_netdisk::default_signer(ctx.clone(), "access-token");
+
 // GitHub
 use reqsign::github;
 let signer = github::default_signer(ctx.clone());
@@ -247,6 +252,7 @@ let signer = seafile::default_signer(ctx.clone());
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
 - `b2`: Enable Backblaze B2 Native API support
+- `baidu-netdisk`: Enable Baidu Netdisk support
 - `cloudflare`: Enable Cloudflare API support (KV and D1)
 - `dropbox`: Enable Dropbox OAuth 2.0 support
 - `github`: Enable GitHub.com support
