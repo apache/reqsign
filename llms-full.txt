@@ -169,7 +169,7 @@ Providers
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -993,7 +993,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | [Tencent COS](/docs/providers/tencent-cos/)                                    | COS signature                                             | ✓      | ✓               | —        | ✓    |
 | [Volcengine TOS](/docs/providers/volcengine-tos/)                              | TOS signature                                             | ✓      | ✓               | —        | —    |
 | [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | RFC 9421 HMAC-SHA256, RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256 | ✓      | —               | —        | ✓    |
-| [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | X-Auth-Token header                                       | ✓      | —               | —        | —    |
+| [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | X-Auth-Token header, Swift TempURL (HMAC-SHA1/256/512)    | ✓      | ✓               | —        | —    |
 | [GitHub](/docs/providers/github/)                                              | Bearer token                                              | ✓      | —               | —        | ✓    |
 | [Dropbox](/docs/providers/dropbox/)                                            | OAuth 2.0 bearer token                                    | ✓      | —               | —        | ✓    |
 
@@ -1679,6 +1679,8 @@ async fn main() -> anyhow::Result<()> {
 
 For AWS this produces `X-Amz-Algorithm`, `X-Amz-Credential`,`X-Amz-Expires`, `X-Amz-Signature`, and companions in the query string. Other providers use their own parameter sets; the shape of the call is identical.
 
+OpenStack Swift TempURL is the exception: it signs with a separate account or container key rather than the Keystone credential. Use`reqsign::openstack::TempUrlSigner` instead of the default signer; see the[OpenStack provider](/docs/providers/openstack-keystone/#swift-tempurl) for the key, algorithm, and canonical-path contract.
+
 ## `expires_in` is service-specific[​](#expires%5Fin-is-service-specific "Direct link to expires_in-is-service-specific")
 
 Passing `Some(duration)` does **not** universally mean "presign" — the configured service signer and credential type determine how the duration is interpreted:
@@ -1695,7 +1697,7 @@ The [provider matrix](/docs/providers/) carries the authoritative header/query f
 * **The method and URI are part of the signature.** A URL presigned for`GET /report.csv` authorizes exactly that — not `PUT`, not another key.
 * **Credential validity must cover the window.** The signer refreshes a cached credential that would expire before `expires_in` elapses, and errors if no credential can cover the window — a URL that dies early is a bug, not a surprise. See[Credential freshness](/docs/reference/signing-contracts/#credential-freshness).
 * **Anyone with the URL is authorized.** Treat presigned URLs as secrets with a TTL: transmit over TLS, scope tightly, keep windows short.
-* **Never re-encode a presigned URI.** The signature covers the encoded bytes; a second encoding pass breaks it. See[Wire-ready URIs](/docs/reference/signing-contracts/#wire-ready-uris).
+* **Never re-encode a presigned URI.** The signature covers the provider-defined wire representation; a second encoding pass breaks it. See[Wire-ready URIs](/docs/reference/signing-contracts/#wire-ready-uris).
 * **Tighter blast radius:** [grant a downscoped credential](/docs/guides/granting/) first and presign with that.
 
 ---
@@ -3053,11 +3055,11 @@ url: https://reqsign.apache.org/docs/providers/openstack-keystone/
 
 # OpenStack Keystone
 
-OpenStack services that authenticate with a Keystone v3 token, such as Swift.
+OpenStack services that authenticate with a Keystone v3 token, such as Swift, including TempURL presigning.
 
-X-Auth-Token header✓ header signing— query / presign— WASM[docs.rs/reqsign-openstack-keystone ↗](https://docs.rs/reqsign-openstack-keystone)
+X-Auth-Token headerSwift TempURL (HMAC-SHA1/256/512)✓ header signing✓ query / presign— WASM[docs.rs/reqsign-openstack-keystone ↗](https://docs.rs/reqsign-openstack-keystone)
 
-Inserts the X-Auth-Token header; expires\_in is not interpreted.
+Header signing inserts X-Auth-Token. TempURL presigning signs the method, expiry, and decoded object path with a separate account or container key, then appends temp\_url\_sig and temp\_url\_expires.
 
 ## Get started[​](#get-started "Direct link to Get started")
 
@@ -3103,6 +3105,49 @@ signer.sign(&mut req, None).await?;
 The default chain uses a non-empty `OS_AUTH_TOKEN` as a pre-issued token and makes no Keystone request. When it is set, `OS_AUTH_URL`, `OS_USERNAME`, and`OS_PASSWORD` are not required, and an empty `OS_AUTH_TOKEN` is ignored. Without`OS_AUTH_TOKEN`, the chain authenticates against the Keystone v3 identity API with `OS_AUTH_URL`, `OS_USERNAME`, and `OS_PASSWORD`. A scoped token also carries the service catalog Keystone returned for it, so`Credential::endpoint_in_region` resolves the endpoint of a service such as Swift without another request.
 
 A pre-issued token has no service catalog. When `OS_STORAGE_URL` is also set, the environment provider exposes it as the public `object-store` endpoint; otherwise the endpoint remains caller configuration. `StaticCredentialProvider`accepts an explicit token and optional catalog metadata. Install it directly or prepend it with `DefaultCredentialProvider::push_front`, and use`DefaultCredentialProvider::builder().no_env()` to remove both environment sources together.
+
+## Swift TempURL[​](#swift-tempurl "Direct link to Swift TempURL")
+
+TempURL presigning is separate from `X-Auth-Token` request signing. It uses the account or container key configured through `X-Account-Meta-Temp-URL-Key` or`X-Container-Meta-Temp-URL-Key`; it never uses a Keystone identity token as the key.
+
+```
+
+use std::time::Duration;
+
+
+use reqsign::{default_context, openstack};
+
+
+let ctx = default_context();
+
+let signer = openstack::TempUrlSigner::new("account-tempurl-key")
+
+    .with_algorithm(openstack::TempUrlHashAlgorithm::Sha256);
+
+let uri = "https://swift.example.com/v1/AUTH_test/container/object"
+
+    .parse()?;
+
+let presigned = signer.presign(
+
+    &ctx,
+
+    &http::Method::GET,
+
+    &uri,
+
+    Duration::from_secs(3600),
+
+)?;
+
+
+```
+
+The signature covers the method, the absolute expiration time, and the object path after decoding its percent escapes once, matching Swift's decoded request path. The outgoing URI keeps the caller's encoded path and query bytes and order. Existing non-auth query parameters are preserved, and a pre-existing TempURL authentication parameter is rejected even when its name is percent-encoded.
+
+The provider always emits `sha1:`, `sha256:`, or `sha512:` HMAC tags with standard Base64 digests; SHA-256 is the default. Current Swift accepts this form, and the selected digest must be in the deployment's`tempurl.allowed_digests`. Current middleware defaults to all three, with SHA-1 deprecated, and deployments may restrict the list. A capability that exposes`tempurl` without `allowed_digests` belongs to the legacy raw-hex-only boundary, such as Swift 2.16, and is not supported even with SHA-1 selected. SHA-512 requires a `CryptoProvider` that implements `hmac_sha512`. Prefix-based and IP-restricted TempURLs are not provided.
+
+Swift rebuilds the downstream query string from its recognized TempURL fields and removes or filters incoming headers according to the deployment configuration. This client preserves the caller's outgoing query and headers, but arbitrary query components or headers are not guaranteed to reach the storage service through a TempURL.
 
 ## Credentials
 
@@ -3415,6 +3460,8 @@ Reqsign's behavior at the edges is specified, not incidental. This page is the r
 **The contract:** `sign` takes a _wire-ready_ request head. The URI you pass is the URI that goes on the wire — built-in signers require an authority and expect path and query data to be **percent-encoded exactly once** before the call. Signing does not perform general-purpose URI encoding for the caller.
 
 Signature protocols canonicalize the URI (SigV4 builds its canonical request from the encoded path and sorted query). If the signer re-encoded your input, an already-encoded `%2F` would double-encode while a raw space got "helpfully" fixed — and the signed bytes would depend on who encoded last. Exactly-once encoding, owned by the caller, removes the ambiguity: what you signed is what you send.
+
+Swift TempURL is a provider-specific exception. Its separate `presign` entry point keeps the caller's encoded path and query bytes in the outgoing URI, but uses the path after one percent-decoding step for the HMAC input, matching the decoded request path Swift verifies.
 
 ```
 
