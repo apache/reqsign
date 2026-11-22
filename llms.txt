@@ -36,6 +36,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 - [OneDrive | Apache Reqsign™](https://reqsign.apache.org/docs/providers/onedrive/): Microsoft Graph access tokens and Microsoft Entra refresh-token exchange for OneDrive.
 - [OpenStack Keystone | Apache Reqsign™](https://reqsign.apache.org/docs/providers/openstack-keystone/): Keystone v3 token authentication, X-Auth-Token signing, and Swift TempURL presigning for OpenStack services.
 - [Oracle Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/oracle/): OCI HTTP request signatures from API keys and config files.
+- [Seafile | Apache Reqsign™](https://reqsign.apache.org/docs/providers/seafile/): Account-token exchange and Token header signing for self-hosted Seafile.
 - [Tencent COS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/tencent-cos/): COS signatures with OIDC federation for Tencent Cloud Object Storage.
 - [Upyun | Apache Reqsign™](https://reqsign.apache.org/docs/providers/upyun/): UPYUN header signatures for Upyun Storage REST API requests.
 - [Vercel Artifacts | Apache Reqsign™](https://reqsign.apache.org/docs/providers/vercel-artifacts/): Vercel Artifacts bearer tokens for the Turborepo Remote Cache.

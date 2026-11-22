@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-21signing providers
+22signing providers
 
 5granting operations
 
-16WASM-ready providers
+17WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 21 providers. Explicit schemes.
+## 22 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Vercel BlobBearer token](/docs/providers/vercel-blob/)[Vercel ArtifactsBearer token](/docs/providers/vercel-artifacts/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[UpyunUPYUN header signature (MD5-derived HMAC-SHA1)](/docs/providers/upyun/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)[Yandex DiskOAuth access token](/docs/providers/yandex-disk/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Vercel BlobBearer token](/docs/providers/vercel-blob/)[Vercel ArtifactsBearer token](/docs/providers/vercel-artifacts/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[UpyunUPYUN header signature (MD5-derived HMAC-SHA1)](/docs/providers/upyun/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)[Yandex DiskOAuth access token](/docs/providers/yandex-disk/)[SeafileAuthorization: Token header](/docs/providers/seafile/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -741,7 +741,7 @@ If you are building your own HTTP client, SDK, proxy, or storage engine, the rea
 | **HTTP client**                  | Yours — Reqsign mutates a plain http::request::Parts and hands it back                                                                                    | Bundled; requests flow through the SDK's own stack                         |
 | **Retries, pooling, middleware** | Yours                                                                                                                                                     | The SDK's                                                                  |
 | **Dependency footprint**         | One signing crate per provider, plus the runtime pieces you opt into                                                                                      | Per-cloud SDK trees, each with its own HTTP and TLS choices                |
-| **Multi-cloud**                  | One composition pattern (Context \+ ProvideCredential \+ SignRequest) across nine providers, protocols kept explicit                                      | One SDK per cloud, each with its own idioms                                |
+| **Multi-cloud**                  | One composition pattern (Context \+ ProvideCredential \+ SignRequest) across providers, protocols kept explicit                                           | One SDK per cloud, each with its own idioms                                |
 | **Custom runtimes / WASM**       | Pluggable I/O via [Context](/docs/architecture/#context), wasm32-unknown-unknown for a [verified subset](/docs/reference/versioning-and-targets/#targets) | Generally assumes the SDK's supported runtimes                             |
 | **Beyond signing**               | Out of scope by design                                                                                                                                    | Pagination, waiters, service helpers, management APIs                      |
 
@@ -804,6 +804,7 @@ cargo add http anyhow
 | onedrive                                      | OneDrive                                     |
 | openstack                                     | OpenStack Keystone                           |
 | oracle                                        | Oracle Cloud                                 |
+| seafile                                       | Seafile                                      |
 | tencent                                       | Tencent COS                                  |
 | upyun                                         | Upyun                                        |
 | vercel                                        | Vercel Blob and Artifacts                    |
@@ -915,6 +916,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | http\_message\_signatures::RequestSigner::new(label, components) |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | openstack::default\_signer(ctx)                                  |
 | [Oracle Cloud](/docs/providers/oracle/)                                        | oracle::default\_signer(ctx)                                     |
+| [Seafile](/docs/providers/seafile/)                                            | seafile::default\_signer(ctx)                                    |
 | [Tencent COS](/docs/providers/tencent-cos/)                                    | tencent::default\_signer(ctx)                                    |
 | [Upyun](/docs/providers/upyun/)                                                | upyun::default\_signer(ctx, bucket)                              |
 | [Volcengine TOS](/docs/providers/volcengine-tos/)                              | volcengine::default\_signer(ctx, region)                         |
@@ -1010,6 +1012,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | [Dropbox](/docs/providers/dropbox/)                                            | OAuth 2.0 bearer token                                    | ✓      | —               | —        | ✓    |
 | [OneDrive](/docs/providers/onedrive/)                                          | OAuth 2.0 bearer token                                    | ✓      | —               | —        | ✓    |
 | [Yandex Disk](/docs/providers/yandex-disk/)                                    | OAuth access token                                        | ✓      | —               | —        | ✓    |
+| [Seafile](/docs/providers/seafile/)                                            | Authorization: Token header                               | ✓      | —               | —        | ✓    |
 
 CI checks crate, feature, page, and source-path consistency; capability semantics are reviewed by maintainers. Found a mismatch? [Open an issue.](https://github.com/apache/reqsign/issues)
 
@@ -1400,13 +1403,13 @@ Slots you do not provide stay as no-op stubs that error when used — a credenti
 Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
 
 * `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, OneDrive, Upyun, Yandex Disk** (facade features `aws`,`aws-v4a`, `azure`, `github`, `aliyun`, `aliyun-drive`, `b2`, `cloudflare`,`vercel`, `tencent`, `dropbox`, `onedrive`, `oauth2`, `upyun`, `yandex-disk`)
+* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, OneDrive, Upyun, Yandex Disk, Seafile** (facade features`aws`, `aws-v4a`, `azure`, `github`, `aliyun`, `aliyun-drive`, `b2`,`cloudflare`, `vercel`, `tencent`, `dropbox`, `onedrive`, `oauth2`, `upyun`,`yandex-disk`, `seafile`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock. GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in bare WASM runtimes.
 
 Cloudflare and Vercel environment, static, and header signing need no JavaScript clock.
 
-Yandex Disk static credentials without an expiry and header signing need no JavaScript clock.
+Yandex Disk static credentials without an expiry and header signing need no JavaScript clock. Seafile signing also needs no JavaScript clock.
 
 The [provider matrix](/docs/providers/) marks WASM status per provider; treat providers outside this set as unsupported there until the catalog says otherwise.
 
@@ -3440,6 +3443,140 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 ---
 
 ---
+url: https://reqsign.apache.org/docs/providers/seafile/
+---
+# Seafile | Apache Reqsign™
+
+# Seafile
+
+Self-hosted Seafile Web API requests authenticated with an account token or repository API token.
+
+Authorization: Token header✓ header signing— query / presign✓ WASM[docs.rs/reqsign-seafile ↗](https://docs.rs/reqsign-seafile)
+
+Inserts a sensitive Authorization: Token header. Configuration-discovered and account-exchange credentials are bound to the deployment scheme, host, effective port, and base path; static credentials remain caller-scoped. Seafile has no query authentication, so expires\_in is rejected.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features seafile
+
+
+```
+
+```
+
+use reqsign::{default_context, seafile};
+
+
+// Reads the [account] server and token from ~/.seafile.conf.
+
+let ctx = default_context();
+
+let signer = seafile::default_signer(ctx);
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://files.example.com/api2/repos/")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+The default chain reads `server` and `token` from the `[account]` section of`~/.seafile.conf`, the user configuration file read by Seafile's first-party`seaf-cli`, and binds the credential to that deployment. The `server` value is required. `ConfigFileCredentialProvider::with_account_user` can require the`[account] user` value to match an explicitly selected account. Duplicate`[account]` sections or repeated parsed keys are rejected. Seafile does not document a standard credential environment variable or login command, so the default chain does not invent one.
+
+## Account token exchange[​](#account-token-exchange "Direct link to Account token exchange")
+
+Use `AccountTokenCredentialProvider` when the caller has a username and password and wants Reqsign to obtain the account token:
+
+```
+
+use reqsign::{Context, Signer};
+
+use reqsign_http_send_reqwest::ReqwestHttpSend;
+
+use reqsign_seafile::{AccountTokenCredentialProvider, RequestSigner};
+
+use reqwest::redirect::Policy;
+
+
+let client = reqwest::Client::builder()
+
+    .redirect(Policy::none())
+
+    .build()
+
+    .expect("client must build");
+
+let ctx = Context::new().with_http_send(ReqwestHttpSend::new(client));
+
+let signer = Signer::new(
+
+    ctx,
+
+    AccountTokenCredentialProvider::new(
+
+        "https://files.example.com/seafile",
+
+        "user@example.com",
+
+        "password",
+
+    ),
+
+    RequestSigner,
+
+);
+
+
+```
+
+This example needs direct dependencies on `reqsign` (with the `seafile`feature), `reqsign-http-send-reqwest`, `reqsign-seafile`, and `reqwest`.
+
+The provider posts form-encoded `username` and `password` fields to`{server}/api2/auth-token/` and reads the `token` field from the JSON response. The current OpenAPI document describes a JSON request body, but Seafile's server-side example, `seaf-cli`, and the Python SDK post form fields; this crate follows those executable clients. The `server` value may include a reverse-proxy base path, which is preserved.
+
+The provider constructs only the initial request to the configured server. The`HttpSend` adapter owns redirect policy: `ReqwestHttpSend::default()` follows redirects, so the credential-bearing exchange should use a client with redirects disabled as shown above. Use HTTPS in production; an explicit `http://` endpoint sends the login secret in cleartext. Two-factor authentication is not part of this exchange, so use a token obtained separately when the server requires it.
+
+## Scope and compatibility[​](#scope-and-compatibility "Direct link to Scope and compatibility")
+
+`RequestSigner` adds a sensitive `Authorization: Token <token>` header and leaves the URI and other headers unchanged. Seafile 11 and newer also accept `Bearer`, but `Token` works with older self-hosted servers and matches existing OpenDAL behavior. Seafile has no query authentication, so `expires_in` is rejected.
+
+Credentials discovered from `seaf-cli` configuration or obtained through the account exchange are bound to the deployment that supplied them. Before adding the header, the signer checks the request scheme, host, effective port, and deployment base path on a segment boundary. A `/seafile` deployment accepts`/seafile` and `/seafile/...` but not `/seafile-other`; a mismatch fails without changing the request. Scoped signing also rejects a duplicate or conflicting`Host` header and ambiguous path forms that the HTTP adapter would normalize. Static caller-supplied credentials carry no deployment scope and keep the explicit caller contract. Credential caching preserves the deployment, so every signing call rechecks it.
+
+Repository id discovery, repository-scoped upload and download links, and business request construction remain with the caller. Account and repository API tokens have no documented expiration; `Signer` caches the token until the signer is recreated or its provider is replaced. Redirect policy after signing remains the caller's adapter responsibility.
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Seafile CLI user configuration (\~/.seafile.conf)
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [ConfigFileCredentialProvider](https://docs.rs/reqsign-seafile/latest/reqsign%5Fseafile/struct.ConfigFileCredentialProvider.html) — Seafile CLI user configuration (\~/.seafile.conf)
+* [StaticCredentialProvider](https://docs.rs/reqsign-seafile/latest/reqsign%5Fseafile/struct.StaticCredentialProvider.html) — Static account or repository API token
+* [AccountTokenCredentialProvider](https://docs.rs/reqsign-seafile/latest/reqsign%5Fseafile/struct.AccountTokenCredentialProvider.html) — Configured username and password exchange
+
+---
+
+---
 url: https://reqsign.apache.org/docs/providers/tencent-cos/
 ---
 # Tencent COS | Apache Reqsign™
@@ -3991,6 +4128,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-http-message-signatures](https://docs.rs/reqsign-http-message-signatures)
 * [reqsign-openstack-keystone](https://docs.rs/reqsign-openstack-keystone)
 * [reqsign-oracle](https://docs.rs/reqsign-oracle)
+* [reqsign-seafile](https://docs.rs/reqsign-seafile)
 * [reqsign-tencent-cos](https://docs.rs/reqsign-tencent-cos)
 * [reqsign-upyun](https://docs.rs/reqsign-upyun)
 * [reqsign-vercel](https://docs.rs/reqsign-vercel)
@@ -4129,12 +4267,12 @@ url: https://reqsign.apache.org/docs/reference/versioning-and-targets/
 
 Reqsign publishes many crates on four tracks:
 
-| Track                          | Crates                                                                                                                                                                                                            | Scheme                                                                              |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                                                                           | Lockstep major (currently 3.x)                                                      |
-| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, reqsign-aliyun-drive, reqsign-github, reqsign-cloudflare, reqsign-onedrive, reqsign-vercel, reqsign-yandex-disk, and later crates introduced after the lockstep line | Independent major, starting at 1.0.0                                                |
-| Reqwest adapter                | reqsign-http-send-reqwest                                                                                                                                                                                         | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
-| Facade                         | reqsign                                                                                                                                                                                                           | Independent (currently 0.20.x)                                                      |
+| Track                          | Crates                                                                                                                                                                                                                             | Scheme                                                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                                                                                            | Lockstep major (currently 3.x)                                                      |
+| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, reqsign-aliyun-drive, reqsign-github, reqsign-cloudflare, reqsign-onedrive, reqsign-seafile, reqsign-vercel, reqsign-yandex-disk, and later crates introduced after the lockstep line | Independent major, starting at 1.0.0                                                |
+| Reqwest adapter                | reqsign-http-send-reqwest                                                                                                                                                                                                          | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
+| Facade                         | reqsign                                                                                                                                                                                                                            | Independent (currently 0.20.x)                                                      |
 
 Lockstep means any `3.x` established service crate composes with any `3.x`core. New provider and shared crates start at `1.0.0` and depend on the current core major, so a `1.x` crate composes with `3.x` core. Mixing core majors fails to compile — the trait definitions are the compatibility boundary, and Cargo enforces it.
 
@@ -4164,7 +4302,7 @@ Every release ships as an ASF source release plus crates.io packages — see[Dow
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
 
-**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, OneDrive, Upyun, and Yandex Disk providers. The shared `reqsign-oauth2` crate and the`oauth2` facade feature are checked in the same subset. Cloudflare and Vercel environment, static, and header signing work without a JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute` adapter and is unavailable in bare WASM runtimes. Yandex Disk static credentials without an expiry and header signing work without a JavaScript clock. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, OneDrive, Upyun, Yandex Disk, and Seafile providers. The shared `reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Cloudflare and Vercel environment, static, and header signing work without a JavaScript clock. Seafile signing also needs no JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a`CommandExecute` adapter and is unavailable in bare WASM runtimes. Yandex Disk static credentials without an expiry and header signing work without a JavaScript clock. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
 
