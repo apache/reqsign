@@ -245,6 +245,7 @@ let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
   - HTTP Message Signatures (RFC 9421): `reqsign-http-message-signatures`
+  - Koofr: `reqsign-koofr`
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
   - OAuth 2.0 refresh-token support: `reqsign-oauth2`

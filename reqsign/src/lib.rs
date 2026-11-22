@@ -66,6 +66,9 @@ pub mod huaweicloud;
 #[cfg(feature = "http-message-signatures")]
 pub mod http_message_signatures;
 
+#[cfg(feature = "koofr")]
+pub mod koofr;
+
 #[cfg(feature = "oauth2")]
 pub mod oauth2;
 

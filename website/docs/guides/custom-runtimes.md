@@ -85,10 +85,10 @@ sandboxes. CI verifies this exact set on every commit:
 - `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
 - Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS,
   Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts,
-  Tencent COS, Dropbox, OneDrive, Upyun, Yandex Disk, Seafile** (facade features
-  `aws`, `aws-v4a`, `azure`, `github`, `aliyun`, `aliyun-drive`, `b2`,
-  `cloudflare`, `vercel`, `tencent`, `dropbox`, `onedrive`, `oauth2`, `upyun`,
-  `yandex-disk`, `seafile`)
+  Tencent COS, Dropbox, Koofr, OneDrive, Upyun, Yandex Disk, Seafile**
+  (facade features `aws`, `aws-v4a`, `azure`, `github`, `aliyun`,
+  `aliyun-drive`, `b2`, `cloudflare`, `vercel`, `tencent`, `dropbox`, `koofr`,
+  `onedrive`, `oauth2`, `upyun`, `yandex-disk`, `seafile`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock.
 GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in

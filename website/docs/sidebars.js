@@ -55,6 +55,7 @@ module.exports = {
         "providers/volcengine-tos",
         "providers/openstack-keystone",
         "providers/dropbox",
+        "providers/koofr",
         "providers/onedrive",
         "providers/yandex-disk",
         "providers/seafile",
