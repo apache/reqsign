@@ -48,6 +48,9 @@ pub mod azure;
 #[cfg(feature = "b2")]
 pub mod b2;
 
+#[cfg(feature = "cloudflare")]
+pub mod cloudflare;
+
 #[cfg(feature = "dropbox")]
 pub mod dropbox;
 

@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent and Oracle services.
+Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent and Oracle services.
 
 ## Features
 
@@ -8,6 +8,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 
 - **AWS**: Signature V4 for AWS services
 - **Azure**: Azure Storage services
+- **Cloudflare**: Cloudflare API v4 requests with an API token, including KV and D1
 - **Dropbox**: OAuth 2.0 bearer authentication
 - **GitHub**: GitHub.com bearer tokens and anonymous public access
 - **Google**: Google Cloud services
@@ -167,6 +168,10 @@ let ctx = reqsign::default_context();
 use reqsign::azure;
 let signer = azure::default_signer(ctx.clone());
 
+// Cloudflare (KV and D1)
+use reqsign::cloudflare;
+let signer = cloudflare::default_signer(ctx.clone());
+
 // Backblaze B2
 use reqsign::b2;
 let signer = b2::default_signer(ctx.clone());
@@ -215,6 +220,7 @@ let signer = oracle::default_signer(ctx);
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
 - `b2`: Enable Backblaze B2 Native API support
+- `cloudflare`: Enable Cloudflare API support (KV and D1)
 - `dropbox`: Enable Dropbox OAuth 2.0 support
 - `github`: Enable GitHub.com support
 - `google`: Enable Google Cloud support
