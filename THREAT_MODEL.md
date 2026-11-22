@@ -219,15 +219,15 @@ after a process restart, the disk registration and refresh token must still be
 usable. Legacy inline SSO configurations do not refresh, and Reqsign never
 starts interactive login.
 
-OAuth 2.0 refresh grants for Dropbox and later service crates follow the same
-in-memory model. Each `RefreshTokenGrant` retains only its latest refresh token;
-clones share that state and serialize the complete exchange from reading the
-old token through committing a replacement. Independently constructed grants
-and processes do not coordinate, and Reqsign never writes refresh tokens to
-disk. Refreshed access tokens are cached only by `Signer`, not by the shared
-grant. If a provider rotates a refresh token but its response is lost, Reqsign
-cannot recover the server-side token; the caller must supply a new one. The
-shared grant sends only the RFC 6749 form fields to its configured HTTPS token
+OAuth 2.0 refresh grants for Dropbox and OneDrive follow the same in-memory
+model. Each `RefreshTokenGrant` retains only its latest refresh token; clones
+share that state and serialize the complete exchange from reading the old token
+through committing the new one. Independently constructed grants and processes
+do not coordinate, and Reqsign never writes refresh tokens to disk. Refreshed
+access tokens are cached only by `Signer`, not by the shared grant. If a
+provider rotates a refresh token but its response is lost, Reqsign cannot
+recover the server-side token; the caller must supply a new one. The shared
+grant sends only the RFC 6749 form fields to its configured HTTPS token
 endpoint, does not send HTTP Basic authentication at the same time, and does
 not retry or discover another endpoint. The service crate rejects a refreshed
 credential whose required expiration is missing or already past instead of
@@ -245,6 +245,16 @@ remain in `Signer`. Reqsign exposes no refresh-token getter or persistence
 callback. After a successful exchange, restarting with the initially configured
 token may require a fresh authorized grant, or an application that manages and
 persists its own exchange and supplies an access token.
+
+OneDrive follows Microsoft's client types: a public-client exchange sends no
+client secret, while a confidential client sends its secret as an RFC 6749 form
+field. Microsoft documents no environment variable or shared configuration
+file for Microsoft Graph user tokens, and MSAL token caches are
+library-specific, so the OneDrive default provider's automatic chain is empty:
+it does not read MSAL token caches, run the Azure CLI, or discover a token
+endpoint. The token endpoint is the documented Microsoft Entra v2.0 endpoint
+for an explicit tenant, or an explicitly configured HTTPS endpoint such as a
+national cloud, and the caller owns that trust decision.
 
 ### 4.3 Credential redaction and observability
 

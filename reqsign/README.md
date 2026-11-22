@@ -11,6 +11,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Cloudflare**: Cloudflare API v4 requests with an API token, including KV and D1
 - **Dropbox**: OAuth 2.0 bearer authentication
 - **GitHub**: GitHub.com bearer tokens and anonymous public access
+- **OneDrive**: Microsoft Graph OAuth 2.0 bearer authentication
 - **Google**: Google Cloud services
 - **Aliyun**: Aliyun Object Storage Service (OSS) and Aliyun Drive Open Platform
 - **Huawei Cloud**: Object Storage Service (OBS)
@@ -193,6 +194,13 @@ use reqsign::aliyun_drive;
 let signer = aliyun_drive::default_signer(ctx.clone())
     .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
 
+// OneDrive (supply an explicit static or refresh provider; there is no ambient source)
+use reqsign::onedrive;
+let signer = onedrive::default_signer(ctx.clone()).with_credential_provider(
+    onedrive::DefaultCredentialProvider::new()
+        .push_front(onedrive::StaticCredentialProvider::new("graph-access-token")),
+);
+
 // Huawei Cloud OBS
 use reqsign::huaweicloud;
 let signer = huaweicloud::default_signer(ctx.clone(), "mybucket");
@@ -228,6 +236,7 @@ let signer = oracle::default_signer(ctx);
 - `http-message-signatures`: Enable HTTP Message Signatures (RFC 9421) support
 - `huaweicloud`: Enable Huawei Cloud OBS support
 - `oauth2`: Enable the shared OAuth 2.0 refresh-token support
+- `onedrive`: Enable OneDrive support (implies `oauth2`)
 - `openstack`: Enable OpenStack Keystone support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support

@@ -69,6 +69,9 @@ pub mod http_message_signatures;
 #[cfg(feature = "oauth2")]
 pub mod oauth2;
 
+#[cfg(feature = "onedrive")]
+pub mod onedrive;
+
 #[cfg(feature = "openstack")]
 pub mod openstack;
 

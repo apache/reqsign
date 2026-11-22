@@ -53,6 +53,7 @@ cargo add http anyhow
 | `huaweicloud` | Huawei Cloud OBS |
 | `http-message-signatures` | RFC 9421 request signatures |
 | `oauth2` | Shared OAuth 2.0 refresh-token grant |
+| `onedrive` | OneDrive |
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
 | `tencent` | Tencent COS |
@@ -114,6 +115,7 @@ composes that provider's own credential chain — the
 | [Cloudflare](/docs/providers/cloudflare/) | `cloudflare::default_signer(ctx)` |
 | [Dropbox](/docs/providers/dropbox/) | `dropbox::default_signer(ctx)` |
 | [GitHub](/docs/providers/github/) | `github::default_signer(ctx)` |
+| [OneDrive](/docs/providers/onedrive/) | `onedrive::default_signer(ctx)` |
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |
 | [Aliyun Drive](/docs/providers/aliyun-drive/) | `aliyun_drive::default_signer(ctx)` |
@@ -125,7 +127,8 @@ composes that provider's own credential chain — the
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
 
 Aliyun Drive has no documented ambient source; replace its default provider
-with a static access token or refresh-token provider.
+with a static access token or refresh-token provider. OneDrive's default chain
+is also empty; prepend a refresh-token or static provider explicitly.
 
 A default signer is an ordinary `Signer`: replace any component and keep the
 rest —
