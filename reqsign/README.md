@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Dropbox, Google, Huawei, Aliyun, Tencent and Oracle services.
+Signing HTTP requests for AWS, Azure, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent and Oracle services.
 
 ## Features
 
@@ -9,6 +9,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **AWS**: Signature V4 for AWS services
 - **Azure**: Azure Storage services
 - **Dropbox**: OAuth 2.0 bearer authentication
+- **GitHub**: GitHub.com bearer tokens and anonymous public access
 - **Google**: Google Cloud services
 - **Aliyun**: Aliyun Object Storage Service (OSS) and Aliyun Drive Open Platform
 - **Huawei Cloud**: Object Storage Service (OBS)
@@ -170,6 +171,10 @@ let signer = azure::default_signer(ctx.clone());
 use reqsign::b2;
 let signer = b2::default_signer(ctx.clone());
 
+// GitHub
+use reqsign::github;
+let signer = github::default_signer(ctx.clone());
+
 // Google Cloud
 use reqsign::google;
 let signer = google::default_signer(ctx.clone(), "storage.googleapis.com");
@@ -210,9 +215,13 @@ let signer = oracle::default_signer(ctx);
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
 - `b2`: Enable Backblaze B2 Native API support
+- `dropbox`: Enable Dropbox OAuth 2.0 support
+- `github`: Enable GitHub.com support
 - `google`: Enable Google Cloud support
 - `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
+- `http-message-signatures`: Enable HTTP Message Signatures (RFC 9421) support
 - `huaweicloud`: Enable Huawei Cloud OBS support
+- `oauth2`: Enable the shared OAuth 2.0 refresh-token support
 - `openstack`: Enable OpenStack Keystone support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support

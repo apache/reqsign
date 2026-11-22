@@ -40,6 +40,7 @@ module.exports = {
         "providers/aws-sigv4a",
         "providers/azure-storage",
         "providers/b2",
+        "providers/github",
         "providers/google",
         "providers/aliyun-oss",
         "providers/aliyun-drive",
