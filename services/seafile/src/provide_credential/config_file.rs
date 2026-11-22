@@ -85,6 +85,25 @@ impl ConfigFileCredentialProvider {
     }
 }
 
+fn unique_property<'a>(
+    section: &'a ini::Properties,
+    key: &str,
+    path: &str,
+) -> Result<Option<&'a str>> {
+    let mut values = section
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case(key))
+        .map(|(_, value)| value);
+    let value = values.next();
+    if values.next().is_some() {
+        return Err(Error::config_invalid(format!(
+            "Seafile CLI config file at {path} repeats [account] {key}"
+        )));
+    }
+
+    Ok(value)
+}
+
 impl ProvideCredential for ConfigFileCredentialProvider {
     type Credential = Credential;
 
@@ -116,11 +135,19 @@ impl ProvideCredential for ConfigFileCredentialProvider {
                 "failed to parse the Seafile CLI config file at {path}"
             ))
         })?;
-        let Some(section) = ini.section(Some(CLI_CONFIG_SECTION)) else {
+
+        let mut account_sections = ini.section_all(Some(CLI_CONFIG_SECTION));
+        let Some(section) = account_sections.next() else {
             debug!("Seafile CLI config file has no [account] section");
             return Ok(None);
         };
-        let Some(token) = section.get(CLI_CONFIG_TOKEN_KEY) else {
+        if account_sections.next().is_some() {
+            return Err(Error::config_invalid(format!(
+                "Seafile CLI config file at {path} repeats the [account] section"
+            )));
+        }
+
+        let Some(token) = unique_property(section, CLI_CONFIG_TOKEN_KEY, &path)? else {
             debug!("Seafile CLI config file has no account token");
             return Ok(None);
         };
@@ -129,14 +156,14 @@ impl ProvideCredential for ConfigFileCredentialProvider {
             return Ok(None);
         }
 
-        let server = section
-            .get(CLI_CONFIG_SERVER_KEY)
+        let server = unique_property(section, CLI_CONFIG_SERVER_KEY, &path)?
             .filter(|server| !server.is_empty())
             .ok_or_else(|| {
                 Error::config_invalid(format!(
                     "Seafile CLI config file at {path} has no [account] server"
                 ))
             })?;
+        let config_user = unique_property(section, CLI_CONFIG_USER_KEY, &path)?;
         let deployment = DeploymentScope::from_server_url(server).map_err(|_| {
             Error::config_invalid(format!(
                 "Seafile CLI config file at {path} has an invalid [account] server"
@@ -144,14 +171,11 @@ impl ProvideCredential for ConfigFileCredentialProvider {
         })?;
 
         if let Some(expected_user) = &self.account_user {
-            let user = section
-                .get(CLI_CONFIG_USER_KEY)
-                .filter(|user| !user.is_empty())
-                .ok_or_else(|| {
-                    Error::config_invalid(format!(
-                        "Seafile CLI config file at {path} has no [account] user to match"
-                    ))
-                })?;
+            let user = config_user.filter(|user| !user.is_empty()).ok_or_else(|| {
+                Error::config_invalid(format!(
+                    "Seafile CLI config file at {path} has no [account] user to match"
+                ))
+            })?;
             if user != expected_user {
                 return Err(Error::config_invalid(format!(
                     "Seafile CLI config file at {path} has an [account] user that does not match the configured account"

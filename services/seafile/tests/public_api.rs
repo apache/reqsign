@@ -158,6 +158,17 @@ fn request() -> http::request::Parts {
     request_at("https://files.example.com/company/seafile/api2/repos/?x=%2F")
 }
 
+fn request_with_host(uri: &str, host: Option<&str>) -> http::request::Parts {
+    let mut parts = request_at(uri);
+    if let Some(host) = host {
+        parts.headers.insert(
+            header::HOST,
+            http::HeaderValue::from_str(host).expect("host must build"),
+        );
+    }
+    parts
+}
+
 #[tokio::test]
 async fn account_exchange_preserves_base_path_and_signs_with_token() -> Result<()> {
     let http = MockHttpSend::default();
@@ -384,6 +395,33 @@ async fn self_hosted_http_subpath_configuration_is_supported() -> Result<()> {
 }
 
 #[tokio::test]
+async fn config_file_rejects_ambiguous_server_paths_and_duplicate_account_fields() {
+    for content in [
+        "[account]\nserver = https://files.example.com/seafile/../other\ntoken = ambiguous-token\n",
+        "[account]\nserver = https://files.example.com/seafile/%2e%2e/other\ntoken = ambiguous-token\n",
+        "[account]\nserver = https://files.example.com/seafile\ntoken = first-token\n[account]\nserver = https://files.example.com/seafile\ntoken = second-token\n",
+        "[account]\nserver = https://files.example.com/seafile\ntoken = first-token\ntoken = second-token\n",
+        "[account]\nserver = https://files.example.com/seafile\nserver = https://other.example.com/seafile\ntoken = duplicate-server-token\n",
+        "[account]\nserver = https://files.example.com/seafile\nuser = first@example.com\nuser = second@example.com\ntoken = duplicate-user-token\n",
+        "[account]\nserver = https://files.example.com/seafile\nToken = first-token\ntoken = second-token\n",
+    ] {
+        let files = MockFileRead::with_file("/home/seafile/.seafile.conf", content);
+        let context = context("/home/seafile", MockHttpSend::default(), files);
+        let error = ConfigFileCredentialProvider::new()
+            .provide_credential(&context)
+            .await
+            .expect_err("ambiguous account definitions must fail");
+
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("ambiguous-token"));
+        assert!(!debug.contains("first-token"));
+        assert!(!debug.contains("second-token"));
+        assert!(!debug.contains("duplicate-"));
+    }
+}
+
+#[tokio::test]
 async fn malformed_config_file_is_a_configuration_error() {
     let files = MockFileRead::with_file(
         "/home/seafile/.seafile.conf",
@@ -482,6 +520,14 @@ async fn config_scope_is_checked_each_time_even_with_a_cached_credential() -> Re
         "https://files.example.com/seafile-other/api2/repos/",
         "https://files.example.com/other/api2/repos/",
         "https://files.example.com/api2/repos/",
+        "https://files.example.com/seafile/./api2/repos/",
+        "https://files.example.com/seafile/../other/api2/repos/",
+        "https://files.example.com/seafile/%2e/api2/repos/",
+        "https://files.example.com/seafile/%2e%2e/other/api2/repos/",
+        "https://files.example.com:0/seafile/api2/repos/",
+        "https://files.example.com:65536/seafile/api2/repos/",
+        "https://files.example.com:/seafile/api2/repos/",
+        "https://files.example.com:not-a-port/seafile/api2/repos/",
     ] {
         let original = request_at(uri);
         let mut parts = original.clone();
@@ -498,6 +544,71 @@ async fn config_scope_is_checked_each_time_even_with_a_cached_credential() -> Re
     }
 
     assert_eq!(reads.reads(), 1, "the cached credential must be reused");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn host_header_must_be_unique_well_formed_and_match_uri_and_scope() -> Result<()> {
+    let files = MockFileRead::with_file(
+        "/home/seafile/.seafile.conf",
+        "[account]\nserver = https://files.example.com/seafile\ntoken = host-scoped-token\n",
+    );
+    let signer = Signer::new(
+        context("/home/seafile", MockHttpSend::default(), files),
+        DefaultCredentialProvider::new(),
+        RequestSigner,
+    );
+
+    for host in ["files.example.com", "FILES.EXAMPLE.COM:443"] {
+        let mut parts =
+            request_with_host("https://files.example.com/seafile/api2/repos/", Some(host));
+        signer.sign(&mut parts, None).await?;
+        assert_eq!(
+            parts.headers[header::AUTHORIZATION],
+            "Token host-scoped-token"
+        );
+    }
+
+    for host in [
+        "other.example.com",
+        "files.example.com:8443",
+        "files.example.com:0",
+        "files.example.com:65536",
+        "files.example.com:",
+        "files.example.com:not-a-port",
+        "https://files.example.com",
+        "",
+    ] {
+        let original =
+            request_with_host("https://files.example.com/seafile/api2/repos/", Some(host));
+        let mut parts = original.clone();
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("a conflicting Host header must not be signed");
+
+        assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+        assert_request_unchanged(&original, &parts);
+    }
+
+    let mut duplicate = request_at("https://files.example.com/seafile/api2/repos/");
+    duplicate.headers.append(
+        header::HOST,
+        http::HeaderValue::from_static("files.example.com"),
+    );
+    duplicate.headers.append(
+        header::HOST,
+        http::HeaderValue::from_static("files.example.com"),
+    );
+    let original = duplicate.clone();
+    let error = signer
+        .sign(&mut duplicate, None)
+        .await
+        .expect_err("multiple Host headers must not be signed");
+
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    assert_request_unchanged(&original, &duplicate);
 
     Ok(())
 }

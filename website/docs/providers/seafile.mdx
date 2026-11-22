@@ -55,7 +55,8 @@ The default chain reads `server` and `token` from the `[account]` section of
 `~/.seafile.conf`, the user configuration file read by Seafile's first-party
 `seaf-cli`, and binds the credential to that deployment. The `server` value is
 required. `ConfigFileCredentialProvider::with_account_user` can require the
-`[account] user` value to match an explicitly selected account. Seafile does not
+`[account] user` value to match an explicitly selected account. Duplicate
+`[account]` sections or repeated parsed keys are rejected. Seafile does not
 document a standard credential environment variable or login command, so the
 default chain does not invent one.
 
@@ -115,9 +116,11 @@ account exchange are bound to the deployment that supplied them. Before adding
 the header, the signer checks the request scheme, host, effective port, and
 deployment base path on a segment boundary. A `/seafile` deployment accepts
 `/seafile` and `/seafile/...` but not `/seafile-other`; a mismatch fails without
-changing the request. Static caller-supplied credentials carry no deployment
-scope and keep the explicit caller contract. Credential caching preserves the
-deployment, so every signing call rechecks it.
+changing the request. Scoped signing also rejects a duplicate or conflicting
+`Host` header and ambiguous path forms that the HTTP adapter would normalize.
+Static caller-supplied credentials carry no deployment scope and keep the
+explicit caller contract. Credential caching preserves the deployment, so every
+signing call rechecks it.
 
 Repository id discovery, repository-scoped upload and download links, and
 business request construction remain with the caller. Account and repository

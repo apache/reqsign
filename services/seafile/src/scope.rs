@@ -16,6 +16,8 @@
 // under the License.
 
 use crate::constants::AUTH_TOKEN_PATH;
+use http::header;
+use http::uri::Authority;
 use reqsign_core::{Error, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,7 +52,6 @@ impl Scheme {
     }
 }
 
-/// The deployment a discovered Seafile token belongs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DeploymentScope {
     scheme: Scheme,
@@ -80,33 +81,22 @@ impl DeploymentScope {
         let authority = uri
             .authority()
             .ok_or_else(|| Error::config_invalid("Seafile server URL must include a host"))?;
-        if authority.as_str().contains('@') {
-            return Err(Error::config_invalid(
-                "Seafile server URL must not contain user information",
-            ));
-        }
         if uri.query().is_some() {
             return Err(Error::config_invalid(
                 "Seafile server URL must not contain a query",
             ));
         }
 
-        let host = authority.host();
-        if host.is_empty() {
-            return Err(Error::config_invalid(
-                "Seafile server URL must include a host",
-            ));
-        }
-        let port = authority
-            .port_u16()
-            .unwrap_or_else(|| scheme.default_port());
+        let target = parse_authority(authority, scheme).ok_or_else(|| {
+            Error::config_invalid("Seafile server URL has an invalid host or port")
+        })?;
         let base_path = normalize_base_path(uri.path())?;
 
         Ok(Self {
             scheme,
             authority: authority.as_str().to_string(),
-            host: host.to_ascii_lowercase(),
-            port,
+            host: target.host.to_ascii_lowercase(),
+            port: target.port,
             base_path,
         })
     }
@@ -136,18 +126,45 @@ impl DeploymentScope {
         }
 
         let authority = uri.authority().ok_or_else(scope_error)?;
-        if authority.as_str().contains('@') || !authority.host().eq_ignore_ascii_case(&self.host) {
+        let target = parse_authority(authority, scheme).ok_or_else(scope_error)?;
+        if !target.host.eq_ignore_ascii_case(&self.host) || target.port != self.port {
             return Err(scope_error());
         }
 
-        let port = authority
-            .port_u16()
-            .unwrap_or_else(|| scheme.default_port());
-        if port != self.port {
+        let path = uri.path();
+        validate_path_form(path).map_err(|_| scope_error())?;
+        if !self.contains_path(path) {
             return Err(scope_error());
         }
 
-        if !self.contains_path(uri.path()) {
+        self.validate_host_header(req, scheme, &target)?;
+
+        Ok(())
+    }
+
+    fn validate_host_header(
+        &self,
+        req: &http::request::Parts,
+        scheme: Scheme,
+        uri_target: &AuthorityTarget<'_>,
+    ) -> Result<()> {
+        let mut host_values = req.headers.get_all(header::HOST).iter();
+        let Some(value) = host_values.next() else {
+            return Ok(());
+        };
+        if host_values.next().is_some() {
+            return Err(scope_error());
+        }
+
+        let value = value.to_str().map_err(|_| scope_error())?;
+        let authority: Authority = value.parse().map_err(|_| scope_error())?;
+        let host_target = parse_authority(&authority, scheme).ok_or_else(scope_error)?;
+        if !host_target.host.eq_ignore_ascii_case(uri_target.host)
+            || host_target.port != uri_target.port
+        {
+            return Err(scope_error());
+        }
+        if !host_target.host.eq_ignore_ascii_case(&self.host) || host_target.port != self.port {
             return Err(scope_error());
         }
 
@@ -167,6 +184,60 @@ impl DeploymentScope {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct AuthorityTarget<'a> {
+    host: &'a str,
+    port: u16,
+}
+
+fn parse_authority<'a>(authority: &'a Authority, scheme: Scheme) -> Option<AuthorityTarget<'a>> {
+    if authority.as_str().contains('@') {
+        return None;
+    }
+
+    let host = authority.host();
+    if host.is_empty() {
+        return None;
+    }
+
+    let port = explicit_port(authority.as_str())
+        .ok()?
+        .unwrap_or_else(|| scheme.default_port());
+
+    Some(AuthorityTarget { host, port })
+}
+
+/// Read an explicit port without letting the HTTP authority parser silently
+/// turn an invalid value into "no port".
+fn explicit_port(authority: &str) -> std::result::Result<Option<u16>, ()> {
+    let port = if let Some(rest) = authority.strip_prefix('[') {
+        let close = rest.find(']').ok_or(())?;
+        let after_host = &rest[close + 1..];
+        if after_host.is_empty() {
+            None
+        } else {
+            Some(after_host.strip_prefix(':').ok_or(())?)
+        }
+    } else if let Some((_, port)) = authority.rsplit_once(':') {
+        Some(port)
+    } else {
+        None
+    };
+
+    let Some(port) = port else {
+        return Ok(None);
+    };
+    if port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(());
+    }
+    let port = port.parse::<u16>().map_err(|_| ())?;
+    if port == 0 {
+        return Err(());
+    }
+
+    Ok(Some(port))
+}
+
 fn normalize_base_path(path: &str) -> Result<String> {
     if path.is_empty() {
         return Ok(String::new());
@@ -176,8 +247,40 @@ fn normalize_base_path(path: &str) -> Result<String> {
             "Seafile server URL path must be absolute",
         ));
     }
+    validate_path_form(path).map_err(|_| {
+        Error::config_invalid("Seafile server URL path uses an ambiguous representation")
+    })?;
 
     Ok(path.trim_end_matches('/').to_string())
+}
+
+/// Reject path forms that the HTTP adapter normalizes before sending.
+fn validate_path_form(path: &str) -> std::result::Result<(), ()> {
+    if path.contains('\\') {
+        return Err(());
+    }
+    if path.split('/').any(is_dot_segment) {
+        return Err(());
+    }
+
+    Ok(())
+}
+
+fn is_dot_segment(segment: &str) -> bool {
+    matches!(
+        segment,
+        "." | ".."
+            | "%2e"
+            | "%2E"
+            | "%2e%2e"
+            | "%2e%2E"
+            | "%2E%2e"
+            | "%2E%2E"
+            | "%2e."
+            | "%2E."
+            | ".%2e"
+            | ".%2E"
+    )
 }
 
 fn scope_error() -> Error {
@@ -221,6 +324,10 @@ mod tests {
             "https://files.example.com/seafile-other/api2/repos/",
             "https://files.example.com/other/api2/repos/",
             "https://files.example.com/api2/repos/",
+            "https://files.example.com/seafile/./api2/repos/",
+            "https://files.example.com/seafile/../other/api2/repos/",
+            "https://files.example.com/seafile/%2e/api2/repos/",
+            "https://files.example.com/seafile/%2e%2e/other/api2/repos/",
         ] {
             let error = scope
                 .validate_request(&request(uri))
@@ -246,5 +353,38 @@ mod tests {
         scope
             .validate_request(&request("http://127.0.0.1:80/api2/repos/"))
             .expect_err("a different effective port must fail");
+    }
+
+    #[test]
+    fn server_ports_must_be_explicit_and_in_range() {
+        for server in [
+            "https://files.example.com:0/seafile",
+            "https://files.example.com:65536/seafile",
+            "https://files.example.com:/seafile",
+            "https://files.example.com:not-a-port/seafile",
+        ] {
+            assert!(
+                DeploymentScope::from_server_url(server).is_err(),
+                "invalid port must fail: {server}"
+            );
+        }
+
+        assert!(
+            DeploymentScope::from_server_url("https://files.example.com:65535/seafile").is_ok()
+        );
+    }
+
+    #[test]
+    fn server_paths_reject_ambiguous_forms() {
+        for server in [
+            "https://files.example.com/seafile/../other",
+            "https://files.example.com/seafile/./other",
+            "https://files.example.com/seafile/%2e%2e/other",
+        ] {
+            assert!(
+                DeploymentScope::from_server_url(server).is_err(),
+                "ambiguous path must fail: {server}"
+            );
+        }
     }
 }

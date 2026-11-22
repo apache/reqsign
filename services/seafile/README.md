@@ -40,7 +40,8 @@ signer.sign(&mut request, None).await?;
 The default provider reads `server` and `token` from the `[account]` section of
 `~/.seafile.conf`, the user configuration file read by Seafile's first-party
 `seaf-cli`, and binds the credential to that deployment. The `server` value is
-required. If the caller selects an account with
+required. Duplicate `[account]` sections or repeated parsed keys are rejected.
+If the caller selects an account with
 `ConfigFileCredentialProvider::with_account_user`, the `[account] user` value
 must be present and match exactly. Seafile does not document a standard
 credential environment variable or login command, so the default chain does not
@@ -104,9 +105,11 @@ account exchange are bound to the deployment that supplied them. Before adding
 the header, the signer checks the request scheme, host, effective port, and
 deployment base path on a segment boundary. A `/seafile` deployment accepts
 `/seafile` and `/seafile/...` but not `/seafile-other`; a mismatch fails without
-changing the request. Static caller-supplied credentials carry no deployment
-scope and keep the explicit caller contract. Credential caching preserves the
-deployment, so every signing call rechecks it.
+changing the request. Scoped signing also rejects a duplicate or conflicting
+`Host` header and ambiguous path forms that the HTTP adapter would normalize.
+Static caller-supplied credentials carry no deployment scope and keep the
+explicit caller contract. Credential caching preserves the deployment, so every
+signing call rechecks it.
 
 Seafile account and repository API tokens have no documented expiration. The
 credential carries no expiration, and `Signer` caches it until the signer is

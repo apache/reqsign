@@ -80,7 +80,8 @@
 //! of `~/.seafile.conf`, the user configuration file read by the first-party
 //! `seaf-cli` tool, and binds the credential to that deployment. The `server`
 //! value is required and may include an explicit HTTP endpoint or a reverse-proxy
-//! base path. If the caller selects an account with
+//! base path. Duplicate `[account]` sections or repeated parsed keys are
+//! rejected. If the caller selects an account with
 //! [`ConfigFileCredentialProvider::with_account_user`], the `[account] user`
 //! value must be present and match exactly. The provider does not read
 //! environment variables, run a login command, or parse the newer
@@ -102,9 +103,10 @@
 //! Before writing the header, the signer checks the request scheme, host,
 //! effective port, and deployment base path on a segment boundary. For example,
 //! a `/seafile` deployment accepts `/seafile` and `/seafile/...` but not
-//! `/seafile-other`. A mismatch fails without changing the request. Static
-//! caller-supplied credentials carry no deployment scope and keep the explicit
-//! caller contract.
+//! `/seafile-other`. It also rejects a duplicate or conflicting `Host` header
+//! and ambiguous path forms that the HTTP adapter would normalize. A mismatch
+//! fails without changing the request. Static caller-supplied credentials carry
+//! no deployment scope and keep the explicit caller contract.
 //!
 //! The signer changes only the `Authorization` header. Repository discovery,
 //! repository-scoped upload and download links, and all business requests stay
