@@ -82,10 +82,10 @@ Reqsign's core and a defined subset of providers compile for
 `wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin
 sandboxes. CI verifies this exact set on every commit:
 
-- `reqsign-core`, `reqsign-aws-core`
+- `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
 - Providers: **AWS SigV4, AWS SigV4a, Azure Storage, Cloudflare, Aliyun OSS,
-  Tencent COS** (facade features `aws`, `aws-v4a`, `azure`, `cloudflare`,
-  `aliyun`, `tencent`)
+  Tencent COS, Dropbox** (facade features `aws`, `aws-v4a`, `azure`,
+  `cloudflare`, `aliyun`, `tencent`, `dropbox`, `oauth2`)
 
 Cloudflare environment and static credentials plus header signing need no
 JavaScript clock.
@@ -93,6 +93,13 @@ JavaScript clock.
 The [provider matrix](/docs/providers/) marks WASM status per provider;
 treat providers outside this set as unsupported there until the catalog says
 otherwise.
+
+The OAuth 2.0 and Dropbox paths enable Jiff's `js` feature for
+`wasm32-unknown-unknown`. Their public signing and refresh entry points read the
+clock from a wasm-bindgen JavaScript host such as a browser or Node. A bare WASM
+runtime without a JavaScript clock can compile the crates but is not a
+supported runtime; calling `Timestamp::now` traps there. CI exercises the public
+Dropbox signing and OAuth2 mock-refresh paths under `wasm-bindgen-test` in Node.
 
 ```bash
 rustup target add wasm32-unknown-unknown

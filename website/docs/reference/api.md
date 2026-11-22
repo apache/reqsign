@@ -45,6 +45,7 @@ rustdoc owns signatures.
   credential chain and canonicalization
 - [`reqsign-azure-storage`](https://docs.rs/reqsign-azure-storage)
 - [`reqsign-cloudflare`](https://docs.rs/reqsign-cloudflare)
+- [`reqsign-dropbox`](https://docs.rs/reqsign-dropbox)
 - [`reqsign-google`](https://docs.rs/reqsign-google)
 - [`reqsign-aliyun-oss`](https://docs.rs/reqsign-aliyun-oss)
 - [`reqsign-huaweicloud-obs`](https://docs.rs/reqsign-huaweicloud-obs)
@@ -52,6 +53,12 @@ rustdoc owns signatures.
 - [`reqsign-oracle`](https://docs.rs/reqsign-oracle)
 - [`reqsign-tencent-cos`](https://docs.rs/reqsign-tencent-cos)
 - [`reqsign-volcengine-tos`](https://docs.rs/reqsign-volcengine-tos)
+
+## Shared token support
+
+- [`reqsign-oauth2`](https://docs.rs/reqsign-oauth2) — RFC 6749
+  refresh-token grants and Bearer access tokens shared by OAuth 2.0 service
+  crates
 
 ## Crypto providers
 

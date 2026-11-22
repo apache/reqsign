@@ -192,10 +192,12 @@ let signer = aliyun::default_signer(ctx, "mybucket");
   - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
   - Cloudflare API (KV, D1): `reqsign-cloudflare`
+  - Dropbox: `reqsign-dropbox`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
+  - OAuth 2.0 refresh-token support: `reqsign-oauth2`
   - Tencent COS: `reqsign-tencent-cos`
   - Volcengine TOS: `reqsign-volcengine-tos`
 

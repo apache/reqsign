@@ -84,8 +84,59 @@ fn hashes_and_hmacs_match_rustcrypto() {
                     .hmac_sha256(key, input)
                     .expect("RustCrypto HMAC-SHA256 must succeed")
             );
+            assert_eq!(
+                boring
+                    .hmac_sha512(key, input)
+                    .expect("BoringSSL HMAC-SHA512 must succeed"),
+                rustcrypto
+                    .hmac_sha512(key, input)
+                    .expect("RustCrypto HMAC-SHA512 must succeed")
+            );
         }
     }
+}
+
+#[test]
+fn md5_and_hmac_sha512_match_published_vectors() {
+    let provider = boring();
+
+    #[cfg(feature = "fips")]
+    assert!(
+        boring::fips::enabled(),
+        "the fips feature must enable BoringSSL FIPS mode"
+    );
+
+    if boring::fips::enabled() {
+        assert_eq!(
+            provider
+                .md5(b"abc")
+                .expect_err("MD5 must be unavailable in FIPS mode")
+                .kind(),
+            ErrorKind::ConfigInvalid
+        );
+    } else {
+        assert_eq!(
+            hex::encode(provider.md5(b"abc").expect("BoringSSL MD5 must succeed")),
+            "900150983cd24fb0d6963f7d28e17f72"
+        );
+        assert_eq!(
+            provider
+                .md5(b"abc")
+                .expect("BoringSSL MD5 must succeed"),
+            rustcrypto()
+                .md5(b"abc")
+                .expect("RustCrypto MD5 must succeed")
+        );
+    }
+
+    assert_eq!(
+        hex::encode(
+            provider
+                .hmac_sha512(b"Jefe", b"what do ya want for nothing?")
+                .expect("BoringSSL HMAC-SHA512 must succeed")
+        ),
+        "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737"
+    );
 }
 
 #[test]

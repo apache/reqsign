@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Cloudflare, Google, Huawei, Aliyun, Tencent and Oracle services.
+Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, Google, Huawei, Aliyun, Tencent and Oracle services.
 
 ## Features
 
@@ -9,6 +9,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **AWS**: Signature V4 for AWS services
 - **Azure**: Azure Storage services
 - **Cloudflare**: Cloudflare API v4 requests with an API token, including KV and D1
+- **Dropbox**: OAuth 2.0 bearer authentication
 - **Google**: Google Cloud services
 - **Aliyun**: Aliyun Object Storage Service (OSS)
 - **Huawei Cloud**: Object Storage Service (OBS)

@@ -20,7 +20,7 @@ name = "reqsign"
 version = "0.20.9"
 
 categories = ["authentication", "web-programming::http-client"]
-description = "Signing HTTP requests for AWS, Azure, Cloudflare, Google, Huawei, Aliyun, Tencent and Oracle services"
+description = "Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, Google, Huawei, Aliyun, Tencent and Oracle services"
 documentation = "https://docs.rs/reqsign"
 keywords = ["http", "requests", "signing", "aws", "azure"]
 
@@ -44,8 +44,10 @@ reqsign-aws-v4 = { workspace = true, optional = true }
 reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
 reqsign-cloudflare = { workspace = true, optional = true }
+reqsign-dropbox = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
+reqsign-oauth2 = { workspace = true, optional = true }
 reqsign-openstack-keystone = { workspace = true, optional = true }
 reqsign-oracle = { workspace = true, optional = true }
 reqsign-tencent-cos = { workspace = true, optional = true }
@@ -72,12 +74,14 @@ aws-v4 = ["dep:reqsign-aws-v4"]
 aws-v4a = ["dep:reqsign-aws-v4a"]
 azure = ["dep:reqsign-azure-storage"]
 cloudflare = ["dep:reqsign-cloudflare"]
+dropbox = ["dep:reqsign-dropbox", "oauth2"]
 google = ["dep:reqsign-google"]
 google-credential-access-boundary-client-side = [
   "google",
   "reqsign-google/credential-access-boundary-client-side",
 ]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
+oauth2 = ["dep:reqsign-oauth2"]
 openstack = ["dep:reqsign-openstack-keystone"]
 oracle = ["dep:reqsign-oracle"]
 tencent = ["dep:reqsign-tencent-cos"]
@@ -90,9 +94,11 @@ full = [
   "aws-v4a",
   "azure",
   "cloudflare",
+  "dropbox",
   "google",
   "google-credential-access-boundary-client-side",
   "huaweicloud",
+  "oauth2",
   "openstack",
   "oracle",
   "tencent",

@@ -32,7 +32,7 @@ When reporting, include:
 
 - the affected crate name and version;
 - the affected signing service, such as AWS SigV4, Azure Storage, Cloudflare,
-  Google, Aliyun OSS, Huawei Cloud OBS, Oracle Cloud, Tencent COS,
+  Dropbox, Google, Aliyun OSS, Huawei Cloud OBS, Oracle Cloud, Tencent COS,
   Volcengine TOS, or another supported service;
 - whether the issue affects direct `reqsign` use, Apache OpenDAL integration,
   or another embedding application;

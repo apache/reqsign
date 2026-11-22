@@ -75,6 +75,35 @@ fn hashes_delegate_to_the_expected_algorithms() {
 }
 
 #[test]
+fn md5_matches_published_vectors() {
+    let provider = provider();
+
+    for (input, expected) in [
+        (&b""[..], "d41d8cd98f00b204e9800998ecf8427e"),
+        (b"a", "0cc175b9c0f1b6a831c399e269772661"),
+        (b"abc", "900150983cd24fb0d6963f7d28e17f72"),
+        (b"message digest", "f96b697d7cb7938d525a2f31aaf161d0"),
+        (
+            b"abcdefghijklmnopqrstuvwxyz",
+            "c3fcd3d76192e4007dfb496cca67e13b",
+        ),
+        (
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+            "d174ab98d277d9f5a5611c2c9f419d9f",
+        ),
+        (
+            b"12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+            "57edf4a22be3c955ac49da2e2107b67a",
+        ),
+    ] {
+        assert_eq!(
+            hex(&provider.md5(input).expect("MD5 must succeed")),
+            expected
+        );
+    }
+}
+
+#[test]
 fn hmac_handles_block_boundaries_without_changing_key_or_input() {
     let provider = provider();
     let input = b"POST /object?uploadId=example HTTP/1.1";
@@ -112,6 +141,62 @@ fn reference_hmac_sha256(key: &[u8], input: &[u8]) -> [u8; 32] {
     let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(input);
     mac.finalize().into_bytes().into()
+}
+
+#[test]
+fn hmac_sha512_matches_published_vectors() {
+    let provider = provider();
+    let key_25: Vec<u8> = (1u8..=25).collect();
+    let long_key = [0xaa; 131];
+    let long_data = b"This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.";
+
+    // The first case covers an empty key; the rest are RFC 4231 test cases.
+    let cases: &[(&[u8], &[u8], &str)] = &[
+        (
+            &[],
+            b"",
+            "b936cee86c9f87aa5d3c6f2e84cb5a4239a5fe50480a6ec66b70ab5b1f4ac6730c6c515421b327ec1d69402e53dfb49ad7381eb067b338fd7b0cb22247225d47",
+        ),
+        (
+            &[0x0b; 20],
+            b"Hi There",
+            "87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cdedaa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854",
+        ),
+        (
+            b"Jefe",
+            b"what do ya want for nothing?",
+            "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737",
+        ),
+        (
+            &[0xaa; 20],
+            &[0xdd; 50],
+            "fa73b0089d56a284efb0f0756c890be9b1b5dbdd8ee81a3655f83e33b2279d39bf3e848279a722c806b485a47e67c807b946a337bee8942674278859e13292fb",
+        ),
+        (
+            &key_25,
+            &[0xcd; 50],
+            "b0ba465637458c6990e5a8c5f61d4af7e576d97ff94b872de76f8050361ee3dba91ca5c11aa25eb4d679275cc5788063a5f19741120c4f2de2adebeb10a298dd",
+        ),
+        (
+            &long_key,
+            b"Test Using Larger Than Block-Size Key - Hash Key First",
+            "80b24263c7c1a3ebb71493c1dd7be8b49b46d1f41b4aeec1121b013783f8f3526b56d037e05f2598bd0fd2215d6a1e5295e64f73f63f0aec8b915a985d786598",
+        ),
+        (
+            &long_key,
+            long_data,
+            "e37b6a775dc87dbaa4dfa9f96e5e3ffddebd71f8867289865df5a32d20cdc944b6022cac3c4982b10d5eeb55c3e4de15134676fb6de0446065c97440fa8c6a58",
+        ),
+    ];
+
+    for (key, input, expected) in cases {
+        assert_eq!(
+            hex(&provider
+                .hmac_sha512(key, input)
+                .expect("HMAC-SHA512 must succeed")),
+            *expected
+        );
+    }
 }
 
 #[test]
@@ -305,6 +390,20 @@ impl CryptoProvider for MinimalProvider {
 #[test]
 fn minimal_provider_reports_unsupported_operations_as_config_invalid() {
     let provider = MinimalProvider;
+    assert_eq!(
+        provider
+            .md5(b"message")
+            .expect_err("MD5 must be unsupported")
+            .kind(),
+        ErrorKind::ConfigInvalid
+    );
+    assert_eq!(
+        provider
+            .hmac_sha512(b"key", b"message")
+            .expect_err("HMAC-SHA512 must be unsupported")
+            .kind(),
+        ErrorKind::ConfigInvalid
+    );
     assert_eq!(
         provider
             .rsa_pkcs1v15_sha256_sign(b"pem", b"message")
