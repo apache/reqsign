@@ -56,6 +56,7 @@ reqsign-onedrive = { workspace = true, optional = true }
 reqsign-openstack-keystone = { workspace = true, optional = true }
 reqsign-oracle = { workspace = true, optional = true }
 reqsign-tencent-cos = { workspace = true, optional = true }
+reqsign-upyun = { workspace = true, optional = true }
 reqsign-volcengine-tos = { workspace = true, optional = true }
 
 # Context implementations (optional but included by default)
@@ -95,6 +96,7 @@ onedrive = ["dep:reqsign-onedrive", "oauth2"]
 openstack = ["dep:reqsign-openstack-keystone"]
 oracle = ["dep:reqsign-oracle"]
 tencent = ["dep:reqsign-tencent-cos"]
+upyun = ["dep:reqsign-upyun"]
 volcengine = ["dep:reqsign-volcengine-tos"]
 
 # Full feature set
@@ -117,6 +119,7 @@ full = [
   "openstack",
   "oracle",
   "tencent",
+  "upyun",
   "volcengine",
 ]
 

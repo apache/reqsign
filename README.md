@@ -226,6 +226,7 @@ let signer = aliyun_drive::default_signer(ctx)
   - OAuth 2.0 refresh-token support: `reqsign-oauth2`
   - OneDrive: `reqsign-onedrive`
   - Tencent COS: `reqsign-tencent-cos`
+  - Upyun: `reqsign-upyun`
   - Volcengine TOS: `reqsign-volcengine-tos`
 
 ## Contributing

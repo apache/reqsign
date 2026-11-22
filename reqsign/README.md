@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent and Oracle services.
+Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Upyun and Oracle services.
 
 ## Features
 
@@ -16,6 +16,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Aliyun**: Aliyun Object Storage Service (OSS) and Aliyun Drive Open Platform
 - **Huawei Cloud**: Object Storage Service (OBS)
 - **Tencent Cloud**: Cloud Object Storage (COS)
+- **Upyun**: UPYUN header signing for Upyun Storage
 - **Oracle**: Oracle Cloud services
 
 ## Request URI Contract
@@ -213,6 +214,10 @@ let signer = openstack::default_signer(ctx.clone());
 use reqsign::tencent;
 let signer = tencent::default_signer(ctx.clone());
 
+// Upyun
+use reqsign::upyun;
+let signer = upyun::default_signer(ctx.clone(), "mybucket");
+
 // Oracle Cloud
 use reqsign::oracle;
 let signer = oracle::default_signer(ctx);
@@ -240,6 +245,7 @@ let signer = oracle::default_signer(ctx);
 - `openstack`: Enable OpenStack Keystone support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support
+- `upyun`: Enable Upyun support
 
 ## WASM Support
 

@@ -51,6 +51,7 @@ reqsign-onedrive = { version = "1.0.0", path = "services/onedrive" }
 reqsign-openstack-keystone = { version = "3.0.1", path = "services/openstack-keystone" }
 reqsign-oracle = { version = "3.1.0", path = "services/oracle" }
 reqsign-tencent-cos = { version = "3.1.0", path = "services/tencent-cos" }
+reqsign-upyun = { version = "1.0.0", path = "services/upyun" }
 reqsign-volcengine-tos = { version = "3.2.0", path = "services/volcengine-tos" }
 
 # Crates.io dependencies

@@ -57,6 +57,7 @@ cargo add http anyhow
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
 | `tencent` | Tencent COS |
+| `upyun` | Upyun |
 | `volcengine` | Volcengine TOS |
 | `full` | Everything above |
 
@@ -124,6 +125,7 @@ composes that provider's own credential chain — the
 | [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer(ctx)` |
 | [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer(ctx)` |
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |
+| [Upyun](/docs/providers/upyun/) | `upyun::default_signer(ctx, bucket)` |
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
 
 Aliyun Drive has no documented ambient source; replace its default provider
