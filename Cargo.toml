@@ -35,6 +35,7 @@ reqsign-aws-v4 = { version = "3.5.0", path = "services/aws-v4" }
 reqsign-aws-v4a = { version = "3.2.0", path = "services/aws-v4a" }
 reqsign-azure-storage = { version = "3.3.2", path = "services/azure-storage" }
 reqsign-b2 = { version = "1.0.0", path = "services/b2" }
+reqsign-cloudflare = { version = "1.0.0", path = "services/cloudflare" }
 reqsign-command-execute-tokio = { version = "3.0.9", path = "context/command-execute-tokio" }
 reqsign-core = { version = "3.3.4", path = "core" }
 reqsign-crypto-rustcrypto = { version = "1.0.0", path = "crypto/rustcrypto" }

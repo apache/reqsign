@@ -45,6 +45,7 @@ rustdoc owns signatures.
   credential chain and canonicalization
 - [`reqsign-azure-storage`](https://docs.rs/reqsign-azure-storage)
 - [`reqsign-b2`](https://docs.rs/reqsign-b2)
+- [`reqsign-cloudflare`](https://docs.rs/reqsign-cloudflare)
 - [`reqsign-dropbox`](https://docs.rs/reqsign-dropbox)
 - [`reqsign-github`](https://docs.rs/reqsign-github)
 - [`reqsign-onedrive`](https://docs.rs/reqsign-onedrive)
