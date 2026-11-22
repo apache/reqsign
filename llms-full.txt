@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-23signing providers
+24signing providers
 
 5granting operations
 
-18WASM-ready providers
+19WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 23 providers. Explicit schemes.
+## 24 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Vercel BlobBearer token](/docs/providers/vercel-blob/)[Vercel ArtifactsBearer token](/docs/providers/vercel-artifacts/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[UpyunUPYUN header signature (MD5-derived HMAC-SHA1)](/docs/providers/upyun/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)[Yandex DiskOAuth access token](/docs/providers/yandex-disk/)[SeafileAuthorization: Token header](/docs/providers/seafile/)[KoofrKoofr token authentication](/docs/providers/koofr/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Vercel BlobBearer token](/docs/providers/vercel-blob/)[Vercel ArtifactsBearer token](/docs/providers/vercel-artifacts/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[UpyunUPYUN header signature (MD5-derived HMAC-SHA1)](/docs/providers/upyun/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)[Yandex DiskOAuth access token](/docs/providers/yandex-disk/)[SeafileAuthorization: Token header](/docs/providers/seafile/)[KoofrKoofr token authentication](/docs/providers/koofr/)[Baidu NetdiskBaidu Netdisk access\_token query parameter](/docs/providers/baidu-netdisk/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -791,6 +791,7 @@ cargo add http anyhow
 | aws-v4a                                       | AWS SigV4a multi-region signing              |
 | azure                                         | Azure Storage                                |
 | b2                                            | Backblaze B2 Native API                      |
+| baidu-netdisk                                 | Baidu Netdisk                                |
 | cloudflare                                    | Cloudflare API (KV, D1)                      |
 | dropbox                                       | Dropbox                                      |
 | github                                        | GitHub.com                                   |
@@ -903,6 +904,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [AWS SigV4a](/docs/providers/aws-sigv4a/)                                      | aws::v4a::default\_signer(ctx, service, region\_set)             |
 | [Azure Storage](/docs/providers/azure-storage/)                                | azure::default\_signer(ctx)                                      |
 | [Backblaze B2](/docs/providers/b2/)                                            | b2::default\_signer(ctx)                                         |
+| [Baidu Netdisk](/docs/providers/baidu-netdisk/)                                | baidu\_netdisk::default\_signer(ctx, access\_token)              |
 | [Cloudflare](/docs/providers/cloudflare/)                                      | cloudflare::default\_signer(ctx)                                 |
 | [Dropbox](/docs/providers/dropbox/)                                            | dropbox::default\_signer(ctx)                                    |
 | [Vercel Blob](/docs/providers/vercel-blob/)                                    | vercel::default\_blob\_signer(ctx)                               |
@@ -1014,6 +1016,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | [Yandex Disk](/docs/providers/yandex-disk/)                                    | OAuth access token                                        | ✓      | —               | —        | ✓    |
 | [Seafile](/docs/providers/seafile/)                                            | Authorization: Token header                               | ✓      | —               | —        | ✓    |
 | [Koofr](/docs/providers/koofr/)                                                | Koofr token authentication                                | ✓      | —               | —        | ✓    |
+| [Baidu Netdisk](/docs/providers/baidu-netdisk/)                                | Baidu Netdisk access\_token query parameter               | —      | ✓               | —        | ✓    |
 
 CI checks crate, feature, page, and source-path consistency; capability semantics are reviewed by maintainers. Found a mismatch? [Open an issue.](https://github.com/apache/reqsign/issues)
 
@@ -1404,13 +1407,13 @@ Slots you do not provide stay as no-op stubs that error when used — a credenti
 Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
 
 * `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, Koofr, OneDrive, Upyun, Yandex Disk, Seafile**(facade features `aws`, `aws-v4a`, `azure`, `github`, `aliyun`,`aliyun-drive`, `b2`, `cloudflare`, `vercel`, `tencent`, `dropbox`, `koofr`,`onedrive`, `oauth2`, `upyun`, `yandex-disk`, `seafile`)
+* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, Koofr, OneDrive, Upyun, Yandex Disk, Seafile**(facade features `aws`, `aws-v4a`, `azure`, `github`, `aliyun`,`aliyun-drive`, `b2`, `baidu-netdisk`, `cloudflare`, `vercel`, `tencent`,`dropbox`, `koofr`, `onedrive`, `oauth2`, `upyun`, `yandex-disk`, `seafile`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock. GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in bare WASM runtimes.
 
 Cloudflare and Vercel environment, static, and header signing need no JavaScript clock.
 
-Yandex Disk static credentials without an expiry and header signing need no JavaScript clock. Seafile signing also needs no JavaScript clock.
+Yandex Disk static credentials without an expiry and header signing need no JavaScript clock. Baidu Netdisk static query signing also needs no JavaScript clock. Seafile signing also needs no JavaScript clock.
 
 The [provider matrix](/docs/providers/) marks WASM status per provider; treat providers outside this set as unsupported there until the catalog says otherwise.
 
@@ -1711,6 +1714,7 @@ Passing `Some(duration)` does **not** universally mean "presign" — the configu
 * Cloudflare has no query authentication at all, so it rejects `expires_in`instead of ignoring it.
 * Vercel Blob and Vercel Artifacts reject `expires_in`; header signing is their only mode.
 * Yandex Disk rejects `expires_in`; header signing is its only mode.
+* Baidu Netdisk rejects `expires_in`; its signer adds a static `access_token`query parameter and has no separate presign lifetime.
 
 The [provider matrix](/docs/providers/) carries the authoritative header/query flags, and the[expiration contract](/docs/reference/signing-contracts/#expiration-semantics)states the exact semantics.
 
@@ -2402,6 +2406,86 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 * [EnvCredentialProvider](https://docs.rs/reqsign-b2/latest/reqsign%5Fb2/struct.EnvCredentialProvider.html) — B2\_APPLICATION\_KEY\_ID and B2\_APPLICATION\_KEY
 * [StaticCredentialProvider](https://docs.rs/reqsign-b2/latest/reqsign%5Fb2/struct.StaticCredentialProvider.html) — Static authorization token and Native API endpoints
 * [AccountAuthorizationCredentialProvider](https://docs.rs/reqsign-b2/latest/reqsign%5Fb2/struct.AccountAuthorizationCredentialProvider.html) — Explicit application key
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/baidu-netdisk/
+---
+# Baidu Netdisk | Apache Reqsign™
+
+# Baidu Netdisk
+
+Baidu Netdisk Open Platform xpan API requests authenticated with an access\_token query parameter; OAuth refresh, paths, storage operations, headers, and business requests remain caller-owned.
+
+Baidu Netdisk access\_token query parameter— header signing✓ query / presign✓ WASM[docs.rs/reqsign-baidu-netdisk ↗](https://docs.rs/reqsign-baidu-netdisk)
+
+Removes existing access\_token parameters and appends one form-encoded access\_token query parameter while preserving unrelated wire query bytes and all headers. expires\_in is rejected; OAuth refresh and persistence stay with the caller.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features baidu-netdisk
+
+
+```
+
+```
+
+use reqsign::{baidu_netdisk, default_context};
+
+
+// Supply the access token explicitly; Reqsign does not discover one.
+
+let ctx = default_context();
+
+let signer = baidu_netdisk::default_signer(ctx, "baidu-netdisk-access-token");
+
+
+let mut req = http::Request::get(
+
+    "https://pan.baidu.com/rest/2.0/xpan/file?method=list&dir=%2Fapps%2FMyApp",
+
+)
+
+.body(())?
+
+.into_parts()
+
+.0;
+
+
+// Adds access_token=<token> to the query string.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+The [Baidu Netdisk Open Platform](https://pan.baidu.com/union/doc/) xpan APIs authenticate requests with an `access_token` query parameter. The signer removes any existing `access_token` parameter and appends one form-encoded parameter, so signing the same request again does not leave stale authentication. Existing percent escapes, parameter order, duplicate keys, empty values, literal `+` characters, and all headers are preserved.
+
+## Credentials[​](#credentials "Direct link to Credentials")
+
+`StaticCredentialProvider` accepts a token that the caller already obtained through Baidu's Open Platform authorization flow. Reqsign does not read an environment variable, a well-known credential file, or an OAuth token endpoint for Baidu Netdisk. OAuth refresh, single-use refresh-token rotation, and token persistence stay with the caller and are not implemented by this crate.
+
+The token is a secret. `Debug` output for credentials and the static provider never contains it. Because the token appears in the request URI, treat signed URLs and any logs or error output that include the URI as secret-bearing material.
+
+A token has no tracked expiry in this crate and is reused for the lifetime of the `Signer`. Replace the credential provider or create a new signer to use a different token. Query authentication has no separate presign lifetime here, so signing rejects `expires_in`.
+
+The caller owns the API host, method, path, other query parameters, headers (including `User-Agent`), and request body. Do not forward a signed request to an unrelated host.
+
+## Credentials
+
+### Default credential chain
+
+This provider has no ambient default source. Supply an explicit credential provider as described on this page.
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [StaticCredentialProvider](https://docs.rs/reqsign-baidu-netdisk/latest/reqsign%5Fbaidu%5Fnetdisk/struct.StaticCredentialProvider.html) — Static access token
 
 ---
 
@@ -4208,6 +4292,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-aws-core](https://docs.rs/reqsign-aws-core) — shared AWS credential chain and canonicalization
 * [reqsign-azure-storage](https://docs.rs/reqsign-azure-storage)
 * [reqsign-b2](https://docs.rs/reqsign-b2)
+* [reqsign-baidu-netdisk](https://docs.rs/reqsign-baidu-netdisk)
 * [reqsign-cloudflare](https://docs.rs/reqsign-cloudflare)
 * [reqsign-dropbox](https://docs.rs/reqsign-dropbox)
 * [reqsign-github](https://docs.rs/reqsign-github)
@@ -4307,6 +4392,7 @@ The two validity checks have different jobs — `is_valid()` answers the_caching
 | Bounds credential validity; header signing regardless  | Oracle Cloud                                                                                                       |
 | Ignored; header signing always uses the current Date   | Upyun                                                                                                              |
 | Rejected; header authentication only                   | Aliyun Drive, Cloudflare, Yandex Disk                                                                              |
+| Rejected; static query authentication only             | Baidu Netdisk                                                                                                      |
 | Rejected; header signing only                          | Vercel Blob, Vercel Artifacts                                                                                      |
 | Requests a granted credential's validity window        | Granting operations (subject to the operation's own maximum)                                                       |
 
@@ -4359,12 +4445,12 @@ url: https://reqsign.apache.org/docs/reference/versioning-and-targets/
 
 Reqsign publishes many crates on four tracks:
 
-| Track                          | Crates                                                                                                                                                                                                                                            | Scheme                                                                              |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                                                                                                           | Lockstep major (currently 3.x)                                                      |
-| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, reqsign-aliyun-drive, reqsign-github, reqsign-cloudflare, reqsign-onedrive, reqsign-seafile, reqsign-vercel, reqsign-yandex-disk, reqsign-koofr, and later crates introduced after the lockstep line | Independent major, starting at 1.0.0                                                |
-| Reqwest adapter                | reqsign-http-send-reqwest                                                                                                                                                                                                                         | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
-| Facade                         | reqsign                                                                                                                                                                                                                                           | Independent (currently 0.20.x)                                                      |
+| Track                          | Crates                                                                                                                                                                                                                                                                   | Scheme                                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                                                                                                                                  | Lockstep major (currently 3.x)                                                      |
+| New provider and shared crates | reqsign-b2, reqsign-baidu-netdisk, reqsign-oauth2, reqsign-dropbox, reqsign-aliyun-drive, reqsign-github, reqsign-cloudflare, reqsign-onedrive, reqsign-seafile, reqsign-vercel, reqsign-yandex-disk, reqsign-koofr, and later crates introduced after the lockstep line | Independent major, starting at 1.0.0                                                |
+| Reqwest adapter                | reqsign-http-send-reqwest                                                                                                                                                                                                                                                | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
+| Facade                         | reqsign                                                                                                                                                                                                                                                                  | Independent (currently 0.20.x)                                                      |
 
 Lockstep means any `3.x` established service crate composes with any `3.x`core. New provider and shared crates start at `1.0.0` and depend on the current core major, so a `1.x` crate composes with `3.x` core. Mixing core majors fails to compile — the trait definitions are the compatibility boundary, and Cargo enforces it.
 
@@ -4394,7 +4480,7 @@ Every release ships as an ASF source release plus crates.io packages — see[Dow
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
 
-**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, Koofr, OneDrive, Upyun, Yandex Disk, and Seafile providers. The shared `reqsign-oauth2`crate and the `oauth2` facade feature are checked in the same subset. Cloudflare and Vercel environment, static, and header signing work without a JavaScript clock. Seafile signing also needs no JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute` adapter and is unavailable in bare WASM runtimes. Yandex Disk static credentials without an expiry and header signing work without a JavaScript clock. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, Koofr, OneDrive, Upyun, Yandex Disk, and Seafile providers. The shared`reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Cloudflare and Vercel environment, static, and header signing work without a JavaScript clock. Baidu Netdisk static query signing needs no JavaScript clock. Seafile signing also needs no JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute` adapter and is unavailable in bare WASM runtimes. Yandex Disk static credentials without an expiry and header signing work without a JavaScript clock. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
 
