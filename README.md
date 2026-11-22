@@ -180,6 +180,7 @@ let signer = aliyun::default_signer(ctx, "mybucket");
   - AWS services (SigV4): `reqsign-aws-v4`
   - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
+  - Backblaze B2 Native API: `reqsign-b2`
   - Dropbox: `reqsign-dropbox`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`

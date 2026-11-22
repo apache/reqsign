@@ -356,6 +356,70 @@
       "credential_provider_crate": "reqsign-azure-storage"
     },
     {
+      "id": "b2",
+      "display_name": "Backblaze B2",
+      "family": "Backblaze",
+      "blurb": "B2 Native API account authorization and Authorization header signing.",
+      "service_scope": "Backblaze B2 Native API requests authorized by an account authorization token. S3-compatible requests, bucket and file upload URL creation, download authorization, and storage operations remain the caller's responsibility.",
+      "signing_schemes": [
+        "B2 Native API account authorization token"
+      ],
+      "crates": [
+        "reqsign-b2"
+      ],
+      "facade_features": [
+        {
+          "name": "b2",
+          "capability": "Enables reqsign-b2."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::b2::default_signer(ctx)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY",
+          "provider": "EnvCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts the native account authorization token as a sensitive Authorization header. expires_in raises the required credential validity but does not presign URLs; upload URL and download authorization calls stay with the caller."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI builds the facade with --features b2 for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Account exchange, provider behavior, error redaction, and caching are asserted against an injected mock HttpSend; no live account is required.",
+        "refs": [
+          "services/b2/tests"
+        ]
+      },
+      "source_refs": [
+        "services/b2"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static authorization token and Native API endpoints",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "account_authorize",
+          "label": "Explicit application key",
+          "provider": "AccountAuthorizationCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-b2"
+    },
+    {
       "id": "google",
       "display_name": "Google Cloud",
       "family": "Google",
