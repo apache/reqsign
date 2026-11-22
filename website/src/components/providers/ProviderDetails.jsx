@@ -45,7 +45,12 @@ export default function ProviderDetails({ id }) {
       <h2>Credentials</h2>
 
       <h3>Default credential chain</h3>
-      {p.credential_sources.length > 0 ? (
+      {p.credential_sources.length === 0 ? (
+        <p>
+          This provider has no ambient default source. Supply an explicit
+          credential provider as described on this page.
+        </p>
+      ) : (
         <>
           <p>
             The default signer tries these sources in order and uses the first
@@ -58,11 +63,6 @@ export default function ProviderDetails({ id }) {
             ))}
           </ol>
         </>
-      ) : (
-        <p>
-          This provider has no ambient credential source. The facade default
-          signer requires explicit configuration, which is listed below.
-        </p>
       )}
 
       <h3>Credential providers</h3>

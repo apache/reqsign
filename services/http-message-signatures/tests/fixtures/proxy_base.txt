@@ -1,0 +1,8 @@
+"@method": POST
+"@authority": origin.host.internal.example
+"@path": /foo
+"content-digest": sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:
+"content-type": application/json
+"content-length": 18
+"forwarded": for=192.0.2.123;host=example.com;proto=https
+"@signature-params": ("@method" "@authority" "@path" "content-digest" "content-type" "content-length" "forwarded");created=1618884480;keyid="test-key-rsa";alg="rsa-v1_5-sha256";expires=1618884540

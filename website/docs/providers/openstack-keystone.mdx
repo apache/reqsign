@@ -1,6 +1,6 @@
 ---
 title: OpenStack Keystone
-description: Keystone v3 token authentication and X-Auth-Token signing for OpenStack services.
+description: Keystone v3 token authentication, X-Auth-Token signing, and Swift TempURL presigning for OpenStack services.
 ---
 
 {/*
@@ -67,5 +67,53 @@ accepts an explicit token and optional catalog metadata. Install it directly or
 prepend it with `DefaultCredentialProvider::push_front`, and use
 `DefaultCredentialProvider::builder().no_env()` to remove both environment
 sources together.
+
+## Swift TempURL
+
+TempURL presigning is separate from `X-Auth-Token` request signing. It uses the
+account or container key configured through `X-Account-Meta-Temp-URL-Key` or
+`X-Container-Meta-Temp-URL-Key`; it never uses a Keystone identity token as the
+key.
+
+```rust
+use std::time::Duration;
+
+use reqsign::{default_context, openstack};
+
+let ctx = default_context();
+let signer = openstack::TempUrlSigner::new("account-tempurl-key")
+    .with_algorithm(openstack::TempUrlHashAlgorithm::Sha256);
+let uri = "https://swift.example.com/v1/AUTH_test/container/object"
+    .parse()?;
+let presigned = signer.presign(
+    &ctx,
+    &http::Method::GET,
+    &uri,
+    Duration::from_secs(3600),
+)?;
+```
+
+The signature covers the method, the absolute expiration time, and the object
+path after decoding its percent escapes once, matching Swift's decoded request
+path. The outgoing URI keeps the caller's encoded path and query bytes and
+order. Existing non-auth query parameters are preserved, and a pre-existing
+TempURL authentication parameter is rejected even when its name is
+percent-encoded.
+
+The provider always emits `sha1:`, `sha256:`, or `sha512:` HMAC tags with
+standard Base64 digests; SHA-256 is the default. Current Swift accepts this
+form, and the selected digest must be in the deployment's
+`tempurl.allowed_digests`. Current middleware defaults to all three, with SHA-1
+deprecated, and deployments may restrict the list. A capability that exposes
+`tempurl` without `allowed_digests` belongs to the legacy raw-hex-only boundary,
+such as Swift 2.16, and is not supported even with SHA-1 selected. SHA-512
+requires a `CryptoProvider` that implements `hmac_sha512`. Prefix-based and
+IP-restricted TempURLs are not provided.
+
+Swift rebuilds the downstream query string from its recognized TempURL fields
+and removes or filters incoming headers according to the deployment
+configuration. This client preserves the caller's outgoing query and headers,
+but arbitrary query components or headers are not guaranteed to reach the
+storage service through a TempURL.
 
 <ProviderDetails id="openstack-keystone" />

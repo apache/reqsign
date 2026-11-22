@@ -68,6 +68,7 @@ This crate is typically used with service-specific implementations:
 - `reqsign-aws-v4` for AWS services
 - `reqsign-aws-v4a` for multi-region AWS services
 - `reqsign-aliyun-oss` for Aliyun OSS
+- `reqsign-aliyun-drive` for Aliyun Drive Open Platform
 - `reqsign-azure-storage` for Azure Storage
 - And more...
 

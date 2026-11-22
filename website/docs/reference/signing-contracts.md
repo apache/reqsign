@@ -41,6 +41,11 @@ input, an already-encoded `%2F` would double-encode while a raw space got
 Exactly-once encoding, owned by the caller, removes the ambiguity: what you
 signed is what you send.
 
+Swift TempURL is a provider-specific exception. Its separate `presign` entry
+point keeps the caller's encoded path and query bytes in the outgoing URI, but
+uses the path after one percent-decoding step for the HMAC input, matching the
+decoded request path Swift verifies.
+
 ```rust
 // Object key: "reports/2026 Q1.csv" — encode once when building the URI:
 let uri = "https://s3.amazonaws.com/my-bucket/reports/2026%20Q1.csv";
@@ -100,6 +105,8 @@ signer and credential type determine how the duration is interpreted.
 | --- | --- |
 | Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs), Huawei Cloud OBS |
 | Bounds credential validity; header signing regardless | Oracle Cloud |
+| Ignored; header signing always uses the current `Date` | Upyun |
+| Rejected; header authentication only | Aliyun Drive, Cloudflare |
 | Requests a granted credential's validity window | Granting operations (subject to the operation's own maximum) |
 
 Whatever the provider does with it, one obligation is universal: the
