@@ -1039,7 +1039,7 @@
       "request_auth": {
         "header": true,
         "query": true,
-        "notes": "Header signing inserts X-Auth-Token. TempURL presigning signs the method, expiry, and encoded path with a separate account or container key, then appends temp_url_sig and temp_url_expires."
+        "notes": "Header signing inserts X-Auth-Token. TempURL presigning signs the method, expiry, and decoded object path with a separate account or container key, then appends temp_url_sig and temp_url_expires."
       },
       "credential_granting": [],
       "wasm": {

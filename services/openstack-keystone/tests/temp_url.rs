@@ -29,7 +29,7 @@ use reqsign_openstack_keystone::TempUrlSigner;
 fn public_presign_produces_the_expected_sha256_query() {
     let ctx = Context::new().with_crypto(RustCryptoProvider::new());
     let uri: Uri =
-        "https://swift.example.com/v1/AUTH_account/container/a%20b?filename=My+Test+File.pdf"
+        "https://swift.example.com/v1/AUTH_account/container/a%20b?filename=My+Test+File.pdf&x=a%2Fb"
             .parse()
             .expect("test URI must parse");
 
@@ -52,7 +52,9 @@ fn public_presign_produces_the_expected_sha256_query() {
         "expiration {expires} must cover the requested window"
     );
 
-    let message = format!("GET\n{expires}\n/v1/AUTH_account/container/a%20b");
+    assert_eq!(signed.path(), "/v1/AUTH_account/container/a%20b");
+
+    let message = format!("GET\n{expires}\n/v1/AUTH_account/container/a b");
     let signature = format!(
         "sha256:{}",
         base64_encode(
@@ -66,7 +68,7 @@ fn public_presign_produces_the_expected_sha256_query() {
     );
     let encoded_signature = utf8_percent_encode(&signature, NON_ALPHANUMERIC);
     let expected = format!(
-        "filename=My+Test+File.pdf&temp_url_sig={encoded_signature}&temp_url_expires={expires}"
+        "filename=My+Test+File.pdf&x=a%2Fb&temp_url_sig={encoded_signature}&temp_url_expires={expires}"
     );
     assert_eq!(signed.query(), Some(expected.as_str()));
 }

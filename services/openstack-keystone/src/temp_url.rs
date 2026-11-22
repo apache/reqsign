@@ -21,10 +21,9 @@ use std::time::Duration;
 
 use http::uri::Builder;
 use http::{Method, Uri};
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use reqsign_core::hash::{base64_encode, hmac_sha1, hmac_sha256};
 use reqsign_core::time::Timestamp;
-use reqsign_core::utils::Redact;
 use reqsign_core::{Context, Error, Result};
 
 const TEMP_URL_AUTH_PARAMETERS: &[&str] = &[
@@ -38,8 +37,10 @@ const TEMP_URL_AUTH_PARAMETERS: &[&str] = &[
 ///
 /// The selected algorithm must also be listed in the cluster's
 /// `tempurl.allowed_digests` capability. SHA-256 is the default because it is
-/// supported by current clusters and produces a compact URL. Use SHA-1 only for
-/// older clusters and SHA-512 when the deployment requires it.
+/// supported by current clusters and produces a compact URL. Reqsign always
+/// emits the algorithm-tagged Base64 form accepted by current Swift middleware;
+/// historical middleware that accepts only raw hexadecimal SHA-1 is not
+/// supported. Use SHA-512 when the deployment requires it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TempUrlHashAlgorithm {
     /// HMAC-SHA-1.
@@ -103,7 +104,7 @@ impl TempUrlKey {
 impl Debug for TempUrlKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TempUrlKey")
-            .field("secret", &Redact::from(&self.secret))
+            .field("secret", &"***")
             .finish()
     }
 }
@@ -125,10 +126,11 @@ impl From<String> for TempUrlKey {
 /// This path is deliberately separate from [`crate::RequestSigner`]: an
 /// ordinary Swift request uses a Keystone `X-Auth-Token`, while a TempURL uses
 /// an account or container key and embeds the derived signature in the query
-/// string. The signer preserves the URI's scheme, authority, path, and existing
-/// query parameters. The signature covers the request method, the absolute
-/// expiration time, and the already-encoded URI path; it never covers the
-/// query string.
+/// string. The signer preserves the URI's scheme, authority, encoded path, and
+/// existing query parameters. The signature covers the request method, the
+/// absolute expiration time, and the URI path after decoding its percent escapes
+/// once, matching the decoded path Swift verifies; it never covers the query
+/// string.
 ///
 /// The resulting URL contains authentication material. Treat it as a secret and
 /// do not log or re-encode it.
@@ -155,9 +157,10 @@ impl TempUrlSigner {
 
     /// Create a TempURL for an object request.
     ///
-    /// `uri` must be the absolute, wire-ready object URL. Its path is signed
-    /// exactly as supplied, so callers must percent-encode path segments before
-    /// calling this method. Existing query parameters are preserved, but a URI
+    /// `uri` must be the absolute, wire-ready object URL. The outgoing URI keeps
+    /// its encoded path and query bytes and order. The HMAC input uses the path
+    /// after decoding percent escapes once, as Swift reconstructs it from the
+    /// decoded request path. Existing query parameters are preserved, but a URI
     /// that already contains a TempURL authentication parameter such as
     /// `temp_url_sig` is rejected. This method does not support prefix-based or
     /// IP-restricted TempURLs. Fractions of a second in `expires_in` are
@@ -202,7 +205,14 @@ impl TempUrlSigner {
         } else {
             uri.path()
         };
-        let message = format!("{}\n{}\n{}", method.as_str(), expires, path);
+        let expires = expires.to_string();
+        let mut message =
+            Vec::with_capacity(method.as_str().len() + expires.len() + path.len() + 2);
+        message.extend_from_slice(method.as_str().as_bytes());
+        message.push(b'\n');
+        message.extend_from_slice(expires.as_bytes());
+        message.push(b'\n');
+        message.extend(percent_decode_str(path));
 
         let provider = ctx.crypto_provider()?;
         let signature = match self.algorithm {
@@ -211,7 +221,7 @@ impl TempUrlSigner {
                 base64_encode(&hmac_sha1(
                     provider,
                     self.key.as_bytes(),
-                    message.as_bytes()
+                    message.as_slice()
                 )?)
             ),
             TempUrlHashAlgorithm::Sha256 => format!(
@@ -219,12 +229,12 @@ impl TempUrlSigner {
                 base64_encode(&hmac_sha256(
                     provider,
                     self.key.as_bytes(),
-                    message.as_bytes()
+                    message.as_slice()
                 )?)
             ),
             TempUrlHashAlgorithm::Sha512 => format!(
                 "sha512:{}",
-                base64_encode(&provider.hmac_sha512(self.key.as_bytes(), message.as_bytes())?)
+                base64_encode(&provider.hmac_sha512(self.key.as_bytes(), message.as_slice())?)
             ),
         };
         // Swift accepts an algorithm-prefixed base64 digest. Percent-encode the
@@ -260,17 +270,30 @@ fn expiration_from_now(expires_in: Duration) -> Result<i64> {
 fn validate_query(query: &str) -> Result<()> {
     for pair in query.split('&') {
         let name = pair.split_once('=').map_or(pair, |(name, _)| name);
+        let decoded_name = decode_query_name(name);
         if TEMP_URL_AUTH_PARAMETERS
             .iter()
-            .any(|parameter| name.eq_ignore_ascii_case(parameter))
+            .any(|parameter| decoded_name.eq_ignore_ascii_case(parameter))
         {
             return Err(Error::request_invalid(format!(
-                "request query already contains TempURL authentication parameter: {name}"
+                "request query already contains TempURL authentication parameter: {decoded_name}"
             )));
         }
     }
 
     Ok(())
+}
+
+fn decode_query_name(name: &str) -> String {
+    // Swift reads query names with Python's `parse_qs`, which turns `+` into a
+    // space and percent-decodes the remaining bytes before looking for TempURL
+    // fields.
+    let name = if name.contains('+') {
+        name.replace('+', " ")
+    } else {
+        name.to_string()
+    };
+    percent_decode_str(&name).decode_utf8_lossy().into_owned()
 }
 
 #[cfg(test)]
@@ -338,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn signs_wire_path_and_preserves_existing_query() {
+    fn signs_decoded_object_path_and_preserves_encoded_uri_and_query() {
         let signer = TempUrlSigner::new("mykey");
         let signed = signer
             .presign_with_expiration(
@@ -355,7 +378,33 @@ mod tests {
         assert_eq!(
             signed.query(),
             Some(
-                "filename=My+Test+File.pdf&temp_url_sig=sha256%3APvuzD4Kbm5iFj6n0Pm1grIs2dYFuyoOpSwBN0FHSQxY%3D&temp_url_expires=1700000000"
+                "filename=My+Test+File.pdf&temp_url_sig=sha256%3AN1ybkZKTxkt5pQaH2r6lX8RzFR8HjVSv378YTwy6L%2FE%3D&temp_url_expires=1700000000"
+            )
+        );
+    }
+
+    #[test]
+    fn decodes_percent_escapes_once_for_the_hmac() {
+        let signer = TempUrlSigner::new("mykey");
+        let signed = signer
+            .presign_with_expiration(
+                &ctx(),
+                &Method::PUT,
+                &uri(
+                    "https://swift.example.com/v1/AUTH_account/container/a%20b%E4%B8%AD%2520c?filename=My+Test+File.pdf&x=a%2Fb",
+                ),
+                1700000000,
+            )
+            .expect("presign must succeed");
+
+        assert_eq!(
+            signed.path(),
+            "/v1/AUTH_account/container/a%20b%E4%B8%AD%2520c"
+        );
+        assert_eq!(
+            signed.query(),
+            Some(
+                "filename=My+Test+File.pdf&x=a%2Fb&temp_url_sig=sha256%3ALrDgmPxe%2Bh5bP4djSP7wNH97lAuWLwVO6Vn46E2s1yw%3D&temp_url_expires=1700000000"
             )
         );
     }
@@ -400,15 +449,17 @@ mod tests {
         let signer = TempUrlSigner::new("mykey");
 
         for parameter in TEMP_URL_AUTH_PARAMETERS {
-            let uri = uri(&format!(
-                "https://swift.example.com/v1/AUTH_account/container/object?{parameter}=old"
-            ));
-            let error = signer
-                .presign_with_expiration(&ctx(), &Method::GET, &uri, 1512508563)
-                .expect_err("existing authentication must be rejected");
+            for name in [parameter.to_string(), parameter.replace('_', "%5F")] {
+                let uri = uri(&format!(
+                    "https://swift.example.com/v1/AUTH_account/container/object?{name}=old"
+                ));
+                let error = signer
+                    .presign_with_expiration(&ctx(), &Method::GET, &uri, 1512508563)
+                    .expect_err("existing authentication must be rejected");
 
-            assert_eq!(error.kind(), reqsign_core::ErrorKind::RequestInvalid);
-            assert!(error.to_string().contains(parameter));
+                assert_eq!(error.kind(), reqsign_core::ErrorKind::RequestInvalid);
+                assert!(error.to_string().contains(parameter));
+            }
         }
     }
 
@@ -493,14 +544,11 @@ mod tests {
     }
 
     #[test]
-    fn debug_output_redacts_the_key() {
-        let signer = TempUrlSigner::new(TempUrlKey::new("top-secret-tempurl-key"));
+    fn debug_output_uses_a_fixed_redaction_for_unicode_keys() {
+        let signer = TempUrlSigner::new(TempUrlKey::new("🔑🔑🔑🔑"));
 
         let debug = format!("{signer:?}");
-        assert!(
-            !debug.contains("top-secret-tempurl-key"),
-            "key leaked: {debug}"
-        );
+        assert!(!debug.contains("🔑"), "key leaked: {debug}");
         assert!(debug.contains("***"), "key must be redacted: {debug}");
     }
 

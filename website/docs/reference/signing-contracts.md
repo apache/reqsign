@@ -41,6 +41,11 @@ input, an already-encoded `%2F` would double-encode while a raw space got
 Exactly-once encoding, owned by the caller, removes the ambiguity: what you
 signed is what you send.
 
+Swift TempURL is a provider-specific exception. Its separate `presign` entry
+point keeps the caller's encoded path and query bytes in the outgoing URI, but
+uses the path after one percent-decoding step for the HMAC input, matching the
+decoded request path Swift verifies.
+
 ```rust
 // Object key: "reports/2026 Q1.csv" — encode once when building the URI:
 let uri = "https://s3.amazonaws.com/my-bucket/reports/2026%20Q1.csv";

@@ -65,8 +65,18 @@
 //! [`TempUrlSigner`] creates Swift TempURLs with an explicit account or
 //! container key. TempURL signing never uses the Keystone `X-Auth-Token` as its
 //! key and does not require a [`Signer`](reqsign_core::Signer). The signature
-//! covers the request method, the integer expiration time, and the encoded URI
-//! path. Existing non-auth query parameters are preserved.
+//! covers the request method, the integer expiration time, and the object path
+//! after decoding percent escapes once, matching Swift's decoded request path.
+//! The outgoing URI keeps its encoded path and query bytes and order. Existing
+//! non-auth query parameters are preserved, and existing TempURL authentication
+//! parameters are rejected even when their names are percent-encoded.
+//!
+//! Current Swift accepts the algorithm-tagged Base64 form emitted for SHA-1,
+//! SHA-256, and SHA-512, subject to the deployment's
+//! `tempurl.allowed_digests`. Historical middleware that accepts only raw
+//! hexadecimal SHA-1 is not supported. Swift also rebuilds the downstream query
+//! string and filters incoming headers according to its configuration, so
+//! arbitrary query or header forwarding through TempURL is not guaranteed.
 //!
 //! ```no_run
 //! use std::time::Duration;

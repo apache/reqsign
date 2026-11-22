@@ -89,8 +89,8 @@ states the exact semantics.
   [Credential freshness](/docs/reference/signing-contracts/#credential-freshness).
 - **Anyone with the URL is authorized.** Treat presigned URLs as secrets
   with a TTL: transmit over TLS, scope tightly, keep windows short.
-- **Never re-encode a presigned URI.** The signature covers the encoded
-  bytes; a second encoding pass breaks it. See
+- **Never re-encode a presigned URI.** The signature covers the provider-defined
+  wire representation; a second encoding pass breaks it. See
   [Wire-ready URIs](/docs/reference/signing-contracts/#wire-ready-uris).
 - **Tighter blast radius:** [grant a downscoped
   credential](/docs/guides/granting/) first and presign with that.

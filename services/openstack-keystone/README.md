@@ -119,11 +119,30 @@ let presigned = signer.presign(
 ```
 
 The signature covers the HTTP method, the absolute expiration time, and the
-already-encoded URI path. Existing non-auth query parameters are preserved, and
-no prefix-based or IP-restricted options are provided. SHA-256 is the default;
-SHA-1 is available for older clusters and SHA-512 when the deployment requires
-it. The selected algorithm must be in the cluster's `tempurl.allowed_digests`,
-and SHA-512 requires a `CryptoProvider` that implements `hmac_sha512`. See the
+object path after decoding its percent escapes once, matching the path Swift
+reconstructs from the decoded request. The outgoing URI keeps the caller's
+encoded path and query bytes and order. Existing non-auth query parameters are
+preserved, and a pre-existing TempURL authentication parameter is rejected even
+when its name is percent-encoded. No prefix-based or IP-restricted options are
+provided.
+
+### Compatibility
+
+The signer always emits algorithm-tagged Base64 (`sha1:`, `sha256:`, or
+`sha512:` followed by a standard Base64 digest), which current Swift middleware
+accepts. The selected algorithm must be present in the deployment's
+`tempurl.allowed_digests`; otherwise Swift rejects the URL. Current middleware
+defaults to all three, with SHA-1 deprecated, and deployments may restrict the
+list. A capability that exposes `tempurl` without `allowed_digests` belongs to
+the legacy raw-hex-only boundary, such as Swift 2.16, and is not supported even
+when SHA-1 is selected. SHA-512 requires a `CryptoProvider` that implements
+`hmac_sha512`.
+
+Swift's TempURL middleware rebuilds the downstream query string from its
+recognized TempURL fields and removes or filters incoming headers according to
+the deployment configuration. This client preserves the caller's outgoing
+query and headers, but arbitrary query components or headers are not guaranteed
+to reach the storage service through a TempURL. See the
 [OpenStack TempURL middleware documentation](https://docs.openstack.org/swift/latest/api/temporary_url_middleware.html).
 
 ## License
