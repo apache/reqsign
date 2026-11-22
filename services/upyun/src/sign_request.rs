@@ -32,6 +32,11 @@ const CONTENT_MD5: &str = "content-md5";
 /// inserts `Date` and `Authorization` and preserves the request path and query
 /// exactly as supplied by the caller.
 ///
+/// A credential scoped to a bucket is accepted only when the first segment of
+/// the wire path is that bucket. This check runs on every signature, including
+/// when [`Signer`](reqsign_core::Signer) reuses a cached credential. Explicit
+/// static credentials are unscoped unless the caller sets a bucket.
+///
 /// `expires_in` is ignored. Upyun validates the header signature for 30 minutes
 /// from the signed `Date`; the signer does not create presigned URLs or token
 /// credentials.
@@ -93,6 +98,18 @@ impl SignRequest for RequestSigner {
         let date = self.get_time().format_http_date();
 
         let mut signing_req = SigningRequest::build(req)?;
+        if let Some(bucket) = credential.bucket.as_deref() {
+            let path_bucket = signing_req
+                .path
+                .strip_prefix('/')
+                .and_then(|path| path.split('/').next());
+            if path_bucket != Some(bucket) {
+                return Err(Error::credential_invalid(
+                    "Upyun credential is scoped to a different bucket",
+                ));
+            }
+        }
+
         let content_md5 = match signing_req.headers.get(CONTENT_MD5) {
             Some(value) => {
                 let value = value.to_str().map_err(|e| {
@@ -202,6 +219,26 @@ mod tests {
         assert_eq!(
             req.headers[AUTHORIZATION],
             "UPYUN operator123:jrQiupCLfC0gKVOqBhCjrMTR1UQ="
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn signs_with_a_unicode_secret() -> anyhow::Result<()> {
+        let signer = RequestSigner::new().with_time(signing_time());
+        let credential = Credential::new("operator123", "密码密码密码");
+        let mut req = http::Request::get("https://v0.api.upyun.com/upyun-temp/unicode.txt")
+            .body(())?
+            .into_parts()
+            .0;
+
+        signer
+            .sign_request(&test_context(), &mut req, Some(&credential), None)
+            .await?;
+
+        assert_eq!(
+            req.headers[AUTHORIZATION],
+            "UPYUN operator123:/rFZWp4VVax46218SmJaVrVT9pE="
         );
         Ok(())
     }

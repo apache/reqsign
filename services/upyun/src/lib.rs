@@ -69,10 +69,11 @@
 //! - [`UpxConfigCredentialProvider`] reads a session from the Upyun CLI (`upx`)
 //!   configuration at `~/.upx.cfg`. The file is bucket-scoped; use
 //!   `UpxConfigCredentialProvider::with_bucket` to select the session for the
-//!   request's bucket.
+//!   request's bucket. The discovered credential carries that bucket, and the
+//!   signer rejects a request path for another bucket.
 //! - [`DefaultCredentialProvider`] uses the current Upyun CLI session by
 //!   default. The facade `default_signer(ctx, bucket)` pins discovery to the
-//!   request's bucket.
+//!   request's bucket, and the signer enforces the selected scope.
 
 mod credential;
 pub use credential::Credential;

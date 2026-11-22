@@ -57,7 +57,7 @@ let mut req = Request::put("https://v0.api.upyun.com/bucket/object.txt")
 
 ## Credential Sources
 
-`StaticCredentialProvider` uses an operator name and password supplied by the
+`StaticCredentialProvider` uses a operator name and password supplied by the
 caller.
 
 `UpxConfigCredentialProvider` reads the Upyun CLI (`upx`) configuration file
@@ -67,8 +67,10 @@ which is the CLI's current bucket session. Use `with_bucket` to select the
 session for a specific bucket: a matching current session is preferred, then
 the first session for that bucket is used. The file has no account or endpoint
 scope beyond the bucket. A missing file, no matching session, or an incomplete
-session returns no credential. Use `with_config_file` to isolate a different
-configuration file.
+session returns no credential. The discovered credential carries the session's
+bucket, and the signer rejects a request whose wire path does not start with
+that bucket, including when a cached credential is reused. Use
+`with_config_file` to isolate a different configuration file.
 
 `DefaultCredentialProvider` uses the Upyun CLI configuration by default. The
 facade `default_signer(ctx, bucket)` therefore selects the CLI session for the
@@ -85,6 +87,9 @@ let provider = DefaultCredentialProvider::new()
 ## Contract
 
 - Only header authentication is implemented. `expires_in` is ignored.
+- Discovered CLI credentials are scoped to their session bucket; a mismatch is
+  rejected on every signature, including cache hits.
+- Explicit static credentials are unscoped and keep the caller's chosen scope.
 - The signer signs the wire path without decoding or rebuilding it.
 - The signer does not calculate the body MD5 or construct requests.
 - Signing is atomic: on error, the request URI and headers remain unchanged.

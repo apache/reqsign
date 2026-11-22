@@ -17,7 +17,6 @@
 
 use reqsign_core::SigningCredential;
 use reqsign_core::time::Timestamp;
-use reqsign_core::utils::Redact;
 use std::fmt::{Debug, Formatter};
 
 /// Credential for Upyun.
@@ -27,34 +26,58 @@ pub struct Credential {
     pub operator: String,
     /// Upyun operator password.
     pub password: String,
+    /// Bucket this credential was discovered for.
+    ///
+    /// When set, the signer only accepts requests whose wire path starts with
+    /// this bucket. Explicit credentials created by [`Credential::new`] are
+    /// unscoped and can sign any bucket.
+    pub bucket: Option<String>,
 }
 
 impl Credential {
-    /// Create a new credential from a operator name and password.
+    /// Create a new unscoped credential from a operator name and password.
     pub fn new(operator: impl Into<String>, password: impl Into<String>) -> Self {
         Self {
             operator: operator.into(),
             password: password.into(),
+            bucket: None,
         }
+    }
+
+    /// Scope this credential to a bucket.
+    ///
+    /// The signer rejects a request when the first segment of its wire path is
+    /// not this bucket. Discovered Upyun CLI credentials are scoped to their
+    /// session's bucket; explicit static credentials are unscoped unless the
+    /// caller chooses a scope.
+    pub fn with_bucket(mut self, bucket: impl Into<String>) -> Self {
+        self.bucket = Some(bucket.into());
+        self
+    }
+
+    fn is_usable(&self) -> bool {
+        !self.operator.is_empty()
+            && !self.password.is_empty()
+            && self
+                .bucket
+                .as_deref()
+                .is_none_or(|bucket| !bucket.is_empty())
     }
 }
 
 impl Debug for Credential {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Credential")
-            .field("operator", &Redact::from(&self.operator))
-            .field("password", &Redact::from(&self.password))
-            .finish()
+        f.debug_struct("Credential").finish_non_exhaustive()
     }
 }
 
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
-        !self.operator.is_empty() && !self.password.is_empty()
+        self.is_usable()
     }
 
     fn is_valid_at(&self, _timestamp: Timestamp) -> bool {
-        !self.operator.is_empty() && !self.password.is_empty()
+        self.is_usable()
     }
 }
 
@@ -63,24 +86,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn redacts_secret_material() {
-        let credential = Credential::new("operator-example", "password-example");
+    fn debug_redacts_credentials_and_is_safe_for_unicode() {
+        for (operator, password) in [
+            ("fabricated-operator", "fabricated-password"),
+            ("密码操作员", "密码密码密码"),
+            ("🚀fabricated-operator", "🚀fabricated-password-value"),
+        ] {
+            let credential = Credential::new(operator, password);
 
-        let debug = format!("{credential:?}");
-        assert!(!debug.contains("operator-example"));
-        assert!(!debug.contains("password-example"));
+            let debug = format!("{credential:?}");
+            assert!(!debug.contains(operator));
+            assert!(!debug.contains(password));
+            assert!(debug.contains("Credential"));
+        }
     }
 
     #[test]
     fn requires_both_credential_fields() {
         assert!(!Credential::default().is_valid());
 
-        let credential = Credential::new("operator", "");
-        assert!(!credential.is_valid());
+        assert!(!Credential::new("operator", "").is_valid());
+        assert!(!Credential::new("", "password").is_valid());
+        assert!(Credential::new("密码操作员", "密码密码密码").is_valid());
+    }
 
-        let credential = Credential::new("", "password");
-        assert!(!credential.is_valid());
+    #[test]
+    fn rejects_an_empty_bucket_scope() {
+        let credential = Credential::new("operator", "password").with_bucket("");
 
-        assert!(Credential::new("operator", "password").is_valid());
+        assert!(!credential.is_valid());
+        assert!(!credential.is_valid_at(Timestamp::now()));
     }
 }

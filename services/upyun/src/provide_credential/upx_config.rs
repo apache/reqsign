@@ -44,6 +44,9 @@ const UPX_CONFIG_FILE: &str = "~/.upx.cfg";
 /// matching `upx switch`. This avoids signing for one bucket with the identity
 /// of a different bucket's session.
 ///
+/// The returned credential carries the selected session's bucket. The request
+/// signer enforces that scope on every signature, including cache hits.
+///
 /// A missing file, an unset or invalid active index, no matching bucket, and an
 /// incomplete session are treated as no credential. A file that exists but
 /// cannot be decoded or parsed is a configuration error.
@@ -141,15 +144,18 @@ impl ProvideCredential for UpxConfigCredentialProvider {
                 return Ok(None);
             };
 
-            if session.username.is_empty() || session.password.is_empty() {
+            if session.bucket.is_empty()
+                || session.username.is_empty()
+                || session.password.is_empty()
+            {
                 debug!("the selected upx session is incomplete");
                 return Ok(None);
             }
 
-            Ok(Some(Credential::new(
-                session.username.clone(),
-                session.password.clone(),
-            )))
+            Ok(Some(
+                Credential::new(session.username.clone(), session.password.clone())
+                    .with_bucket(session.bucket.clone()),
+            ))
         }
     }
 }
@@ -176,7 +182,7 @@ fn decode_upx_config(content: &[u8]) -> Result<Vec<u8>> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct UpxConfig {
     #[serde(default)]
     user_idx: Option<i64>,
@@ -185,7 +191,7 @@ struct UpxConfig {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct UpxSession {
     #[serde(default)]
     bucket: String,
@@ -251,6 +257,7 @@ mod tests {
 
         assert_eq!(credential.operator, "operator123");
         assert_eq!(credential.password, "password123");
+        assert_eq!(credential.bucket.as_deref(), Some("example-bucket"));
         Ok(())
     }
 
@@ -274,6 +281,7 @@ mod tests {
 
         assert_eq!(credential.operator, "second-operator");
         assert_eq!(credential.password, "second-password");
+        assert_eq!(credential.bucket.as_deref(), Some("second"));
         Ok(())
     }
 
@@ -297,6 +305,7 @@ mod tests {
                 .await?
                 .expect("the matching session must load");
             assert_eq!(credential.operator, expected);
+            assert_eq!(credential.bucket.as_deref(), Some(bucket));
         }
 
         let credential = UpxConfigCredentialProvider::new()

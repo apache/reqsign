@@ -96,7 +96,7 @@ async fn signer_loads_the_current_upx_session() -> anyhow::Result<()> {
         "user_idx": 1,
         "users": [
             {"bucket": "first", "username": "first-operator", "password": "first-password"},
-            {"bucket": "second", "username": "operator123", "password": "password123"}
+            {"bucket": "upyun-temp", "username": "operator123", "password": "password123"}
         ]
     }));
     let ctx = test_context().with_file_read(TestFileRead {
@@ -119,6 +119,77 @@ async fn signer_loads_the_current_upx_session() -> anyhow::Result<()> {
         req.headers[AUTHORIZATION],
         "UPYUN operator123:YUaAZX+WNAcJdNGHS5SBlITME5A="
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn static_credentials_are_not_bucket_scoped() -> anyhow::Result<()> {
+    let signer = Signer::new(
+        test_context(),
+        StaticCredentialProvider::new("operator123", "password123"),
+        RequestSigner::new().with_time(signing_time()),
+    );
+
+    for bucket in ["first", "second"] {
+        let mut req = Request::get(format!("https://v0.api.upyun.com/{bucket}/object.txt"))
+            .body(())?
+            .into_parts()
+            .0;
+        signer.sign(&mut req, None).await?;
+        assert!(
+            req.headers[AUTHORIZATION]
+                .to_str()?
+                .starts_with("UPYUN operator123:")
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn cached_upx_credential_is_scoped_to_its_bucket() -> anyhow::Result<()> {
+    let path = "/test/.upx.cfg";
+    let content = encode_upx_config(&serde_json::json!({
+        "user_idx": 0,
+        "users": [
+            {"bucket": "first", "username": "first-operator", "password": "first-password"},
+            {"bucket": "second", "username": "second-operator", "password": "second-password"}
+        ]
+    }));
+    let ctx = test_context().with_file_read(TestFileRead {
+        files: HashMap::from([(path.to_string(), content)]),
+    });
+    let signer = Signer::new(
+        ctx,
+        UpxConfigCredentialProvider::new()
+            .with_config_file(path)
+            .with_bucket("first"),
+        RequestSigner::new().with_time(signing_time()),
+    );
+
+    let mut first = Request::get("https://v0.api.upyun.com/first/object.txt")
+        .body(())?
+        .into_parts()
+        .0;
+    signer.sign(&mut first, None).await?;
+    assert!(
+        first.headers[AUTHORIZATION]
+            .to_str()?
+            .starts_with("UPYUN first-operator:")
+    );
+
+    let mut second = Request::get("https://v0.api.upyun.com/second/object.txt")
+        .body(())?
+        .into_parts()
+        .0;
+    let original = second.clone();
+    let err = signer
+        .sign(&mut second, None)
+        .await
+        .expect_err("a cached credential must not cross its bucket scope");
+
+    assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+    assert_eq!(second.uri, original.uri);
+    assert_eq!(second.headers, original.headers);
     Ok(())
 }
 

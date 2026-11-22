@@ -33,8 +33,10 @@ pub type DefaultSigner = Signer<Credential>;
 /// The default credential chain reads the Upyun CLI (`upx`) session for
 /// `bucket` from `~/.upx.cfg`. A matching current session is preferred; if the
 /// current session belongs to another bucket, the first session for `bucket`
-/// is selected. Use [`Signer::with_credential_provider`] to install explicit
-/// credentials or another source.
+/// is selected. The discovered credential carries the bucket scope, and the
+/// request signer rejects a path for another bucket, including after the
+/// credential is cached. Use [`Signer::with_credential_provider`] to install
+/// explicit credentials or another source.
 ///
 /// # Example
 ///
