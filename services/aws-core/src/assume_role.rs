@@ -29,6 +29,7 @@ use serde::Deserialize;
 
 use crate::Credential;
 use crate::constants::X_AMZ_CONTENT_SHA_256;
+use crate::provide_credential::sts_endpoint::StsEndpoint;
 use crate::provide_credential::utils::{parse_sts_error, partition_for_region, sts_endpoint};
 
 const MIN_DURATION_SECONDS: u32 = 900;
@@ -160,7 +161,7 @@ impl AssumeRoleGrant {
 /// [`crate::AssumeRoleCredentialProvider`].
 #[doc(hidden)]
 pub struct AssumeRoleOperation {
-    endpoint: String,
+    endpoint: StsEndpoint,
     parameters: String,
 }
 
@@ -181,6 +182,16 @@ impl AssumeRoleOperation {
     ) -> Result<Self> {
         let endpoint = endpoint.into();
         validate_sts_endpoint(&endpoint)?;
+        Self::with_endpoint(StsEndpoint::https(&endpoint), grant, duration_seconds)
+    }
+
+    /// Create a validated operation for an STS endpoint already resolved from explicit,
+    /// environment, or profile settings.
+    pub(crate) fn with_endpoint(
+        endpoint: StsEndpoint,
+        grant: &AssumeRoleGrant,
+        duration_seconds: Option<u32>,
+    ) -> Result<Self> {
         validate_duration_seconds(duration_seconds)?;
         grant.validate()?;
 
@@ -212,13 +223,13 @@ impl AssumeRoleOperation {
     /// Build the unsigned request shared by fixed and explicit-source flows.
     #[doc(hidden)]
     pub fn build_request(&self, provider: &dyn CryptoProvider) -> Result<http::Request<Bytes>> {
-        let get_uri = format!("https://{}/?{}", self.endpoint, self.parameters);
+        let get_uri = format!("{}?{}", self.endpoint.url(), self.parameters);
         let (method, uri, body) = if get_uri.len() <= MAX_GET_URI_LENGTH {
             (http::Method::GET, get_uri, Bytes::new())
         } else {
             (
                 http::Method::POST,
-                format!("https://{}/", self.endpoint),
+                self.endpoint.url(),
                 Bytes::from(self.parameters.clone()),
             )
         };

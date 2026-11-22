@@ -42,11 +42,13 @@ cargo add http anyhow
 | `aws` | AWS SigV4 (alias of `aws-v4`) |
 | `aws-v4a` | AWS SigV4a multi-region signing |
 | `azure` | Azure Storage |
+| `dropbox` | Dropbox |
 | `github` | GitHub.com |
 | `google` | Google Cloud |
 | `google-credential-access-boundary-client-side` | Client-side CAB downscoping (implies `google`) |
 | `aliyun` | Aliyun OSS |
 | `huaweicloud` | Huawei Cloud OBS |
+| `oauth2` | Shared OAuth 2.0 refresh-token grant |
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
 | `tencent` | Tencent COS |
@@ -104,6 +106,7 @@ composes that provider's own credential chain — the
 | [AWS SigV4](/docs/providers/aws-sigv4/) | `aws::default_signer(ctx, service, region)` |
 | [AWS SigV4a](/docs/providers/aws-sigv4a/) | `aws::v4a::default_signer(ctx, service, region_set)` |
 | [Azure Storage](/docs/providers/azure-storage/) | `azure::default_signer(ctx)` |
+| [Dropbox](/docs/providers/dropbox/) | `dropbox::default_signer(ctx)` |
 | [GitHub](/docs/providers/github/) | `github::default_signer(ctx)` |
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |

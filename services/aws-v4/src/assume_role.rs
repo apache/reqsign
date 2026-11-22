@@ -224,13 +224,14 @@ mod tests {
     use aws_credential_types::Credentials as AwsCredentials;
     use aws_sigv4::http_request::{
         PayloadChecksumKind, PercentEncodingMode, SignableBody, SignableRequest, SigningSettings,
+        UriPathNormalizationMode,
     };
     use aws_sigv4::sign::v4;
     use bytes::Bytes;
     use http::HeaderMap;
     use http::header::{AUTHORIZATION, CONTENT_TYPE, HeaderName};
     use reqsign_core::hash::hex_sha256;
-    use reqsign_core::{ErrorKind, Granter, HttpSend, ProvideCredential, Signer};
+    use reqsign_core::{ErrorKind, Granter, HttpSend, ProvideCredential, Signer, StaticEnv};
 
     use super::*;
     use crate::AssumeRoleCredentialProvider;
@@ -264,10 +265,19 @@ mod tests {
     }
 
     fn sign_with_aws_sdk(
-        mut request: http::Request<Bytes>,
+        request: http::Request<Bytes>,
         session_token: Option<&str>,
     ) -> http::Request<Bytes> {
+        sign_with_aws_sdk_path_mode(request, session_token, UriPathNormalizationMode::Enabled)
+    }
+
+    fn sign_with_aws_sdk_path_mode(
+        mut request: http::Request<Bytes>,
+        session_token: Option<&str>,
+        uri_path_normalization_mode: UriPathNormalizationMode,
+    ) -> http::Request<Bytes> {
         let mut settings = SigningSettings::default();
+        settings.uri_path_normalization_mode = uri_path_normalization_mode;
         settings.percent_encoding_mode = PercentEncodingMode::Double;
         settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         let identity = AwsCredentials::new(
@@ -908,6 +918,164 @@ mod tests {
             requests[0].uri.to_string(),
             "https://sts.amazonaws.com/?Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fcustomer-reader&Version=2011-06-15&RoleSessionName=reqsign&DurationSeconds=3600"
         );
+    }
+
+    #[tokio::test]
+    async fn fixed_provider_sends_to_the_configured_sts_endpoint() {
+        let expected_query = "?Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fcustomer-reader&Version=2011-06-15&RoleSessionName=reqsign&DurationSeconds=3600";
+        // (explicit endpoint, environment, expected request URL)
+        type EndpointCase<'a> = (Option<&'a str>, &'a [(&'a str, &'a str)], &'a str);
+        let cases: [EndpointCase<'_>; 3] = [
+            (
+                None,
+                &[("AWS_ENDPOINT_URL_STS", "http://sts.internal:8333")],
+                "http://sts.internal:8333/",
+            ),
+            (
+                Some("https://sts.example.com:8443"),
+                &[
+                    ("AWS_ENDPOINT_URL_STS", "http://sts.internal:8333"),
+                    ("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "true"),
+                ],
+                "https://sts.example.com:8443/",
+            ),
+            (
+                None,
+                &[
+                    ("AWS_ENDPOINT_URL", "http://sts.internal:8333"),
+                    ("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "true"),
+                ],
+                "https://sts.amazonaws.com/",
+            ),
+        ];
+        for (explicit, envs, expected) in cases {
+            let http = MockHttpSend::new([success_response("ASIAPROVIDERENDPT01")]);
+            let context = crate::test_context()
+                .with_http_send(http.clone())
+                .with_env(StaticEnv {
+                    home_dir: None,
+                    envs: envs
+                        .iter()
+                        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                        .collect(),
+                });
+            let (source, _) = FixedCredentialProvider::new(source_credential(None));
+            let mut provider = AssumeRoleCredentialProvider::new(
+                ROLE_ARN.to_string(),
+                Signer::new(
+                    context.clone(),
+                    source,
+                    RequestSigner::new("sts", REGION).with_time(signing_time()),
+                ),
+            );
+            if let Some(endpoint) = explicit {
+                provider = provider.with_sts_endpoint(endpoint);
+            }
+
+            provider
+                .provide_credential(&context)
+                .await
+                .expect("fixed provider must succeed")
+                .expect("fixed provider must return a credential");
+
+            let requests = http.requests();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(
+                requests[0].uri.to_string(),
+                format!("{expected}{expected_query}")
+            );
+            assert!(requests[0].headers.contains_key(AUTHORIZATION));
+        }
+    }
+
+    #[tokio::test]
+    async fn fixed_provider_keeps_repeated_trailing_slashes_in_the_signed_path() {
+        let http = MockHttpSend::new([success_response("ASIAPROVIDERSLASH01")]);
+        let context = crate::test_context().with_http_send(http.clone());
+        let (source, _) = FixedCredentialProvider::new(source_credential(None));
+        AssumeRoleCredentialProvider::new(
+            ROLE_ARN.to_string(),
+            Signer::new(
+                context.clone(),
+                source,
+                RequestSigner::new("sts", REGION).with_time(signing_time()),
+            ),
+        )
+        .with_sts_endpoint("https://gateway.example.com/sts//")
+        .provide_credential(&context)
+        .await
+        .expect("fixed provider must succeed")
+        .expect("fixed provider must return a credential");
+
+        let requests = http.requests();
+        let uri = "https://gateway.example.com/sts//?Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fcustomer-reader&Version=2011-06-15&RoleSessionName=reqsign&DurationSeconds=3600";
+        assert_eq!(requests[0].uri.to_string(), uri);
+        let unsigned = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(uri)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(
+                HeaderName::from_static("x-amz-content-sha256"),
+                crate::EMPTY_STRING_SHA256,
+            )
+            .body(Bytes::new())
+            .expect("request must build");
+        // Reqsign signs the path it sends, without normalizing it, so the canonical URI keeps
+        // `/sts//`: the AWS SDK agrees with its path normalization disabled.
+        assert_eq!(
+            requests[0].headers.get(AUTHORIZATION),
+            sign_with_aws_sdk_path_mode(unsigned, None, UriPathNormalizationMode::Disabled)
+                .headers()
+                .get(AUTHORIZATION),
+            "the sent path and the signed path must agree"
+        );
+    }
+
+    #[tokio::test]
+    async fn fixed_provider_signs_the_prefixed_path_for_its_signing_region() {
+        let http = MockHttpSend::new([success_response("ASIAPROVIDERPREFIX1")]);
+        let context = crate::test_context().with_http_send(http.clone());
+        let (source, _) = FixedCredentialProvider::new(source_credential(None));
+        AssumeRoleCredentialProvider::new(
+            ROLE_ARN.to_string(),
+            Signer::new(
+                context.clone(),
+                source,
+                RequestSigner::new("sts", REGION).with_time(signing_time()),
+            ),
+        )
+        .with_sts_endpoint("https://gateway.example.com:8443/sts")
+        .provide_credential(&context)
+        .await
+        .expect("fixed provider must succeed")
+        .expect("fixed provider must return a credential");
+
+        let requests = http.requests();
+        assert_eq!(requests.len(), 1);
+        let uri = "https://gateway.example.com:8443/sts/?Action=AssumeRole&RoleArn=arn%3Aaws%3Aiam%3A%3A123456789012%3Arole%2Fcustomer-reader&Version=2011-06-15&RoleSessionName=reqsign&DurationSeconds=3600";
+        assert_eq!(requests[0].uri.to_string(), uri);
+
+        // The AWS SDK, signing the same final path for the same region, agrees.
+        let unsigned = http::Request::builder()
+            .method(http::Method::GET)
+            .uri(uri)
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(
+                HeaderName::from_static("x-amz-content-sha256"),
+                crate::EMPTY_STRING_SHA256,
+            )
+            .body(Bytes::new())
+            .expect("request must build");
+        let sdk_request = sign_with_aws_sdk(unsigned, None);
+        assert_eq!(
+            requests[0].headers.get(AUTHORIZATION),
+            sdk_request.headers().get(AUTHORIZATION),
+            "the signature must cover /sts/ in {REGION}"
+        );
+        let authorization = requests[0].headers[AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be text");
+        assert!(authorization.contains("/us-east-1/sts/aws4_request"));
     }
 
     #[tokio::test]

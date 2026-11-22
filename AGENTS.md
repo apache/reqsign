@@ -3,8 +3,8 @@
 ## Project Overview
 
 Apache Reqsign — a Rust library for signing HTTP API requests across
-providers (AWS, Azure, GitHub, Google, Aliyun, Huawei, Tencent, Oracle,
-Volcengine).
+providers (AWS, Azure, Dropbox, GitHub, Google, Aliyun, Huawei, Tencent,
+Oracle, Volcengine).
 
 ## Architecture
 
@@ -80,15 +80,17 @@ servers checked into `services/aws-v4/tests/mocks/`.
 ## WASM Compatibility
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
-`aliyun`, `tencent`, `github`) must compile for `wasm32-unknown-unknown`. CI
-verifies this supported subset. GitHub environment, static, and anonymous
-signing need no JavaScript clock; GitHub CLI discovery still requires a
-`CommandExecute` adapter at runtime and is unavailable in bare WASM runtimes.
+`aliyun`, `tencent`, `oauth2`, `dropbox`, `github`) must compile for
+`wasm32-unknown-unknown`. CI verifies this supported subset. GitHub environment,
+static, and anonymous signing need no JavaScript clock; GitHub CLI discovery
+still requires a `CommandExecute` adapter at runtime and is unavailable in bare
+WASM runtimes.
 
 ## Versioning
 
 - Existing service crates and core share a lockstep major version (`3.0.0`).
-- `reqsign-github` starts an independent `1.0.0` version line.
+- `reqsign-oauth2`, `reqsign-dropbox`, and `reqsign-github` each start an
+  independent `1.0.0` version line.
 - `reqsign-http-send-reqwest` has its own major (`4.0.0`).
 - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
   version lines, starting at `1.0.0`.

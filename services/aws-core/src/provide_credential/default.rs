@@ -149,10 +149,13 @@ impl DefaultCredentialProviderBuilder {
 
     /// Select the AWS profile used by all profile-aware provider slots.
     ///
-    /// The explicit profile is applied to the shared profile, SSO, and process
-    /// providers that are still enabled. Other settings on those providers are
-    /// preserved, and slots removed with `no_profile()`, `no_sso()`, or
-    /// `no_process()` remain removed.
+    /// The explicit profile is applied to the shared profile, SSO, process, and
+    /// web identity providers that are still enabled. For web identity it selects
+    /// the profile whose STS endpoint settings apply. Other settings on those
+    /// providers are preserved, and slots removed with `no_profile()`, `no_sso()`,
+    /// `no_process()`, or `no_web_identity()` remain removed. `no_profile()` removes
+    /// only the profile credential source: the web identity provider still reads the
+    /// selected profile's endpoint settings.
     ///
     /// An explicitly selected profile takes precedence over `AWS_PROFILE`.
     /// Slot-level methods called after this method can still replace or remove
@@ -162,6 +165,9 @@ impl DefaultCredentialProviderBuilder {
 
         self.profile = self
             .profile
+            .map(|provider| provider.with_profile(profile.clone()));
+        self.web_identity = self
+            .web_identity
             .map(|provider| provider.with_profile(profile.clone()));
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -753,6 +759,37 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_with_profile_selects_the_web_identity_endpoint_profile() {
+        let selected = |builder: DefaultCredentialProviderBuilder| {
+            format!(
+                "{:?}",
+                builder
+                    .web_identity
+                    .expect("web identity slot must remain enabled")
+            )
+        };
+
+        // `no_profile()` removes only the profile credential source.
+        let builder = DefaultCredentialProvider::builder()
+            .no_profile()
+            .with_profile("prod");
+        assert!(builder.profile.is_none());
+        assert!(selected(builder).contains(r#"profile: Some("prod")"#));
+
+        // A later slot replacement still wins.
+        let builder = DefaultCredentialProvider::builder()
+            .with_profile("prod")
+            .web_identity(AssumeRoleWithWebIdentityCredentialProvider::new());
+        assert!(selected(builder).contains("profile: None"));
+
+        // A removed slot stays removed.
+        let builder = DefaultCredentialProvider::builder()
+            .no_web_identity()
+            .with_profile("prod");
+        assert!(builder.web_identity.is_none());
     }
 
     #[test]
