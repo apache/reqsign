@@ -59,6 +59,7 @@ reqsign-tencent-cos = { workspace = true, optional = true }
 reqsign-upyun = { workspace = true, optional = true }
 reqsign-vercel = { workspace = true, optional = true }
 reqsign-volcengine-tos = { workspace = true, optional = true }
+reqsign-yandex-disk = { workspace = true, optional = true }
 
 # Context implementations (optional but included by default)
 reqsign-command-execute-tokio = { workspace = true, optional = true }
@@ -100,6 +101,7 @@ tencent = ["dep:reqsign-tencent-cos"]
 upyun = ["dep:reqsign-upyun"]
 vercel = ["dep:reqsign-vercel"]
 volcengine = ["dep:reqsign-volcengine-tos"]
+yandex-disk = ["dep:reqsign-yandex-disk"]
 
 # Full feature set
 full = [
@@ -124,6 +126,7 @@ full = [
   "upyun",
   "vercel",
   "volcengine",
+  "yandex-disk",
 ]
 
 [dev-dependencies]

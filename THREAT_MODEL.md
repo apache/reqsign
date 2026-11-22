@@ -387,6 +387,17 @@ prepended provider, fails instead of falling through to another identity. Each
 signed `Authorization` header is marked sensitive, and forwarding it to a
 different host is the caller's responsibility.
 
+The Yandex Disk provider reads no environment variable, CLI token store, or
+well-known credential file: Yandex documents no automatic token source. Its
+default provider yields no credential until the caller supplies an explicit
+`StaticCredentialProvider` or another `ProvideCredential`. A supplied token is
+an opaque value validated as non-empty visible ASCII, and signing inserts a
+sensitive `Authorization: OAuth` header without changing the URI or any other
+header. The caller owns the API host, version, resource path, query parameters,
+and upload or download URLs. Reqsign does not implement Yandex OAuth token
+issuance, refresh, or revocation, and forwarding a signed header to a different
+host is the caller's responsibility.
+
 If a trusted caller configures a malicious file path, command, environment
 implementation, metadata endpoint, HTTP client, or custom provider, using that
 source is caller responsibility. If Reqsign ignores explicit source removal,

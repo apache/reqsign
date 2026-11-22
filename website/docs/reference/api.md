@@ -60,6 +60,7 @@ rustdoc owns signatures.
 - [`reqsign-upyun`](https://docs.rs/reqsign-upyun)
 - [`reqsign-vercel`](https://docs.rs/reqsign-vercel)
 - [`reqsign-volcengine-tos`](https://docs.rs/reqsign-volcengine-tos)
+- [`reqsign-yandex-disk`](https://docs.rs/reqsign-yandex-disk)
 
 ## Shared token support
 

@@ -60,6 +60,7 @@ cargo add http anyhow
 | `upyun` | Upyun |
 | `vercel` | Vercel Blob and Artifacts |
 | `volcengine` | Volcengine TOS |
+| `yandex-disk` | Yandex Disk |
 | `full` | Everything above |
 
 The default features include `default-context`, which wires a ready-to-use
@@ -130,6 +131,7 @@ composes that provider's own credential chain — the
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |
 | [Upyun](/docs/providers/upyun/) | `upyun::default_signer(ctx, bucket)` |
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
+| [Yandex Disk](/docs/providers/yandex-disk/) | `yandex_disk::default_signer(ctx, access_token)` |
 
 Aliyun Drive has no documented ambient source; replace its default provider
 with a static access token or refresh-token provider. OneDrive's default chain

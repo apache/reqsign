@@ -1,0 +1,89 @@
+---
+title: Yandex Disk
+description: OAuth access-token signing for the Yandex Disk REST API.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="yandex-disk" />
+
+## Get started
+
+```bash
+cargo add reqsign --features yandex-disk
+```
+
+```rust
+use reqsign::{default_context, yandex_disk};
+
+// Yandex Disk has no documented automatic token source.
+let ctx = default_context();
+let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
+
+let mut req = http::Request::get(
+    "https://cloud-api.yandex.net/v1/disk/resources?path=disk%3A%2Ffolder%2Ffile",
+)
+.body(())
+.unwrap()
+.into_parts()
+.0;
+
+// Adds Authorization: OAuth <token> and leaves the URI unchanged.
+signer.sign(&mut req, None).await?;
+```
+
+The [Yandex Disk REST API](https://yandex.ru/dev/yandex-360/disk/rest/en/concepts/quickstart)
+authenticates requests with `Authorization: OAuth <access token>`. The token
+is issued by Yandex OAuth to an app for a specific user's Disk.
+
+Yandex documents no environment variable, CLI token store, or well-known
+credential file for these tokens, so Reqsign does not infer one.
+`default_signer` therefore takes the token explicitly, and
+`DefaultCredentialProvider::new()` has an empty automatic chain. Compose
+`StaticCredentialProvider` with `push_front`, or supply a dynamic
+`ProvideCredential` when the token rotates:
+
+```rust
+use reqsign::{Context, Signer};
+use reqsign::yandex_disk::{RequestSigner, StaticCredentialProvider};
+
+let provider = StaticCredentialProvider::new("yandex-disk-oauth-token");
+let signer = Signer::new(ctx, provider, RequestSigner);
+```
+
+Token issuance, refresh, revocation, and the permissions attached to the OAuth
+app stay with the caller. Reqsign does not implement authorization-code,
+device, or interactive flows. A static token without an expiry is cached for
+the signer's lifetime; use `StaticCredentialProvider::with_expires_at` when the
+token has a known fixed lifetime, or a dynamic `ProvideCredential` that returns
+a fresh credential with an expiry when the token rotates.
+
+## Request ownership
+
+The caller owns the API host, API version, resource path, query parameters,
+`Accept` and `Content-Type` headers, and any upload or download URL returned by
+Yandex Disk. The signer inserts a sensitive `Authorization` header and
+preserves the URI and every other header. There is no query authentication, so
+signing rejects `expires_in`.
+
+<ProviderDetails id="yandex-disk" />

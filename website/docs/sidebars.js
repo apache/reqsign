@@ -56,6 +56,7 @@ module.exports = {
         "providers/openstack-keystone",
         "providers/dropbox",
         "providers/onedrive",
+        "providers/yandex-disk",
       ],
     },
     {

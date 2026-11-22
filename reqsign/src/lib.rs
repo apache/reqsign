@@ -90,6 +90,9 @@ pub mod vercel;
 #[cfg(feature = "volcengine")]
 pub mod volcengine;
 
+#[cfg(feature = "yandex-disk")]
+pub mod yandex_disk;
+
 #[cfg(all(test, feature = "aws-v4"))]
 mod tests {
     use crate::crypto::CryptoProvider;

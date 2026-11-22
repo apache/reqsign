@@ -217,6 +217,16 @@ let blob_signer = vercel::default_blob_signer(ctx.clone());
 let artifacts_signer = vercel::default_artifacts_signer(ctx);
 ```
 
+#### Yandex Disk
+
+```rust
+use reqsign::{default_context, yandex_disk};
+
+// Yandex Disk has no documented automatic token source; pass the OAuth token explicitly.
+let ctx = default_context();
+let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
+```
+
 ## Features
 
 - Pure Rust with minimal dependencies.
@@ -243,6 +253,7 @@ let artifacts_signer = vercel::default_artifacts_signer(ctx);
   - Upyun: `reqsign-upyun`
   - Vercel Blob and Artifacts: `reqsign-vercel`
   - Volcengine TOS: `reqsign-volcengine-tos`
+  - Yandex Disk: `reqsign-yandex-disk`
 
 ## Contributing
 

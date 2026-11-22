@@ -106,7 +106,7 @@ signer and credential type determine how the duration is interpreted.
 | Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs), Huawei Cloud OBS |
 | Bounds credential validity; header signing regardless | Oracle Cloud |
 | Ignored; header signing always uses the current `Date` | Upyun |
-| Rejected; header authentication only | Aliyun Drive, Cloudflare |
+| Rejected; header authentication only | Aliyun Drive, Cloudflare, Yandex Disk |
 | Rejected; header signing only | Vercel Blob, Vercel Artifacts |
 | Requests a granted credential's validity window | Granting operations (subject to the operation's own maximum) |
 

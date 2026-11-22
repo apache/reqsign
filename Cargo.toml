@@ -54,6 +54,7 @@ reqsign-tencent-cos = { version = "3.1.0", path = "services/tencent-cos" }
 reqsign-upyun = { version = "1.0.0", path = "services/upyun" }
 reqsign-vercel = { version = "1.0.0", path = "services/vercel" }
 reqsign-volcengine-tos = { version = "3.2.0", path = "services/volcengine-tos" }
+reqsign-yandex-disk = { version = "1.0.0", path = "services/yandex-disk" }
 
 # Crates.io dependencies
 anyhow = "1"
