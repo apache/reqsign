@@ -939,6 +939,11 @@
           "id": "keystone",
           "label": "Keystone password credentials",
           "provider": "KeystoneCredentialProvider"
+        },
+        {
+          "id": "static",
+          "label": "Pre-issued token",
+          "provider": "StaticCredentialProvider"
         }
       ],
       "credential_provider_crate": "reqsign-openstack-keystone"
