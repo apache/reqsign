@@ -59,12 +59,47 @@
 //! pre-issued tokens, and endpoint lookup from the catalog are available through
 //! [`KeystoneCredentialProvider`], [`StaticCredentialProvider`], and
 //! [`Credential::endpoint_in_region`].
+//!
+//! ## Swift TempURL
+//!
+//! [`TempUrlSigner`] creates Swift TempURLs with an explicit account or
+//! container key. TempURL signing never uses the Keystone `X-Auth-Token` as its
+//! key and does not require a [`Signer`](reqsign_core::Signer). The signature
+//! covers the request method, the integer expiration time, and the encoded URI
+//! path. Existing non-auth query parameters are preserved.
+//!
+//! ```no_run
+//! use std::time::Duration;
+//!
+//! use reqsign_core::{Context, Result};
+//! use reqsign_crypto_rustcrypto::RustCryptoProvider;
+//! use reqsign_openstack_keystone::TempUrlSigner;
+//!
+//! # fn main() -> Result<()> {
+//! let ctx = Context::new().with_crypto(RustCryptoProvider::new());
+//! let signer = TempUrlSigner::new("account-tempurl-key");
+//! let uri = "https://swift.example.com/v1/AUTH_test/container/object"
+//!     .parse()
+//!     .unwrap();
+//! let presigned = signer.presign(
+//!     &ctx,
+//!     &http::Method::GET,
+//!     &uri,
+//!     Duration::from_secs(3600),
+//! )?;
+//! # let _ = presigned;
+//! # Ok(())
+//! # }
+//! ```
 
 mod credential;
 pub use credential::{CatalogEntry, Credential, Endpoint};
 
 mod sign_request;
 pub use sign_request::RequestSigner;
+
+mod temp_url;
+pub use temp_url::{TempUrlHashAlgorithm, TempUrlKey, TempUrlSigner};
 
 mod provide_credential;
 pub use provide_credential::{

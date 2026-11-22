@@ -86,6 +86,46 @@ and `OS_PASSWORD` for password authentication, plus the optional
 explicit credentials. `Credential::endpoint_in_region` looks up a service
 endpoint from the returned catalog.
 
+## Swift TempURL
+
+Ordinary Swift requests are signed with the Keystone `X-Auth-Token`. TempURL
+presigning is a separate path: it uses the account or container key configured
+through `X-Account-Meta-Temp-URL-Key` or `X-Container-Meta-Temp-URL-Key`, never
+the identity token.
+
+```rust,no_run
+use std::time::Duration;
+
+use reqsign_core::{Context, Result};
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
+use reqsign_openstack_keystone::{TempUrlHashAlgorithm, TempUrlSigner};
+
+# fn main() -> Result<()> {
+let ctx = Context::new().with_crypto(RustCryptoProvider::new());
+let signer = TempUrlSigner::new("account-tempurl-key")
+    .with_algorithm(TempUrlHashAlgorithm::Sha256);
+let uri = "https://swift.example.com/v1/AUTH_test/container/object"
+    .parse()
+    .unwrap();
+let presigned = signer.presign(
+    &ctx,
+    &http::Method::GET,
+    &uri,
+    Duration::from_secs(3600),
+)?;
+# let _ = presigned;
+# Ok(())
+# }
+```
+
+The signature covers the HTTP method, the absolute expiration time, and the
+already-encoded URI path. Existing non-auth query parameters are preserved, and
+no prefix-based or IP-restricted options are provided. SHA-256 is the default;
+SHA-1 is available for older clusters and SHA-512 when the deployment requires
+it. The selected algorithm must be in the cluster's `tempurl.allowed_digests`,
+and SHA-512 requires a `CryptoProvider` that implements `hmac_sha512`. See the
+[OpenStack TempURL middleware documentation](https://docs.openstack.org/swift/latest/api/temporary_url_middleware.html).
+
 ## License
 
 Licensed under [Apache License, Version 2.0](./LICENSE).

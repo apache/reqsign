@@ -53,6 +53,12 @@ For AWS this produces `X-Amz-Algorithm`, `X-Amz-Credential`,
 Other providers use their own parameter sets; the shape of the call is
 identical.
 
+OpenStack Swift TempURL is the exception: it signs with a separate account or
+container key rather than the Keystone credential. Use
+`reqsign::openstack::TempUrlSigner` instead of the default signer; see the
+[OpenStack provider](/docs/providers/openstack-keystone/#swift-tempurl) for the
+key, algorithm, and canonical-path contract.
+
 ## `expires_in` is service-specific
 
 Passing `Some(duration)` does **not** universally mean "presign" — the

@@ -18,7 +18,8 @@
 //! OpenStack Keystone service support with convenience APIs
 //!
 //! This module provides OpenStack Keystone authentication functionality along
-//! with convenience functions for common use cases.
+//! with convenience functions for common use cases. Swift TempURL presigning
+//! uses [`TempUrlSigner`] separately from the default `X-Auth-Token` signer.
 
 // Re-export all OpenStack Keystone types
 pub use reqsign_openstack_keystone::*;

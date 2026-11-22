@@ -1,6 +1,6 @@
 ---
 title: OpenStack Keystone
-description: Keystone v3 token authentication and X-Auth-Token signing for OpenStack services.
+description: Keystone v3 token authentication, X-Auth-Token signing, and Swift TempURL presigning for OpenStack services.
 ---
 
 {/*
@@ -67,5 +67,38 @@ accepts an explicit token and optional catalog metadata. Install it directly or
 prepend it with `DefaultCredentialProvider::push_front`, and use
 `DefaultCredentialProvider::builder().no_env()` to remove both environment
 sources together.
+
+## Swift TempURL
+
+TempURL presigning is separate from `X-Auth-Token` request signing. It uses the
+account or container key configured through `X-Account-Meta-Temp-URL-Key` or
+`X-Container-Meta-Temp-URL-Key`; it never uses a Keystone identity token as the
+key.
+
+```rust
+use std::time::Duration;
+
+use reqsign::{default_context, openstack};
+
+let ctx = default_context();
+let signer = openstack::TempUrlSigner::new("account-tempurl-key")
+    .with_algorithm(openstack::TempUrlHashAlgorithm::Sha256);
+let uri = "https://swift.example.com/v1/AUTH_test/container/object"
+    .parse()?;
+let presigned = signer.presign(
+    &ctx,
+    &http::Method::GET,
+    &uri,
+    Duration::from_secs(3600),
+)?;
+```
+
+The signature covers the method, the absolute expiration time, and the
+already-encoded URI path. Existing non-auth query parameters are preserved. The
+provider supports `sha1:`, `sha256:`, and `sha512:` HMAC tags with base64
+digests; SHA-256 is the default. The selected digest must be in the cluster's
+`tempurl.allowed_digests`, and SHA-512 requires a `CryptoProvider` that
+implements `hmac_sha512`. Prefix-based and IP-restricted TempURLs are not
+provided.
 
 <ProviderDetails id="openstack-keystone" />
