@@ -34,6 +34,9 @@ impl StaticCredentialProvider {
     }
 
     /// Create a provider for a static SAS token with unknown expiration.
+    ///
+    /// A single leading `?`, as commonly present when copying a SAS URL, is
+    /// accepted and removed.
     pub fn new_sas_token(sas_token: &str) -> Self {
         Self {
             credential: Credential::with_sas_token(sas_token),
@@ -41,6 +44,9 @@ impl StaticCredentialProvider {
     }
 
     /// Create a provider for a static SAS token with an absolute expiration.
+    ///
+    /// Like [`StaticCredentialProvider::new_sas_token`], the token may start
+    /// with a single `?`.
     pub fn new_sas_token_expires_at(sas_token: &str, expires_at: Timestamp) -> Self {
         Self {
             credential: Credential::with_sas_token_expires_at(sas_token, expires_at),

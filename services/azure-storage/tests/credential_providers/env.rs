@@ -67,9 +67,7 @@ async fn test_env_provider_sas_token() -> anyhow::Result<()> {
 
     assert_env_provider(HashMap::from([(
         "AZURE_STORAGE_SAS_TOKEN".to_string(),
-        required_env("REQSIGN_AZURE_STORAGE_SAS_TOKEN")
-            .trim_start_matches('?')
-            .to_string(),
+        required_env("REQSIGN_AZURE_STORAGE_SAS_TOKEN"),
     )]))
     .await
 }
