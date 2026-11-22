@@ -132,7 +132,7 @@ jobs:
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,koofr,onedrive,upyun,seafile,vercel,yandex-disk
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,baidu-netdisk,cloudflare,tencent,dropbox,github,http-message-signatures,koofr,onedrive,upyun,seafile,vercel,yandex-disk
 
   # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
   wasm_compat:

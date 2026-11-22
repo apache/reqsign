@@ -47,18 +47,13 @@ async fn signer_appends_a_form_encoded_access_token() {
     let mut parts = request("https://pan.baidu.com/rest/2.0/xpan/file");
     let original_headers = parts.headers.clone();
 
-    signer("token+/=")
+    signer("fabricated token")
         .sign(&mut parts, None)
         .await
         .expect("signing must succeed");
 
     let query = parts.uri.query().expect("query must be present");
-    assert_eq!(
-        vec![("access_token".to_string(), "token+/=".to_string())],
-        form_urlencoded::parse(query.as_bytes())
-            .into_owned()
-            .collect::<Vec<_>>()
-    );
+    assert_eq!("access_token=fabricated+token", query);
     assert_eq!(original_headers, parts.headers);
 }
 

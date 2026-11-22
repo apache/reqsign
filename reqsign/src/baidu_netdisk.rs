@@ -38,6 +38,7 @@ pub type DefaultSigner = Signer<Credential>;
 /// # Example
 ///
 /// ```no_run
+/// # #[cfg(feature = "default-context")]
 /// # async fn example() -> reqsign_core::Result<()> {
 /// let ctx = reqsign::default_context();
 /// let signer = reqsign::baidu_netdisk::default_signer(ctx, "baidu-netdisk-access-token");
