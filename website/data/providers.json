@@ -926,7 +926,7 @@
       "request_auth": {
         "header": true,
         "query": false,
-        "notes": "Signs the method, wire path, Date, and an optional Content-MD5 header; expires_in is not interpreted. Discovered CLI credentials are scoped to their session bucket and rejected on a path mismatch, including cache hits."
+        "notes": "Signs the method, wire path, Date, and an optional Content-MD5 header; expires_in is not interpreted. Discovered CLI credentials require the first segment of the request's wire path to exactly equal the CLI session bucket on every signature, including cache hits. This is a local request-target check, not a server-side path-rewrite claim."
       },
       "credential_granting": [],
       "wasm": {
@@ -935,7 +935,7 @@
       },
       "integration_tests": {
         "level": "mock",
-        "notes": "First-party signing vectors, bucket-scoped Upyun CLI session selection, cache-hit bucket rejection, and fail-closed crypto run offline; no live-service test is defined.",
+        "notes": "First-party signing vectors, exact CLI session-bucket matching on the first wire-path segment, cache-hit bucket rejection, and fail-closed crypto run offline; no live-service test is defined.",
         "refs": [
           "services/upyun/tests"
         ]

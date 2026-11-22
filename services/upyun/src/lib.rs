@@ -25,10 +25,12 @@
 //! base64(HMAC-SHA1(MD5(password), METHOD&URI&DATE[&CONTENT-MD5]))
 //! ```
 //!
-//! `RequestSigner` signs the wire request path and includes `Content-MD5` when
-//! the caller already added it to the request. It does not construct requests,
-//! choose endpoints, sign query-string authentication, or send anything over
-//! the network.
+//! `RequestSigner` signs the request's wire path and includes `Content-MD5`
+//! when the caller already added it to the request. The signed URI is the wire
+//! path exactly as supplied: the signer does not decode, normalize, or rebuild
+//! it, and makes no claim about server-side path rewriting. It does not
+//! construct requests, choose endpoints, sign query-string authentication, or
+//! send anything over the network.
 //!
 //! ## Crypto
 //!
@@ -69,8 +71,9 @@
 //! - [`UpxConfigCredentialProvider`] reads a session from the Upyun CLI (`upx`)
 //!   configuration at `~/.upx.cfg`. The file is bucket-scoped; use
 //!   `UpxConfigCredentialProvider::with_bucket` to select the session for the
-//!   request's bucket. The discovered credential carries that bucket, and the
-//!   signer rejects a request path for another bucket.
+//!   request's bucket. The discovered credential carries that bucket, and every
+//!   signature requires the first segment of the request's wire path to exactly
+//!   equal that bucket.
 //! - [`DefaultCredentialProvider`] uses the current Upyun CLI session by
 //!   default. The facade `default_signer(ctx, bucket)` pins discovery to the
 //!   request's bucket, and the signer enforces the selected scope.

@@ -20,7 +20,7 @@ use http::HeaderValue;
 use http::header::{AUTHORIZATION, DATE};
 use reqsign_core::hash::base64_encode;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Error, Result, SignRequest, SigningRequest};
+use reqsign_core::{Context, Error, Result, SignRequest, SigningCredential, SigningRequest};
 use std::time::Duration;
 
 const CONTENT_MD5: &str = "content-md5";
@@ -33,9 +33,14 @@ const CONTENT_MD5: &str = "content-md5";
 /// exactly as supplied by the caller.
 ///
 /// A credential scoped to a bucket is accepted only when the first segment of
-/// the wire path is that bucket. This check runs on every signature, including
-/// when [`Signer`](reqsign_core::Signer) reuses a cached credential. Explicit
-/// static credentials are unscoped unless the caller sets a bucket.
+/// the request's wire path exactly equals that bucket. This check runs on every
+/// signature, including when [`Signer`](reqsign_core::Signer) reuses a cached
+/// credential. Explicit static credentials are unscoped unless the caller sets
+/// a bucket.
+///
+/// The signed URI is the wire path exactly as supplied. The signer does not
+/// decode, normalize, or rebuild it, and makes no claim about path rewriting by
+/// a proxy or server.
 ///
 /// `expires_in` is ignored. Upyun validates the header signature for 30 minutes
 /// from the signed `Date`; the signer does not create presigned URLs or token
@@ -65,6 +70,14 @@ impl RequestSigner {
     fn get_time(&self) -> Timestamp {
         self.time.unwrap_or_else(Timestamp::now)
     }
+
+    fn required_valid_until_at(
+        &self,
+        signing_time: Timestamp,
+        expires_in: Option<Duration>,
+    ) -> Timestamp {
+        signing_time + expires_in.unwrap_or_default()
+    }
 }
 
 impl SignRequest for RequestSigner {
@@ -75,7 +88,7 @@ impl SignRequest for RequestSigner {
         _credential: &Self::Credential,
         expires_in: Option<Duration>,
     ) -> Timestamp {
-        self.get_time() + expires_in.unwrap_or_default()
+        self.required_valid_until_at(self.get_time(), expires_in)
     }
 
     async fn sign_request(
@@ -83,7 +96,7 @@ impl SignRequest for RequestSigner {
         ctx: &Context,
         req: &mut http::request::Parts,
         credential: Option<&Self::Credential>,
-        _expires_in: Option<Duration>,
+        expires_in: Option<Duration>,
     ) -> Result<()> {
         let Some(credential) = credential else {
             return Ok(());
@@ -94,8 +107,15 @@ impl SignRequest for RequestSigner {
             ));
         }
 
+        let signing_time = self.get_time();
+        if !credential.is_valid_at(self.required_valid_until_at(signing_time, expires_in)) {
+            return Err(Error::credential_invalid(
+                "Upyun credential is not valid for the requested signing operation",
+            ));
+        }
+
         let provider = ctx.crypto_provider()?;
-        let date = self.get_time().format_http_date();
+        let date = signing_time.format_http_date();
 
         let mut signing_req = SigningRequest::build(req)?;
         if let Some(bucket) = credential.bucket.as_deref() {
@@ -240,6 +260,32 @@ mod tests {
             req.headers[AUTHORIZATION],
             "UPYUN operator123:/rFZWp4VVax46218SmJaVrVT9pE="
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_credentials_before_signing() -> anyhow::Result<()> {
+        let signer = RequestSigner::new().with_time(signing_time());
+
+        for credential in [
+            Credential::default(),
+            Credential::new("operator123", "password123").with_bucket(""),
+        ] {
+            let mut req = http::Request::get("https://v0.api.upyun.com/")
+                .body(())?
+                .into_parts()
+                .0;
+            let original = req.clone();
+
+            let err = signer
+                .sign_request(&Context::new(), &mut req, Some(&credential), None)
+                .await
+                .expect_err("invalid credentials must not reach signing");
+
+            assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+            assert_eq!(req.uri, original.uri);
+            assert_eq!(req.headers, original.headers);
+        }
         Ok(())
     }
 

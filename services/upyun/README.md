@@ -4,8 +4,10 @@ Upyun REST API request signing implementation for reqsign.
 
 The signer adds the Upyun `Date` and `Authorization` headers. The signature
 covers the request method, wire path, `Date`, and the `Content-MD5` header when
-the caller already set it. Request construction, bucket selection, endpoint
-selection, and transport remain with the caller.
+the caller already set it. The signed URI is the request's wire path exactly as
+supplied: the signer does not decode, normalize, or rebuild it, and makes no
+claim about path rewriting by a proxy or server. Request construction, bucket
+selection, endpoint selection, and transport remain with the caller.
 
 > Signing needs a `CryptoProvider` resolved through the `Context`: bind one with
 > `Context::with_crypto`, install a process-wide default, or use a facade
@@ -67,9 +69,11 @@ which is the CLI's current bucket session. Use `with_bucket` to select the
 session for a specific bucket: a matching current session is preferred, then
 the first session for that bucket is used. The file has no account or endpoint
 scope beyond the bucket. A missing file, no matching session, or an incomplete
-session returns no credential. The discovered credential carries the session's
-bucket, and the signer rejects a request whose wire path does not start with
-that bucket, including when a cached credential is reused. Use
+session returns no credential. The discovered credential carries the selected
+session's bucket. For every signature, the first segment of the request's wire
+path must exactly equal that CLI session bucket; otherwise signing fails,
+including when a cached credential is reused. This is a local check of the
+request target and does not assume server-side path rewriting. Use
 `with_config_file` to isolate a different configuration file.
 
 `DefaultCredentialProvider` uses the Upyun CLI configuration by default. The
@@ -87,10 +91,12 @@ let provider = DefaultCredentialProvider::new()
 ## Contract
 
 - Only header authentication is implemented. `expires_in` is ignored.
-- Discovered CLI credentials are scoped to their session bucket; a mismatch is
-  rejected on every signature, including cache hits.
+- Discovered CLI credentials are scoped to their session bucket. The first
+  segment of the request's wire path must exactly equal that bucket on every
+  signature, including cache hits.
 - Explicit static credentials are unscoped and keep the caller's chosen scope.
-- The signer signs the wire path without decoding or rebuilding it.
+- The signed URI is the wire path exactly as supplied; the signer does not
+  decode or rebuild it and does not assume server-side path rewriting.
 - The signer does not calculate the body MD5 or construct requests.
 - Signing is atomic: on error, the request URI and headers remain unchanged.
 - `Debug` output redacts the credential secret.

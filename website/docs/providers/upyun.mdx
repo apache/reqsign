@@ -53,15 +53,18 @@ signer.sign(&mut req, None).await?;
 The default chain selects the session for `bucket` from the Upyun CLI (`upx`)
 configuration at `~/.upx.cfg`. A matching current session is preferred, then
 the first session for that bucket. The discovered credential is scoped to that
-bucket, and the signer rejects a request path for another bucket, including
-when a cached credential is reused. The file has no account or endpoint scope
-beyond the bucket. Install `StaticCredentialProvider` directly, or push it in
-front of the default chain, when credentials come from application
-configuration; explicit static credentials are unscoped unless the caller sets
-a bucket.
+bucket: every signature requires the first segment of the request's wire path
+to exactly equal it, including when a cached credential is reused. This is a
+local check of the request target and does not assume server-side path
+rewriting. The file has no account or endpoint scope beyond the bucket. Install
+`StaticCredentialProvider` directly, or push it in front of the default chain,
+when credentials come from application configuration; explicit static
+credentials are unscoped unless the caller sets a bucket.
 
 The signer adds `Date` and `Authorization`. Set `Content-MD5` before signing
-when the request body should participate in the signature. It does not create
-presigned URLs or token credentials, and it does not send the request.
+when the request body should participate in the signature. The signed URI is
+the request's wire path exactly as supplied; the signer does not decode,
+normalize, or rebuild it. It does not create presigned URLs or token
+credentials, and it does not send the request.
 
 <ProviderDetails id="upyun" />

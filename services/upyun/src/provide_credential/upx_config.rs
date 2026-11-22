@@ -44,8 +44,9 @@ const UPX_CONFIG_FILE: &str = "~/.upx.cfg";
 /// matching `upx switch`. This avoids signing for one bucket with the identity
 /// of a different bucket's session.
 ///
-/// The returned credential carries the selected session's bucket. The request
-/// signer enforces that scope on every signature, including cache hits.
+/// The returned credential carries the selected session's bucket. Every
+/// signature requires the first segment of the request's wire path to exactly
+/// equal that bucket, including cache hits.
 ///
 /// A missing file, an unset or invalid active index, no matching bucket, and an
 /// incomplete session are treated as no credential. A file that exists but

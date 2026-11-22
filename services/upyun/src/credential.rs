@@ -28,9 +28,9 @@ pub struct Credential {
     pub password: String,
     /// Bucket this credential was discovered for.
     ///
-    /// When set, the signer only accepts requests whose wire path starts with
-    /// this bucket. Explicit credentials created by [`Credential::new`] are
-    /// unscoped and can sign any bucket.
+    /// When set, the first segment of the request's wire path must exactly
+    /// equal this bucket. Explicit credentials created by [`Credential::new`]
+    /// are unscoped and can sign any bucket.
     pub bucket: Option<String>,
 }
 
@@ -46,10 +46,10 @@ impl Credential {
 
     /// Scope this credential to a bucket.
     ///
-    /// The signer rejects a request when the first segment of its wire path is
-    /// not this bucket. Discovered Upyun CLI credentials are scoped to their
-    /// session's bucket; explicit static credentials are unscoped unless the
-    /// caller chooses a scope.
+    /// The signer rejects a request unless the first segment of the request's
+    /// wire path exactly equals this bucket. Discovered Upyun CLI credentials
+    /// are scoped to their session's bucket; explicit static credentials are
+    /// unscoped unless the caller chooses a scope.
     pub fn with_bucket(mut self, bucket: impl Into<String>) -> Self {
         self.bucket = Some(bucket.into());
         self
