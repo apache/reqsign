@@ -19,7 +19,7 @@ use log::debug;
 
 use reqsign_core::{Context, ProvideCredential, Result};
 
-use crate::credential::Credential;
+use crate::credential::{CatalogEntry, Credential, Endpoint};
 
 use super::keystone::KeystoneCredentialProvider;
 
@@ -28,21 +28,37 @@ use super::keystone::KeystoneCredentialProvider;
 /// Reqsign reads the names the OpenStack command line tools and SDKs use, so an
 /// environment that already authenticates against Keystone works as is.
 pub(crate) const OS_AUTH_URL: &str = "OS_AUTH_URL";
+pub(crate) const OS_AUTH_TOKEN: &str = "OS_AUTH_TOKEN";
+pub(crate) const OS_STORAGE_URL: &str = "OS_STORAGE_URL";
 pub(crate) const OS_USERNAME: &str = "OS_USERNAME";
 pub(crate) const OS_PASSWORD: &str = "OS_PASSWORD";
 pub(crate) const OS_USER_DOMAIN_NAME: &str = "OS_USER_DOMAIN_NAME";
 pub(crate) const OS_PROJECT_NAME: &str = "OS_PROJECT_NAME";
 pub(crate) const OS_PROJECT_DOMAIN_NAME: &str = "OS_PROJECT_DOMAIN_NAME";
 
-/// Credential provider that reads OpenStack credentials from environment variables
-/// and authenticates via Keystone v3.
+/// Credential provider that reads OpenStack credentials from environment variables.
 ///
-/// Required environment variables:
+/// A non-empty `OS_AUTH_TOKEN` is a pre-issued token and takes priority over
+/// password authentication. It is returned directly without contacting Keystone,
+/// which is how `swift auth` and other OpenStack clients support preauthenticated
+/// requests. When it is set, `OS_AUTH_URL`, `OS_USERNAME`, and `OS_PASSWORD` are
+/// not required. An empty `OS_AUTH_TOKEN` is ignored and does not shadow password
+/// authentication.
+///
+/// A pre-issued token carries no service catalog. When it is paired with a
+/// non-empty `OS_STORAGE_URL`, the provider records that URL as the public
+/// `object-store` endpoint so callers can use the usual catalog lookup. The
+/// endpoint remains optional because callers such as the OpenDAL Swift backend
+/// already configure it separately.
+///
+/// For password authentication, the following variables are read:
+///
+/// Required:
 /// - `OS_AUTH_URL` — Keystone v3 identity URL (e.g. `https://keystone.example.com/v3`)
 /// - `OS_USERNAME` — OpenStack username
 /// - `OS_PASSWORD` — OpenStack password
 ///
-/// Optional environment variables:
+/// Optional:
 /// - `OS_USER_DOMAIN_NAME` — User domain name (defaults to "Default")
 /// - `OS_PROJECT_NAME` — Project name for scoped tokens
 /// - `OS_PROJECT_DOMAIN_NAME` — Project domain name (defaults to user domain)
@@ -60,6 +76,34 @@ impl ProvideCredential for EnvCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+        if let Some(token) = ctx.env_var(OS_AUTH_TOKEN) {
+            if !token.is_empty() {
+                let service_catalog = ctx
+                    .env_var(OS_STORAGE_URL)
+                    .filter(|url| !url.is_empty())
+                    .map(|url| {
+                        vec![CatalogEntry {
+                            service_type: "object-store".to_string(),
+                            endpoints: vec![Endpoint {
+                                interface: "public".to_string(),
+                                url,
+                                region_id: None,
+                                region: None,
+                            }],
+                        }]
+                    })
+                    .unwrap_or_default();
+
+                debug!("loaded OpenStack auth token from {OS_AUTH_TOKEN}");
+
+                return Ok(Some(Credential {
+                    token,
+                    expires_at: None,
+                    service_catalog,
+                }));
+            }
+        }
+
         let auth_url = match ctx.env_var(OS_AUTH_URL) {
             Some(v) if !v.is_empty() => v,
             _ => {
