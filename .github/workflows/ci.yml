@@ -68,7 +68,9 @@ jobs:
             reqsign-seafile
             reqsign-tencent-cos
             reqsign-upyun
+            reqsign-vercel
             reqsign-volcengine-tos
+            reqsign-yandex-disk
           )
           # Query each root separately so the facade's default-crypto graph is
           # not unified into the roots. --all-features covers every optional
@@ -128,7 +130,7 @@ jobs:
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,onedrive,upyun,seafile
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,onedrive,upyun,seafile,vercel,yandex-disk
 
   # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
   wasm_compat:
@@ -151,8 +153,10 @@ jobs:
           cargo check -p reqsign-github --target wasm32-unknown-unknown
           cargo check -p reqsign-upyun --target wasm32-unknown-unknown
           cargo check -p reqsign-seafile --target wasm32-unknown-unknown
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,onedrive,upyun,seafile
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,onedrive,upyun,seafile
+          cargo check -p reqsign-vercel --target wasm32-unknown-unknown
+          cargo check -p reqsign-yandex-disk --target wasm32-unknown-unknown
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,onedrive,upyun,seafile,vercel,yandex-disk
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,onedrive,upyun,seafile,vercel,yandex-disk
 
   unit:
     runs-on: ubuntu-latest
@@ -169,7 +173,7 @@ jobs:
           RUST_BACKTRACE: full
       - name: Facade feature tests
         run: |
-          cargo test --package reqsign --all-features --test crypto --test default_signer --test aliyun_drive --test cloudflare --test github --test onedrive --test upyun --test seafile
+          cargo test --package reqsign --all-features --test crypto --test default_signer --test aliyun_drive --test cloudflare --test github --test onedrive --test upyun --test seafile --test vercel --test yandex_disk
           cargo test --package reqsign --no-default-features --features default-context --test crypto_without_default_crypto
       - name: Doc Test
         run: cargo +nightly test --doc --all-features --workspace
@@ -213,3 +217,5 @@ jobs:
           cargo test --target wasm32-unknown-unknown -p reqsign-github --test wasm
           cargo test --target wasm32-unknown-unknown -p reqsign-onedrive --test wasm
           cargo test --target wasm32-unknown-unknown -p reqsign-upyun --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-vercel --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-yandex-disk --test wasm

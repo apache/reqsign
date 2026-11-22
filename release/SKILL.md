@@ -316,7 +316,7 @@ NAME
      reqsign-oauth2 reqsign-dropbox reqsign-onedrive reqsign-http-message-signatures reqsign-github \
      reqsign-command-execute-tokio reqsign-file-read-tokio reqsign-google \
      reqsign-http-send-reqwest reqsign-huaweicloud-obs reqsign-oracle \
-     reqsign-seafile reqsign-tencent-cos reqsign-upyun reqsign-volcengine-tos
+     reqsign-seafile reqsign-tencent-cos reqsign-upyun reqsign-vercel reqsign-volcengine-tos reqsign-yandex-disk
    do
      cargo info "$c" --registry crates-io | sed -n '1,4p'
    done

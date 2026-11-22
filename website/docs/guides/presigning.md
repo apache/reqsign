@@ -74,6 +74,9 @@ interpreted:
   authentication — header signing is its only mode.
 - Cloudflare has no query authentication at all, so it rejects `expires_in`
   instead of ignoring it.
+- Vercel Blob and Vercel Artifacts reject `expires_in`; header signing is their
+  only mode.
+- Yandex Disk rejects `expires_in`; header signing is its only mode.
 
 The [provider matrix](/docs/providers/) carries the authoritative
 header/query flags, and the
