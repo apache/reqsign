@@ -66,6 +66,8 @@ interpreted:
   nature; shared keys and bearer tokens sign headers.
 - Oracle Cloud bounds credential validity but produces **no** query
   authentication — header signing is its only mode.
+- Cloudflare has no query authentication at all, so it rejects `expires_in`
+  instead of ignoring it.
 
 The [provider matrix](/docs/providers/) carries the authoritative
 header/query flags, and the

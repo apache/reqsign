@@ -43,6 +43,7 @@ cargo add http anyhow
 | `aws-v4a` | AWS SigV4a multi-region signing |
 | `azure` | Azure Storage |
 | `b2` | Backblaze B2 Native API |
+| `cloudflare` | Cloudflare API (KV, D1) |
 | `dropbox` | Dropbox |
 | `github` | GitHub.com |
 | `google` | Google Cloud |
@@ -111,6 +112,7 @@ composes that provider's own credential chain — the
 | [AWS SigV4a](/docs/providers/aws-sigv4a/) | `aws::v4a::default_signer(ctx, service, region_set)` |
 | [Azure Storage](/docs/providers/azure-storage/) | `azure::default_signer(ctx)` |
 | [Backblaze B2](/docs/providers/b2/) | `b2::default_signer(ctx)` |
+| [Cloudflare](/docs/providers/cloudflare/) | `cloudflare::default_signer(ctx)` |
 | [Dropbox](/docs/providers/dropbox/) | `dropbox::default_signer(ctx)` |
 | [GitHub](/docs/providers/github/) | `github::default_signer(ctx)` |
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |

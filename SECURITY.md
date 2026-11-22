@@ -31,8 +31,8 @@ issues or pull requests for security reports.
 When reporting, include:
 
 - the affected crate name and version;
-- the affected signing service, such as AWS SigV4, Azure Storage, Dropbox,
-  Backblaze B2, GitHub, Google, Aliyun OSS, Aliyun Drive, Huawei
+- the affected signing service, such as AWS SigV4, Azure Storage, Cloudflare,
+  Dropbox, Backblaze B2, GitHub, Google, Aliyun OSS, Aliyun Drive, Huawei
   Cloud OBS, HTTP Message Signatures (RFC 9421), Oracle Cloud, Tencent COS,
   Volcengine TOS, or another supported service;
 - whether the issue affects direct `reqsign` use, Apache OpenDAL integration,

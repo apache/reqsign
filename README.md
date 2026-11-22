@@ -150,6 +150,17 @@ let signer = azure::default_signer(ctx)
     ));
 ```
 
+#### Cloudflare
+
+```rust
+use reqsign::{cloudflare, default_context};
+
+// Reads CLOUDFLARE_API_TOKEN. The account, database, and namespace IDs stay
+// in the request URL that you build.
+let ctx = default_context();
+let signer = cloudflare::default_signer(ctx);
+```
+
 #### GitHub
 
 ```rust
@@ -204,6 +215,7 @@ let signer = aliyun_drive::default_signer(ctx)
   - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
   - Backblaze B2 Native API: `reqsign-b2`
+  - Cloudflare API (KV, D1): `reqsign-cloudflare`
   - Dropbox: `reqsign-dropbox`
   - GitHub.com: `reqsign-github`
   - Google services: `reqsign-google`
