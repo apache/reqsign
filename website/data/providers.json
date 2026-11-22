@@ -1069,10 +1069,11 @@
       "id": "openstack-keystone",
       "display_name": "OpenStack Keystone",
       "family": "OpenStack",
-      "blurb": "Keystone v3 token authentication and X-Auth-Token signing for OpenStack services.",
-      "service_scope": "OpenStack services that authenticate with a Keystone v3 token, such as Swift.",
+      "blurb": "Keystone v3 token authentication, X-Auth-Token signing, and Swift TempURL presigning for OpenStack services.",
+      "service_scope": "OpenStack services that authenticate with a Keystone v3 token, such as Swift, including TempURL presigning.",
       "signing_schemes": [
-        "X-Auth-Token header"
+        "X-Auth-Token header",
+        "Swift TempURL (HMAC-SHA1/256/512)"
       ],
       "crates": [
         "reqsign-openstack-keystone"
@@ -1096,8 +1097,8 @@
       ],
       "request_auth": {
         "header": true,
-        "query": false,
-        "notes": "Inserts the X-Auth-Token header; expires_in is not interpreted."
+        "query": true,
+        "notes": "Header signing inserts X-Auth-Token. TempURL presigning signs the method, expiry, and decoded object path with a separate account or container key, then appends temp_url_sig and temp_url_expires."
       },
       "credential_granting": [],
       "wasm": {
@@ -1106,7 +1107,7 @@
       },
       "integration_tests": {
         "level": "mock",
-        "notes": "Provider behaviour is asserted against an injected mock HttpSend; a live-service test is skipped unless REQSIGN_OPENSTACK_KEYSTONE_TEST=on.",
+        "notes": "Provider behaviour is asserted against an injected mock HttpSend, and TempURL signatures use published and independently calculated vectors; a live-service test is skipped unless REQSIGN_OPENSTACK_KEYSTONE_TEST=on.",
         "refs": [
           "services/openstack-keystone/tests"
         ]

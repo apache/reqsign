@@ -398,6 +398,11 @@ Examples:
 - Query-based signing and presigning must apply expiry and signed query
   parameters according to the provider's rules and must not leave stale
   signature material from a previous signing pass.
+- OpenStack Swift TempURL signing must use the configured account or container
+  key, never the Keystone identity token, and must cover the method, expiry, and
+  the object path after one percent-decoding step, matching Swift's decoded
+  request path, while preserving the caller's encoded path and query bytes in
+  the outgoing URI. The resulting URL is secret-bearing authorization material.
 - Signing must use the request endpoint, authority, scheme, path, query, and
   headers selected by the trusted caller and signer implementation.
 - A service-specific signer must not send credentials to an unrelated endpoint

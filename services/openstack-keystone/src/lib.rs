@@ -59,12 +59,57 @@
 //! pre-issued tokens, and endpoint lookup from the catalog are available through
 //! [`KeystoneCredentialProvider`], [`StaticCredentialProvider`], and
 //! [`Credential::endpoint_in_region`].
+//!
+//! ## Swift TempURL
+//!
+//! [`TempUrlSigner`] creates Swift TempURLs with an explicit account or
+//! container key. TempURL signing never uses the Keystone `X-Auth-Token` as its
+//! key and does not require a [`Signer`](reqsign_core::Signer). The signature
+//! covers the request method, the integer expiration time, and the object path
+//! after decoding percent escapes once, matching Swift's decoded request path.
+//! The outgoing URI keeps its encoded path and query bytes and order. Existing
+//! non-auth query parameters are preserved, and existing TempURL authentication
+//! parameters are rejected even when their names are percent-encoded.
+//!
+//! Current Swift accepts the algorithm-tagged Base64 form emitted for SHA-1,
+//! SHA-256, and SHA-512, subject to the deployment's
+//! `tempurl.allowed_digests`. Historical middleware that accepts only raw
+//! hexadecimal SHA-1 is not supported. Swift also rebuilds the downstream query
+//! string and filters incoming headers according to its configuration, so
+//! arbitrary query or header forwarding through TempURL is not guaranteed.
+//!
+//! ```no_run
+//! use std::time::Duration;
+//!
+//! use reqsign_core::{Context, Result};
+//! use reqsign_crypto_rustcrypto::RustCryptoProvider;
+//! use reqsign_openstack_keystone::TempUrlSigner;
+//!
+//! # fn main() -> Result<()> {
+//! let ctx = Context::new().with_crypto(RustCryptoProvider::new());
+//! let signer = TempUrlSigner::new("account-tempurl-key");
+//! let uri = "https://swift.example.com/v1/AUTH_test/container/object"
+//!     .parse()
+//!     .unwrap();
+//! let presigned = signer.presign(
+//!     &ctx,
+//!     &http::Method::GET,
+//!     &uri,
+//!     Duration::from_secs(3600),
+//! )?;
+//! # let _ = presigned;
+//! # Ok(())
+//! # }
+//! ```
 
 mod credential;
 pub use credential::{CatalogEntry, Credential, Endpoint};
 
 mod sign_request;
 pub use sign_request::RequestSigner;
+
+mod temp_url;
+pub use temp_url::{TempUrlHashAlgorithm, TempUrlKey, TempUrlSigner};
 
 mod provide_credential;
 pub use provide_credential::{
