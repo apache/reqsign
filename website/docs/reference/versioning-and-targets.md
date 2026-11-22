@@ -25,19 +25,22 @@ description: Version tracks across the Reqsign crates, and the supported Rust an
 
 ## Versioning
 
-Reqsign publishes many crates on four tracks:
+Reqsign publishes many crates on five tracks:
 
 | Track | Crates | Scheme |
 | --- | --- | --- |
-| Core + existing services | `reqsign-core`, `reqsign-aws-core`, every existing `reqsign-<provider>` service crate, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | Lockstep major (currently `3.x`) |
-| New provider and shared crates | `reqsign-b2`, `reqsign-baidu-netdisk`, `reqsign-oauth2`, `reqsign-dropbox`, `reqsign-aliyun-drive`, `reqsign-github`, `reqsign-cloudflare`, `reqsign-onedrive`, `reqsign-seafile`, `reqsign-vercel`, `reqsign-yandex-disk`, `reqsign-koofr`, and later crates introduced after the lockstep line | Independent major, starting at `1.0.0` |
-| Reqwest adapter | `reqsign-http-send-reqwest` | Independent major (currently `4.x`), so reqwest major bumps do not force a core major |
-| Facade | `reqsign` | Independent (currently `0.20.x`) |
+| Core + established services | `reqsign-core`, `reqsign-aws-core`, every established `reqsign-<provider>` service crate, `reqsign-http-message-signatures`, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | Lockstep major (currently `4.x`) |
+| Provider and shared crates | `reqsign-b2`, `reqsign-aliyun-drive`, `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`, `reqsign-github`, `reqsign-koofr`, `reqsign-oauth2`, `reqsign-onedrive`, `reqsign-seafile`, `reqsign-upyun`, `reqsign-vercel`, `reqsign-yandex-disk`, and later crates introduced after the lockstep line | Independent major, starting at `1.0.0` |
+| Crypto backends | `reqsign-crypto-rustcrypto`, `reqsign-crypto-boring` | Independent major, starting at `1.0.0` |
+| Reqwest adapter | `reqsign-http-send-reqwest` | Independent major (currently `5.x`), offset from the core major so reqwest major bumps do not force a core major |
+| Facade | `reqsign` | Independent (currently `0.21.x`) |
 
-Lockstep means any `3.x` established service crate composes with any `3.x`
-core. New provider and shared crates start at `1.0.0` and depend on the current
-core major, so a `1.x` crate composes with `3.x` core. Mixing core majors fails
-to compile — the trait definitions are the compatibility boundary, and Cargo
+Lockstep means any `4.x` established service crate composes with any `4.x`
+core. Provider and shared crates start at `1.0.0` and depend on the current
+core major, so a `1.x` crate composes with `4.x` core. Crypto backends version
+independently of both, and the reqwest adapter moves to a new major when the
+core lockstep major changes, one major ahead. Mixing core majors fails to
+compile — the trait definitions are the compatibility boundary, and Cargo
 enforces it.
 
 Applications should depend on the facade and let it pin compatible
@@ -47,11 +50,11 @@ application:
 
 ```toml
 # Application:
-reqsign = { version = "0.20", features = ["aws"] }
+reqsign = { version = "0.21", features = ["aws"] }
 
 # Library:
-reqsign-core = "3"
-reqsign-aws-v4 = "3"
+reqsign-core = "4"
+reqsign-aws-v4 = "4"
 ```
 
 Every release ships as an ASF source release plus crates.io packages — see

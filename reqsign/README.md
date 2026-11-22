@@ -23,6 +23,13 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Vercel**: Vercel Blob and Artifacts (Turborepo Remote Cache) bearer tokens
 - **Seafile**: Seafile Web API services
 
+## Upgrading
+
+0.21 moves the core and the established service crates to `4.0.0` and makes
+cryptography and the runtime `Context` explicit. The migration steps, including
+`default_signer(ctx, ...)` and the `CryptoProvider` binding, are in
+[Upgrading to Reqsign 0.21](https://github.com/apache/reqsign/blob/main/website/docs/guides/upgrading-to-0.21.md).
+
 ## Request URI Contract
 
 Requests passed to the built-in signers must already contain a valid, wire-ready URI
@@ -48,7 +55,7 @@ Add `reqsign` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-reqsign = "0.20"
+reqsign = "0.21"
 ```
 
 By default, this includes `default-context` (a ready-to-use context using
@@ -63,7 +70,7 @@ To use specific services only:
 
 ```toml
 [dependencies]
-reqsign = { version = "0.20", default-features = false, features = ["aws", "default-context"] }
+reqsign = { version = "0.21", default-features = false, features = ["aws", "default-context"] }
 ```
 
 ## Examples
@@ -280,6 +287,6 @@ This crate supports WebAssembly (WASM) targets. However, the `default-context` f
 Example for WASM:
 ```toml
 [dependencies]
-reqsign = { version = "0.20", default-features = false, features = ["aws"] }
-reqsign-http-send-reqwest = "4"
+reqsign = { version = "0.21", default-features = false, features = ["aws"] }
+reqsign-http-send-reqwest = "5"
 ```

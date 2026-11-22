@@ -93,19 +93,25 @@ need a JavaScript host clock.
 
 ## Versioning
 
-- Existing service crates and core share a lockstep major version (`3.0.0`).
-- New provider and shared crates (`reqsign-cloudflare`, `reqsign-b2`,
-  `reqsign-baidu-netdisk`, `reqsign-oauth2`, `reqsign-dropbox`,
-  `reqsign-vercel`, `reqsign-koofr`) start
-  independent `1.0.0` version lines and depend on the current core major.
-- `reqsign-aliyun-drive`, `reqsign-github`, `reqsign-onedrive`, and
-  `reqsign-yandex-disk` start independent `1.0.0` version lines.
-- `reqsign-http-send-reqwest` has its own major (`4.0.0`).
+- Established service crates and core share a lockstep major version
+  (`4.0.0`): `reqsign-core`, `reqsign-aws-core`, every established
+  `reqsign-<provider>` service crate, `reqsign-http-message-signatures`,
+  `reqsign-file-read-tokio`, and `reqsign-command-execute-tokio`. A breaking
+  change in core bumps this whole line together.
+- Provider and shared crates (`reqsign-b2`, `reqsign-aliyun-drive`,
+  `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`,
+  `reqsign-github`, `reqsign-koofr`, `reqsign-oauth2`, `reqsign-onedrive`,
+  `reqsign-seafile`, `reqsign-upyun`, `reqsign-vercel`, `reqsign-yandex-disk`)
+  start independent `1.0.0` version lines and depend on the current core major.
+- `reqsign-http-send-reqwest` has its own major (`5.0.0`), one major ahead of
+  the core lockstep. It moves when the core lockstep major changes, so a
+  reqwest major bump never forces a core major.
 - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
   version lines, starting at `1.0.0`.
-- The facade `reqsign` crate follows an independent scheme (`0.20.0`).
+- The facade `reqsign` crate follows an independent scheme (`0.21.0`).
 - Release is triggered by pushing a `v*.*.*` tag; `cargo publish --workspace`
-  publishes everything.
+  publishes every crate in the plan. `crypto/boring` is excluded from the root
+  workspace and needs its own publication decision.
 
 ## License
 

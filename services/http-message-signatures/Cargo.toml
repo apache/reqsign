@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-http-message-signatures"
-version = "3.0.0"
+version = "4.0.0"
 
 categories = ["authentication", "web-programming::http-client"]
 description = "RFC 9421 HTTP Message Signatures for reqsign."
