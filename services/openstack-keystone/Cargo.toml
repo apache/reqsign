@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign-openstack-keystone"
-version = "3.0.1"
+version = "4.0.0"
 
 description = "OpenStack Keystone authentication implementation for reqsign."
 

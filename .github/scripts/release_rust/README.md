@@ -18,6 +18,11 @@ The release workflow first runs the complete workspace dry run:
 cargo publish --workspace --dry-run
 ```
 
+That dry run stages the workspace as one set, so it also packages members whose
+intra-workspace dependency versions are not on crates.io yet. A single-package
+`cargo publish -p <crate> --dry-run` does not, and fails before a bootstrap with
+a version-selection error for the unpublished dependency.
+
 It then runs `publish.py`. The publisher uploads one package at a time, requests
 and revokes a fresh GitHub OIDC-derived crates.io token for every attempt,
 retries crates.io rate limits, and treats an already-published matching

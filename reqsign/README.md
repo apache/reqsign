@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Upyun, Oracle, Vercel and Seafile services.
+Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Baidu Netdisk, Tencent, Upyun, Oracle, Vercel and Seafile services.
 
 ## Features
 
@@ -8,6 +8,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 
 - **AWS**: Signature V4 for AWS services
 - **Azure**: Azure Storage services
+- **Baidu Netdisk**: Static access-token query signing
 - **Cloudflare**: Cloudflare API v4 requests with an API token, including KV and D1
 - **Dropbox**: OAuth 2.0 bearer authentication
 - **GitHub**: GitHub.com bearer tokens and anonymous public access
@@ -21,6 +22,13 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Oracle**: Oracle Cloud services
 - **Vercel**: Vercel Blob and Artifacts (Turborepo Remote Cache) bearer tokens
 - **Seafile**: Seafile Web API services
+
+## Upgrading
+
+0.21 moves the core and the established service crates to `4.0.0` and makes
+cryptography and the runtime `Context` explicit. The migration steps, including
+`default_signer(ctx, ...)` and the `CryptoProvider` binding, are in
+[Upgrading to Reqsign 0.21](https://github.com/apache/reqsign/blob/main/website/docs/guides/upgrading-to-0.21.md).
 
 ## Request URI Contract
 
@@ -47,7 +55,7 @@ Add `reqsign` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-reqsign = "0.20"
+reqsign = "0.21"
 ```
 
 By default, this includes `default-context` (a ready-to-use context using
@@ -62,7 +70,7 @@ To use specific services only:
 
 ```toml
 [dependencies]
-reqsign = { version = "0.20", default-features = false, features = ["aws", "default-context"] }
+reqsign = { version = "0.21", default-features = false, features = ["aws", "default-context"] }
 ```
 
 ## Examples
@@ -181,6 +189,10 @@ let signer = cloudflare::default_signer(ctx.clone());
 use reqsign::b2;
 let signer = b2::default_signer(ctx.clone());
 
+// Baidu Netdisk (supply the access token explicitly; there is no ambient source)
+use reqsign::baidu_netdisk;
+let signer = baidu_netdisk::default_signer(ctx.clone(), "access-token");
+
 // GitHub
 use reqsign::github;
 let signer = github::default_signer(ctx.clone());
@@ -247,6 +259,7 @@ let signer = seafile::default_signer(ctx.clone());
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
 - `b2`: Enable Backblaze B2 Native API support
+- `baidu-netdisk`: Enable Baidu Netdisk support
 - `cloudflare`: Enable Cloudflare API support (KV and D1)
 - `dropbox`: Enable Dropbox OAuth 2.0 support
 - `github`: Enable GitHub.com support
@@ -274,6 +287,6 @@ This crate supports WebAssembly (WASM) targets. However, the `default-context` f
 Example for WASM:
 ```toml
 [dependencies]
-reqsign = { version = "0.20", default-features = false, features = ["aws"] }
-reqsign-http-send-reqwest = "4"
+reqsign = { version = "0.21", default-features = false, features = ["aws"] }
+reqsign-http-send-reqwest = "5"
 ```

@@ -315,8 +315,8 @@ letting the application choose context implementations:
 
 ```toml
 [dependencies]
-reqsign-core = "3"
-reqsign-aws-v4 = "3"
+reqsign-core = "4"
+reqsign-aws-v4 = "4"
 ```
 
 | You are building | Use |

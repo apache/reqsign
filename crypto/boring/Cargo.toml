@@ -32,15 +32,15 @@ fips = ["boring/fips"]
 
 [dependencies]
 boring = "5.5.1"
-reqsign-core = { version = "3.3.4", path = "../../core" }
+reqsign-core = { version = "4.0.0", path = "../../core" }
 
 [dev-dependencies]
 hex = "0.4"
 hmac = "0.13"
 http = "1"
 p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
-reqsign-aws-core = { version = "3.4.0", path = "../../services/aws-core" }
-reqsign-aws-v4 = { version = "3.5.0", path = "../../services/aws-v4" }
+reqsign-aws-core = { version = "4.0.0", path = "../../services/aws-core" }
+reqsign-aws-v4 = { version = "4.0.0", path = "../../services/aws-v4" }
 reqsign-crypto-rustcrypto = { version = "1.0.0", path = "../rustcrypto" }
 sha2 = "0.11"
 tokio = { version = "1", features = ["macros", "rt"] }

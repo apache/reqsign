@@ -21,6 +21,11 @@ Use this skill when preparing or executing an Apache Reqsign release.
 
 ## Release Preparation
 
+Prepare, then reserve, then vote, then publish. The order is: version and notes
+PR merged into `main`; reserve every missing crate name with the bootstrap
+workflow; RC tag and source artifact; vote; formal tag from the voted commit;
+Release workflow publishes the plan; GitHub Release from `CHANGELOG.md`.
+
 1. Sync live state.
 
    ```bash
@@ -34,13 +39,34 @@ Use this skill when preparing or executing an Apache Reqsign release.
 
 2. Prepare version bump on a PR.
 
-   Typical version policy:
+   Version policy by track. The current line is facade `0.21.0`, lockstep
+   `4.0.0`, reqwest adapter `5.0.0`, and `1.0.0` for first-release crates.
 
-   - `reqsign`: patch bump, for example `0.20.0 -> 0.20.1`.
-   - Crate with new public capability: minor bump, for example `reqsign-aliyun-oss 3.0.0 -> 3.1.0`.
-   - New provider crates use independent versions starting at `1.0.0`; bump them by their own change, not the core lockstep.
-   - Other workspace crates published in the same workspace release: patch bump.
-   - Keep root `[workspace.dependencies]` version requirements aligned with each crate manifest.
+   - `reqsign`: patch bump for a compatible release, for example
+     `0.21.0 -> 0.21.1`. A breaking or feature release takes the next `0.x`
+     minor because 0.x minors are the facade's breaking channel.
+   - Core and the established service line (`reqsign-core`, `reqsign-aws-core`,
+     every established `reqsign-<provider>` crate,
+     `reqsign-http-message-signatures`, `reqsign-file-read-tokio`,
+     `reqsign-command-execute-tokio`): bump the whole line together. A breaking
+     core change, including a lockstep major, moves every crate on it to the
+     same major. A new public capability without a break takes a minor.
+   - `reqsign-http-send-reqwest`: patch or minor by its own change, and a major
+     whenever the core lockstep major changes. It stays one major ahead of core.
+   - Provider and shared crates on independent `1.0.0` lines
+     (`reqsign-cloudflare`, the B2 crate, `reqsign-baidu-netdisk`,
+     `reqsign-oauth2`, `reqsign-dropbox`, `reqsign-aliyun-drive`,
+     `reqsign-github`, `reqsign-onedrive`, `reqsign-seafile`, `reqsign-upyun`,
+     `reqsign-vercel`, `reqsign-yandex-disk`, `reqsign-koofr`): keep `1.0.0`
+     until the first publication, then bump by their own change.
+   - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring`: independent
+     `1.0.0` lines, bumped by their own change.
+   - Keep root `[workspace.dependencies]` version requirements equal to each
+     crate manifest version, and update the standalone
+     `crypto/boring/Cargo.toml` bounds separately because that crate is outside
+     the workspace.
+   - Add the release-notes entry to `CHANGELOG.md` and the migration steps to
+     `website/docs/guides/` in the same PR.
 
 3. Validate the publish plan and packages.
 
@@ -51,6 +77,46 @@ Use this skill when preparing or executing an Apache Reqsign release.
    python3 .github/scripts/release_rust/plan.py
    cargo publish --workspace --dry-run --allow-dirty
    ```
+
+   `cargo publish --workspace --dry-run` stages the workspace as one set, so it
+   packages members whose intra-workspace dependencies are not on crates.io yet.
+   Do not substitute a per-package `cargo publish -p <crate> --dry-run` before
+   bootstrap: it fails with a version-selection error such as
+   `failed to select a version for the requirement reqsign-core = "^4.0.0"`
+   because that dependency version is unpublished. Use the per-package form only
+   after bootstrap, when every dependency version in the plan exists on
+   crates.io.
+
+   Inventory the plan against the registry before asking for a bootstrap. The
+   check is read-only and needs no credentials:
+
+   ```bash
+   python3 - <<'EOF'
+   import json, subprocess, urllib.request, urllib.error
+   plan = json.loads(subprocess.check_output(
+       ["python3", ".github/scripts/release_rust/plan.py"], text=True))
+   for package in plan:
+       request = urllib.request.Request(
+           f"https://crates.io/api/v1/crates/{package['name']}",
+           headers={"User-Agent": "reqsign-release"})
+       try:
+           published = [v["num"] for v in
+                        json.load(urllib.request.urlopen(request, timeout=20))["versions"]]
+       except urllib.error.HTTPError as error:
+           if error.code != 404:
+               raise
+           print(f"missing name: {package['name']}")
+           continue
+       if package["version"] in published:
+           print(f"already published: {package['name']} {package['version']}")
+   EOF
+   ```
+
+   Every `missing name` must be reserved by the bootstrap workflow before the
+   RC tag, and no line may report an already-published planned version. The
+   0.21.0 preparation started from 31 workspace packages: 15 missing names plus
+   16 published crates, and the standalone `reqsign-crypto-boring` as a
+   separately inventoried name.
 
 4. Merge the version bump PR into `main`.
 
@@ -84,8 +150,10 @@ The helper:
   `trustpub_only` enabled.
 
 The protected job authenticates ownership and audits the complete publish plan
-before any write. Established crates must already have exactly one Trusted
-Publisher with:
+before any write. A Trusted Publisher cannot be configured for a name that does
+not exist on crates.io yet, so every missing name is resolved by the bootstrap
+first: the `0.0.0` reservation is what makes the publisher configuration
+possible. Existing crates must already have exactly one Trusted Publisher with:
 
 - Repository owner: `apache`
 - Repository name: `reqsign`
@@ -98,6 +166,15 @@ each. For a missing name, the workflow publishes a dependency-free `0.0.0`
 placeholder, creates the expected Trusted Publisher, enables `trustpub_only`,
 and reconciles partial placeholders on rerun.
 
+The `rust-bootstrap` environment in `.asf.yaml` accepts dispatches only from
+`main`, requires reviewers, and sets `prevent_self_review`, so a dispatch by the
+release manager still needs one of the other configured reviewers to approve.
+The helper's public verification uses unauthenticated crates.io data and covers
+name existence, the reservation version, and `trustpub_only`. The authenticated
+preflight inside the job covers ownership and publisher metadata; the two checks
+have different scopes, and the public one is not a substitute for the preflight.
+The last successful reservation run for this repository was `43195429526`.
+
 ASF Infrastructure provisions the `release` and `rust-bootstrap` environments
 from `.asf.yaml`. A PMC release manager must add
 `CARGO_REGISTRY_BOOTSTRAP_TOKEN` to the `rust-bootstrap` environment. The token
@@ -107,6 +184,19 @@ release workflow.
 
 Run the helper again if the publish plan gains another crate after a successful
 bootstrap.
+
+### What the workspace publish covers
+
+`cargo publish --workspace` publishes every root workspace member that allows
+the crates.io registry, in dependency order, and `plan.py` is the authoritative
+list. `crypto/boring` is excluded from the root workspace
+(`exclude = ["crypto/boring"]`), so `reqsign-crypto-boring` is not in
+`plan.py`, not packaged by the Release workflow, and not covered by the
+bootstrap. Publishing it needs its own explicit decision and publishing path,
+including its own crates.io Trusted Publisher, and it is out of scope for a
+workspace release unless the release manager says otherwise. Its dependency
+version bounds in `crypto/boring/Cargo.toml` are not inherited from the root
+workspace, so align them by hand in the same preparation PR.
 
 ## Create RC Tag
 
@@ -324,7 +414,9 @@ NAME
 
 7. Create a GitHub Release.
 
-   Use the formal tag and include source artifact links, notable changes, and crate versions.
+   Use the formal tag. The `0.21.0` section of `CHANGELOG.md` is the release
+   notes source: keep its notable changes and crate-version table, and add the
+   source artifact links.
 
 ## Recovery Notes
 

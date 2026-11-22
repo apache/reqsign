@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign"
-version = "0.20.9"
+version = "0.21.0"
 
 categories = ["authentication", "web-programming::http-client"]
 description = "Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Oracle, Vercel and Seafile services"
@@ -45,6 +45,7 @@ reqsign-aws-v4 = { workspace = true, optional = true }
 reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
 reqsign-b2 = { workspace = true, optional = true }
+reqsign-baidu-netdisk = { workspace = true, optional = true }
 reqsign-cloudflare = { workspace = true, optional = true }
 reqsign-dropbox = { workspace = true, optional = true }
 reqsign-github = { workspace = true, optional = true }
@@ -85,6 +86,7 @@ aws-v4 = ["dep:reqsign-aws-v4"]
 aws-v4a = ["dep:reqsign-aws-v4a"]
 azure = ["dep:reqsign-azure-storage"]
 b2 = ["dep:reqsign-b2"]
+baidu-netdisk = ["dep:reqsign-baidu-netdisk"]
 cloudflare = ["dep:reqsign-cloudflare"]
 dropbox = ["dep:reqsign-dropbox", "oauth2"]
 github = ["dep:reqsign-github"]
@@ -115,6 +117,7 @@ full = [
   "aws-v4a",
   "azure",
   "b2",
+  "baidu-netdisk",
   "cloudflare",
   "dropbox",
   "github",

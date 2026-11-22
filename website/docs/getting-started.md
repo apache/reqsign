@@ -43,6 +43,7 @@ cargo add http anyhow
 | `aws-v4a` | AWS SigV4a multi-region signing |
 | `azure` | Azure Storage |
 | `b2` | Backblaze B2 Native API |
+| `baidu-netdisk` | Baidu Netdisk |
 | `cloudflare` | Cloudflare API (KV, D1) |
 | `dropbox` | Dropbox |
 | `github` | GitHub.com |
@@ -116,6 +117,7 @@ composes that provider's own credential chain — the
 | [AWS SigV4a](/docs/providers/aws-sigv4a/) | `aws::v4a::default_signer(ctx, service, region_set)` |
 | [Azure Storage](/docs/providers/azure-storage/) | `azure::default_signer(ctx)` |
 | [Backblaze B2](/docs/providers/b2/) | `b2::default_signer(ctx)` |
+| [Baidu Netdisk](/docs/providers/baidu-netdisk/) | `baidu_netdisk::default_signer(ctx, access_token)` |
 | [Cloudflare](/docs/providers/cloudflare/) | `cloudflare::default_signer(ctx)` |
 | [Dropbox](/docs/providers/dropbox/) | `dropbox::default_signer(ctx)` |
 | [Vercel Blob](/docs/providers/vercel-blob/) | `vercel::default_blob_signer(ctx)` |
