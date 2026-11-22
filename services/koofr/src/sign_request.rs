@@ -27,7 +27,9 @@ use crate::Credential;
 ///
 /// The signer inserts a sensitive `Authorization: Token token=<token>` header
 /// and leaves the request URI unchanged. `expires_in` is ignored because the
-/// documented token exchange does not report an expiry.
+/// first-party SDK exchange does not report an expiry. A token that cannot be
+/// sent as an unquoted authorization parameter is rejected before the request
+/// is changed.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RequestSigner;
 
@@ -55,14 +57,13 @@ impl SignRequest for RequestSigner {
         let required_until = self.required_valid_until(credential, expires_in);
         if !credential.is_valid_at(required_until) {
             return Err(Error::credential_invalid(
-                "Koofr access token is empty and cannot sign the request",
+                "Koofr access token is empty or not usable in an unquoted authorization parameter",
             ));
         }
 
         let mut value = HeaderValue::from_str(&format!("Token token={}", credential.token()))
-            .map_err(|err| {
+            .map_err(|_| {
                 Error::credential_invalid("Koofr access token is not a valid HTTP header value")
-                    .with_source(err)
             })?;
         value.set_sensitive(true);
 
@@ -121,18 +122,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_token_fails_without_mutating_request() {
-        let mut parts = request_parts();
-        let original = parts.clone();
-        let credential = Credential::new("");
+    async fn invalid_token_fails_without_mutating_request() {
+        for token in [
+            "",
+            "fabricated token",
+            "fabricated\ttoken",
+            "fabricated\"token",
+        ] {
+            let mut parts = request_parts();
+            let original = parts.clone();
+            let credential = Credential::new(token);
 
-        let error = RequestSigner
-            .sign_request(&Context::new(), &mut parts, Some(&credential), None)
-            .await
-            .expect_err("empty token must fail");
+            let error = RequestSigner
+                .sign_request(&Context::new(), &mut parts, Some(&credential), None)
+                .await
+                .expect_err("invalid token must fail");
 
-        assert_eq!(reqsign_core::ErrorKind::CredentialInvalid, error.kind());
-        assert_eq!(original.uri, parts.uri);
-        assert_eq!(original.headers, parts.headers);
+            assert_eq!(reqsign_core::ErrorKind::CredentialInvalid, error.kind());
+            assert_eq!(original.uri, parts.uri);
+            assert_eq!(original.headers, parts.headers);
+        }
     }
 }

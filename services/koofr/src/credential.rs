@@ -18,12 +18,12 @@
 use std::fmt::{self, Debug};
 
 use reqsign_core::SigningCredential;
-use reqsign_core::utils::Redact;
 
 /// A Koofr access token.
 ///
-/// Koofr returns this token from the documented email and application-specific
-/// password exchange. The token is sent as `Authorization: Token token=<token>`.
+/// Koofr returns this token from the first-party SDK's email and
+/// application-specific password exchange. The token is sent as
+/// `Authorization: Token token=<token>`.
 #[derive(Clone, Default)]
 pub struct Credential {
     token: String,
@@ -41,19 +41,31 @@ impl Credential {
     pub fn token(&self) -> &str {
         &self.token
     }
+
+    /// Return whether `token` can be sent as an unquoted authorization parameter.
+    ///
+    /// Koofr's first-party tokens are ASCII, and its unquoted `token=<token>`
+    /// parameter has no quoting or escaping. The same check is used before a
+    /// credential enters [`reqsign_core::Signer`]'s cache and when the signer
+    /// writes the header, so invalid exchange data never becomes a cached
+    /// credential.
+    pub(crate) fn is_valid_token(token: &str) -> bool {
+        !token.is_empty()
+            && token
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'"' | b',' | b';'))
+    }
 }
 
 impl Debug for Credential {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Credential")
-            .field("token", &Redact::from(&self.token))
-            .finish()
+        f.debug_struct("Credential").finish_non_exhaustive()
     }
 }
 
 impl SigningCredential for Credential {
     fn is_valid(&self) -> bool {
-        !self.token.is_empty()
+        Self::is_valid_token(&self.token)
     }
 }
 
@@ -64,27 +76,51 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn rejects_empty_token() {
-        let credential = Credential::new("");
+    fn rejects_tokens_that_cannot_be_unquoted_header_parameters() {
+        for token in [
+            "",
+            " ",
+            "fabricated token",
+            "fabricated\ttoken",
+            "fabricated\ntoken",
+            "fabricated, token",
+            "fabricated; token",
+            "fabricated\"token",
+            "密码密码密码",
+        ] {
+            let credential = Credential::new(token);
 
-        assert!(!credential.is_valid());
-        assert!(!credential.is_valid_at(Timestamp::now() + Duration::from_secs(3600)));
+            assert!(!credential.is_valid(), "token must be rejected: {token:?}");
+            assert!(!credential.is_valid_at(Timestamp::now()));
+        }
     }
 
     #[test]
-    fn accepts_non_empty_token_without_expiry() {
-        let credential = Credential::new("fabricated-access-token");
+    fn accepts_confirmed_ascii_token_shapes_without_expiry() {
+        for token in [
+            "fabricated-token",
+            "fabricated-token.1_2-3~",
+            "fabricated-token+value=",
+        ] {
+            let credential = Credential::new(token);
 
-        assert!(credential.is_valid());
-        assert!(credential.is_valid_at(Timestamp::now() + Duration::from_secs(3600)));
-        assert_eq!("fabricated-access-token", credential.token());
+            assert!(credential.is_valid(), "token must be accepted: {token:?}");
+            assert!(credential.is_valid_at(Timestamp::now() + Duration::from_secs(3600)));
+            assert_eq!(token, credential.token());
+        }
     }
 
     #[test]
-    fn debug_redacts_token() {
-        let debug = format!("{:?}", Credential::new("fabricated-secret-token-value"));
+    fn debug_redacts_token_and_is_safe_for_unicode() {
+        for token in [
+            "fabricated-secret-token-value",
+            "密码密码密码",
+            "🚀abcdef12345",
+        ] {
+            let debug = format!("{:?}", Credential::new(token));
 
-        assert!(!debug.contains("fabricated-secret-token-value"));
-        assert!(debug.contains("token"));
+            assert!(!debug.contains(token));
+            assert!(debug.contains("Credential"));
+        }
     }
 }

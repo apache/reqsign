@@ -19,21 +19,27 @@
 //!
 //! Koofr authenticates API requests with
 //! `Authorization: Token token=<access-token>`. The token is obtained by
-//! posting an account email and an application-specific password to
+//! the JSON exchange used by Koofr's first-party Go SDK and OpenDAL: an account
+//! email and an application-specific password are posted to
 //! `POST {endpoint}/token` with a JSON body:
 //!
 //! ```json
 //! {"email":"me@example.com","password":"application-specific-password"}
 //! ```
 //!
-//! A successful response is `{"token":"..."}`. The documented exchange does
-//! not return an expiry, so reqsign caches the token until the caller replaces
-//! the provider or Koofr rejects it.
+//! A successful response is `{"token":"..."}`. Koofr's API Swagger documents
+//! Bearer and app-password Basic schemes separately; it does not describe this
+//! `/token` exchange. The exchange does not return an expiry, so the token stays
+//! cached until the caller replaces the [`reqsign_core::Signer`] or installs a
+//! provider/context that starts a new cache. Koofr rejecting the token does not
+//! invalidate the cache automatically.
 //!
 //! Koofr's first-party SDKs do not define a production environment-variable
 //! credential source. This crate therefore does not read ambient credentials:
 //! configure [`LoginCredentialProvider`] or [`StaticCredentialProvider`]
-//! explicitly.
+//! explicitly. An explicit `http://` endpoint sends the email and application
+//! password in cleartext; redirect policy belongs to the configured
+//! [`reqsign_core::HttpSend`] adapter.
 //!
 //! Mount selection, file paths, and business requests remain caller-owned.
 //!

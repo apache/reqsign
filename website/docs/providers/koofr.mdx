@@ -63,18 +63,30 @@ password at `POST https://app.koofr.net/token` with a JSON body:
 {"email":"me@example.com","password":"application-password"}
 ```
 
-A successful response is `{"token":"..."}`. Generate the application-specific
-password at the
+A successful response is `{"token":"..."}`. The `/token` JSON exchange follows
+Koofr's first-party Go SDK; OpenDAL's Koofr backend uses the same exchange.
+Koofr's API Swagger documents Bearer and app-password Basic schemes separately,
+not this exchange. Generate the
+application-specific password at the
 [Koofr application preferences](https://app.koofr.net/app/admin/preferences/password);
-do not use the account login password. Use `LoginCredentialProvider::with_endpoint` for a
-Koofr-compatible API endpoint.
+do not use the account login password.
+
+Use `LoginCredentialProvider::with_endpoint` for a Koofr-compatible API endpoint.
+The endpoint must be an absolute HTTP(S) URI with a host, optional port, and
+optional path prefix. Userinfo, query strings, fragments, dot segments,
+backslashes, whitespace, and control characters are rejected. An explicit
+`http://` endpoint sends the email and application password in cleartext.
+Reqsign sends the exchange to the configured destination; redirect policy
+belongs to the configured `HttpSend` adapter.
 
 `StaticCredentialProvider` accepts a token that the caller already holds.
 Koofr's first-party SDKs do not define a production environment-variable
 credential convention, so Reqsign does not discover ambient Koofr credentials.
 Mount selection, paths, and business requests stay with the caller.
 
-The documented exchange does not return an expiry. The signer caches the token
-until the provider is replaced or Koofr rejects it.
+The exchange does not return an expiry. The token stays cached until the caller
+replaces the `Signer` or installs a provider/context that starts a new cache.
+Koofr rejecting the token does not invalidate the cache automatically; the
+caller must replace the signer or its credential cache.
 
 <ProviderDetails id="koofr" />

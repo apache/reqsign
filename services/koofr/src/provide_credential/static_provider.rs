@@ -15,15 +15,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use reqsign_core::{Context, ProvideCredential, Result};
+use reqsign_core::{Context, Error, ProvideCredential, Result};
 
 use crate::Credential;
 
 /// Uses an access token that the caller already obtained.
 ///
-/// Koofr does not return an expiry with the documented token exchange, so a
-/// static token is reused until the caller replaces the provider or the token
-/// is rejected by Koofr.
+/// Koofr does not return an expiry with the first-party SDK exchange, so a
+/// static token is reused until the caller replaces the [`reqsign_core::Signer`]
+/// or installs a provider/context that starts a new cache. Koofr rejecting the
+/// token does not invalidate the cache automatically.
 #[derive(Debug, Clone)]
 pub struct StaticCredentialProvider {
     credential: Credential,
@@ -42,6 +43,12 @@ impl ProvideCredential for StaticCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, _ctx: &Context) -> Result<Option<Self::Credential>> {
+        if !Credential::is_valid_token(self.credential.token()) {
+            return Err(Error::credential_invalid(
+                "Koofr static access token is empty or not usable in an unquoted authorization parameter",
+            ));
+        }
+
         Ok(Some(self.credential.clone()))
     }
 }
@@ -60,6 +67,19 @@ mod tests {
             .expect("credential must be present");
 
         assert_eq!("fabricated-token", credential.token());
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_token_before_signer_cache() {
+        for token in ["", " ", "fabricated token", "fabricated\t token"] {
+            let provider = StaticCredentialProvider::new(token);
+            let error = provider
+                .provide_credential(&Context::new())
+                .await
+                .expect_err("invalid static token must be rejected");
+
+            assert_eq!(reqsign_core::ErrorKind::CredentialInvalid, error.kind());
+        }
     }
 
     #[test]

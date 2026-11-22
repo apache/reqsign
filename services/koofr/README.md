@@ -11,8 +11,12 @@ file paths, or send business requests.
 ## Endpoint and token exchange
 
 The official Koofr API endpoint is `https://app.koofr.net`, the endpoint used
-by Koofr's first-party SDKs. `LoginCredentialProvider` posts JSON to
-`{endpoint}/token`:
+by Koofr's first-party SDKs. The `/token` JSON exchange follows the first-party
+Go SDK; OpenDAL's Koofr backend uses the same exchange. Koofr's API Swagger
+documents Bearer and app-password Basic schemes separately; it does not describe
+this exchange.
+
+`LoginCredentialProvider` posts JSON to `{endpoint}/token`:
 
 ```json
 {"email":"me@example.com","password":"application-specific-password"}
@@ -21,10 +25,20 @@ by Koofr's first-party SDKs. `LoginCredentialProvider` posts JSON to
 A successful response is `{"token":"..."}`. Use an application-specific
 password generated at
 <https://app.koofr.net/app/admin/preferences/password>, not the account login
-password. Call `with_endpoint` for Koofr-compatible APIs.
+password.
 
-The documented exchange does not return an expiry. Reqsign caches the token
-until the provider is replaced or Koofr rejects it.
+Call `with_endpoint` for Koofr-compatible APIs. The endpoint must be an
+absolute HTTP(S) URI with a host, optional port, and optional path prefix.
+Userinfo, query strings, fragments, dot segments, backslashes, whitespace, and
+control characters are rejected. An explicit `http://` endpoint sends the email
+and application password in cleartext. Reqsign sends the exchange to the
+configured destination; redirect policy belongs to the configured `HttpSend`
+adapter.
+
+The exchange does not return an expiry. The token stays cached until the caller
+replaces the `Signer` or installs a provider/context that starts a new cache.
+Koofr rejecting the token does not invalidate the cache automatically; the
+caller must replace the signer or its credential cache.
 
 ## No ambient discovery
 

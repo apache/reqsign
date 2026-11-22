@@ -412,6 +412,19 @@ Out of scope by default:
   credentials, unless Reqsign violates parser robustness, credential isolation,
   or redaction while handling that response.
 
+Koofr's explicit login exchange follows these constraints. The login provider
+uses the official endpoint or a caller-configured absolute HTTP(S) endpoint and
+rejects userinfo, query strings, fragments, dot segments, backslashes,
+whitespace, and control characters before sending. It sends only the email and
+application password in the request body and does not read ambient Koofr
+credentials. The first-party SDK exchange returns no expiry: a cached token
+remains until the caller replaces the `Signer` or starts a new provider/context
+cache, and Koofr rejecting the token does not invalidate that cache. An
+explicit `http://` endpoint sends the exchange in cleartext; redirect policy
+belongs to the configured HTTP client. Error messages expose only the HTTP
+status classification and never response bodies, free-form server fields, the
+endpoint, or parser/transport sources.
+
 ### 4.9 WASM compatibility
 
 `reqsign-core` and the supported subset of services are expected to compile for

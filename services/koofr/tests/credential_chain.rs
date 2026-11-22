@@ -135,6 +135,38 @@ async fn failed_exchange_is_not_cached() -> Result<()> {
 }
 
 #[tokio::test]
+async fn invalid_token_response_is_not_cached_and_later_valid_exchange_recovers() -> Result<()> {
+    let mock = MockHttp::with_responses([
+        token_response("fabricated bad token"),
+        token_response("fabricated-token"),
+    ]);
+    let signer = login_signer(mock.clone());
+
+    let mut first = parts();
+    let first_original = first.clone();
+    let error = signer
+        .sign(&mut first, None)
+        .await
+        .expect_err("invalid token response must fail");
+    assert_eq!(ErrorKind::CredentialInvalid, error.kind());
+    assert_eq!(first_original.method, first.method);
+    assert_eq!(first_original.uri, first.uri);
+    assert_eq!(first_original.version, first.version);
+    assert_eq!(first_original.headers, first.headers);
+
+    let mut second = parts();
+    signer.sign(&mut second, None).await?;
+
+    assert_eq!(2, mock.request_count());
+    assert_eq!(
+        "Token token=fabricated-token",
+        second.headers[AUTHORIZATION]
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn failed_exchange_leaves_request_head_unchanged() {
     let mock = MockHttp::with_responses([error_response(
         401,
