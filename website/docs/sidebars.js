@@ -42,6 +42,7 @@ module.exports = {
         "providers/vercel-blob",
         "providers/vercel-artifacts",
         "providers/b2",
+        "providers/baidu-netdisk",
         "providers/cloudflare",
         "providers/github",
         "providers/google",

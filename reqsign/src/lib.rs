@@ -48,6 +48,9 @@ pub mod azure;
 #[cfg(feature = "b2")]
 pub mod b2;
 
+#[cfg(feature = "baidu-netdisk")]
+pub mod baidu_netdisk;
+
 #[cfg(feature = "cloudflare")]
 pub mod cloudflare;
 

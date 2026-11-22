@@ -80,9 +80,9 @@ servers checked into `services/aws-v4/tests/mocks/`.
 ## WASM Compatibility
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
-`aliyun`, `aliyun-drive`, `b2`, `tencent`, `cloudflare`, `oauth2`, `dropbox`,
-`http-message-signatures`, `github`, `koofr`, `onedrive`, `vercel`,
-`yandex-disk`) must compile for
+`aliyun`, `aliyun-drive`, `b2`, `baidu-netdisk`, `tencent`, `cloudflare`,
+`oauth2`, `dropbox`, `http-message-signatures`, `github`, `koofr`, `onedrive`,
+`vercel`, `yandex-disk`) must compile for
 `wasm32-unknown-unknown`. CI verifies this supported subset. GitHub environment,
 static, and anonymous signing need no JavaScript clock; GitHub CLI discovery
 still requires a `CommandExecute` adapter at runtime and is unavailable in bare
@@ -95,7 +95,8 @@ need a JavaScript host clock.
 
 - Existing service crates and core share a lockstep major version (`3.0.0`).
 - New provider and shared crates (`reqsign-cloudflare`, `reqsign-b2`,
-  `reqsign-oauth2`, `reqsign-dropbox`, `reqsign-vercel`, `reqsign-koofr`) start
+  `reqsign-baidu-netdisk`, `reqsign-oauth2`, `reqsign-dropbox`,
+  `reqsign-vercel`, `reqsign-koofr`) start
   independent `1.0.0` version lines and depend on the current core major.
 - `reqsign-aliyun-drive`, `reqsign-github`, `reqsign-onedrive`, and
   `reqsign-yandex-disk` start independent `1.0.0` version lines.

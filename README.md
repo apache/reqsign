@@ -239,6 +239,7 @@ let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
   - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
   - Backblaze B2 Native API: `reqsign-b2`
+  - Baidu Netdisk: `reqsign-baidu-netdisk`
   - Cloudflare API (KV, D1): `reqsign-cloudflare`
   - Dropbox: `reqsign-dropbox`
   - GitHub.com: `reqsign-github`

@@ -1,0 +1,83 @@
+---
+title: Baidu Netdisk
+description: Static access-token query signing for the Baidu Netdisk Open Platform.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="baidu-netdisk" />
+
+## Get started
+
+```bash
+cargo add reqsign --features baidu-netdisk
+```
+
+```rust
+use reqsign::{baidu_netdisk, default_context};
+
+// Supply the access token explicitly; Reqsign does not discover one.
+let ctx = default_context();
+let signer = baidu_netdisk::default_signer(ctx, "baidu-netdisk-access-token");
+
+let mut req = http::Request::get(
+    "https://pan.baidu.com/rest/2.0/xpan/file?method=list&dir=%2Fapps%2FMyApp",
+)
+.body(())?
+.into_parts()
+.0;
+
+// Adds access_token=<token> to the query string.
+signer.sign(&mut req, None).await?;
+```
+
+The [Baidu Netdisk Open Platform](https://pan.baidu.com/union/doc/) xpan APIs
+authenticate requests with an `access_token` query parameter. The signer
+removes any existing `access_token` parameter and appends one form-encoded
+parameter, so signing the same request again does not leave stale
+authentication. Existing percent escapes, parameter order, duplicate keys,
+empty values, literal `+` characters, and all headers are preserved.
+
+## Credentials
+
+`StaticCredentialProvider` accepts a token that the caller already obtained
+through Baidu's Open Platform authorization flow. Reqsign does not read an
+environment variable, a well-known credential file, or an OAuth token endpoint
+for Baidu Netdisk. OAuth refresh, single-use refresh-token rotation, and token
+persistence stay with the caller and are not implemented by this crate.
+
+The token is a secret. `Debug` output for credentials and the static provider
+never contains it. Because the token appears in the request URI, treat signed
+URLs and any logs or error output that include the URI as secret-bearing
+material.
+
+A token has no tracked expiry in this crate and is reused for the lifetime of
+the `Signer`. Replace the credential provider or create a new signer to use a
+different token. Query authentication has no separate presign lifetime here,
+so signing rejects `expires_in`.
+
+The caller owns the API host, method, path, other query parameters, headers
+(including `User-Agent`), and request body. Do not forward a signed request to
+an unrelated host.
+
+<ProviderDetails id="baidu-netdisk" />
