@@ -51,6 +51,9 @@ pub mod b2;
 #[cfg(feature = "dropbox")]
 pub mod dropbox;
 
+#[cfg(feature = "github")]
+pub mod github;
+
 #[cfg(feature = "google")]
 pub mod google;
 

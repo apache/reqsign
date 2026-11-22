@@ -83,10 +83,14 @@ Reqsign's core and a defined subset of providers compile for
 sandboxes. CI verifies this exact set on every commit:
 
 - `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-- Providers: **AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Aliyun
-  Drive, Backblaze B2, Tencent COS, Dropbox, Upyun** (facade features `aws`,
-  `aws-v4a`, `azure`, `aliyun`, `aliyun-drive`, `b2`, `tencent`, `dropbox`,
-  `oauth2`, `upyun`)
+- Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS,
+  Aliyun Drive, Backblaze B2, Tencent COS, Dropbox, Upyun** (facade features
+  `aws`, `aws-v4a`, `azure`, `github`, `aliyun`, `aliyun-drive`, `b2`, `tencent`,
+  `dropbox`, `oauth2`, `upyun`)
+
+GitHub environment, static, and anonymous signing need no JavaScript clock.
+GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in
+bare WASM runtimes.
 
 The [provider matrix](/docs/providers/) marks WASM status per provider;
 treat providers outside this set as unsupported there until the catalog says

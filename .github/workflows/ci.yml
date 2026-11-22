@@ -56,6 +56,7 @@ jobs:
             reqsign-azure-storage
             reqsign-b2
             reqsign-dropbox
+            reqsign-github
             reqsign-google
             reqsign-huaweicloud-obs
             reqsign-http-message-signatures
@@ -124,7 +125,7 @@ jobs:
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,tencent,dropbox,http-message-signatures,upyun
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,tencent,dropbox,github,http-message-signatures,upyun
 
   # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
   wasm_compat:
@@ -143,9 +144,10 @@ jobs:
           cargo check -p reqsign-http-message-signatures --target wasm32-unknown-unknown
           cargo check -p reqsign-aliyun-drive --target wasm32-unknown-unknown
           cargo check -p reqsign-oauth2 -p reqsign-dropbox --target wasm32-unknown-unknown
+          cargo check -p reqsign-github --target wasm32-unknown-unknown
           cargo check -p reqsign-upyun --target wasm32-unknown-unknown
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,tencent,dropbox,http-message-signatures,upyun
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,b2,tencent,dropbox,http-message-signatures,upyun
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,tencent,dropbox,github,http-message-signatures,upyun
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,b2,tencent,dropbox,github,http-message-signatures,upyun
 
   unit:
     runs-on: ubuntu-latest
@@ -160,9 +162,9 @@ jobs:
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
-      - name: Facade crypto feature tests
+      - name: Facade feature tests
         run: |
-          cargo test --package reqsign --all-features --test crypto --test default_signer --test aliyun_drive --test upyun
+          cargo test --package reqsign --all-features --test crypto --test default_signer --test aliyun_drive --test github --test upyun
           cargo test --package reqsign --no-default-features --features default-context --test crypto_without_default_crypto
       - name: Doc Test
         run: cargo +nightly test --doc --all-features --workspace
@@ -201,4 +203,5 @@ jobs:
           cargo test --target wasm32-unknown-unknown -p reqsign-aliyun-drive --test wasm
           cargo test --target wasm32-unknown-unknown -p reqsign-oauth2 --test wasm
           cargo test --target wasm32-unknown-unknown -p reqsign-dropbox --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-github --test wasm
           cargo test --target wasm32-unknown-unknown -p reqsign-upyun --test wasm

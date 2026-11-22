@@ -44,6 +44,7 @@ cargo add http anyhow
 | `azure` | Azure Storage |
 | `b2` | Backblaze B2 Native API |
 | `dropbox` | Dropbox |
+| `github` | GitHub.com |
 | `google` | Google Cloud |
 | `google-credential-access-boundary-client-side` | Client-side CAB downscoping (implies `google`) |
 | `aliyun` | Aliyun OSS |
@@ -111,6 +112,7 @@ composes that provider's own credential chain — the
 | [Azure Storage](/docs/providers/azure-storage/) | `azure::default_signer(ctx)` |
 | [Backblaze B2](/docs/providers/b2/) | `b2::default_signer(ctx)` |
 | [Dropbox](/docs/providers/dropbox/) | `dropbox::default_signer(ctx)` |
+| [GitHub](/docs/providers/github/) | `github::default_signer(ctx)` |
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |
 | [Aliyun Drive](/docs/providers/aliyun-drive/) | `aliyun_drive::default_signer(ctx)` |
