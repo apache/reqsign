@@ -16,7 +16,8 @@
 // under the License.
 
 use crate::Credential;
-use crate::provide_credential::utils::{parse_sts_error, sts_endpoint};
+use crate::provide_credential::sts_endpoint::resolve_sts_endpoint;
+use crate::provide_credential::utils::parse_sts_error;
 use bytes::Bytes;
 use form_urlencoded::Serializer;
 use quick_xml::de;
@@ -67,6 +68,19 @@ enum WebIdentityTokenSource {
 /// This provider reads configuration from:
 /// 1. An explicitly configured subject-token provider or token file
 /// 2. Environment variables when no explicit token source is configured
+///
+/// The STS endpoint follows the AWS SDKs' endpoint settings: an endpoint set with
+/// [`Self::with_sts_endpoint`], then `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL`, the selected
+/// profile's `sts` service `endpoint_url` and its global `endpoint_url`, and finally the
+/// regional or partition default. The selected profile is the one given to
+/// `DefaultCredentialProviderBuilder::with_profile`, else `AWS_PROFILE`, else `default`; it is
+/// read only after a role and a subject token are found, and only when the explicit endpoint
+/// or the environment does not already decide the endpoint. An endpoint may carry a path
+/// prefix: `https://host/prefix` sends the request to `/prefix/`. The global `AWS_ENDPOINT_URL` and profile `endpoint_url`
+/// therefore also redirect STS; set `AWS_ENDPOINT_URL_STS` (or the profile's `sts` service
+/// endpoint) to send STS elsewhere, or set `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true` (or the
+/// profile's `ignore_configured_endpoint_urls = true`) to ignore every configured endpoint
+/// except the explicit one.
 #[derive(Default, Clone)]
 pub struct AssumeRoleWithWebIdentityCredentialProvider {
     // Web Identity configuration
@@ -80,6 +94,9 @@ pub struct AssumeRoleWithWebIdentityCredentialProvider {
     // STS configuration
     region: Option<String>,
     use_regional_sts_endpoint: Option<bool>,
+    sts_endpoint: Option<String>,
+    /// Profile whose STS endpoint settings apply; `None` selects `AWS_PROFILE`, then `default`.
+    profile: Option<String>,
 }
 
 impl Debug for AssumeRoleWithWebIdentityCredentialProvider {
@@ -98,6 +115,13 @@ impl Debug for AssumeRoleWithWebIdentityCredentialProvider {
             .field("policy_arns", &self.policy_arns)
             .field("region", &self.region)
             .field("use_regional_sts_endpoint", &self.use_regional_sts_endpoint)
+            // Redacted: the setter stores the URL before it is validated, so it may carry
+            // credentials or other sensitive values.
+            .field(
+                "sts_endpoint",
+                &self.sts_endpoint.as_ref().map(|_| "<redacted>"),
+            )
+            .field("profile", &self.profile)
             .finish()
     }
 }
@@ -119,6 +143,8 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
             policy_arns: None,
             region: None,
             use_regional_sts_endpoint: None,
+            sts_endpoint: None,
+            profile: None,
         }
     }
 
@@ -193,6 +219,26 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
     /// Use regional STS endpoint.
     pub fn with_regional_sts_endpoint(mut self) -> Self {
         self.use_regional_sts_endpoint = Some(true);
+        self
+    }
+
+    /// Send the STS request to this endpoint, for example `https://sts.example.com:8443`.
+    ///
+    /// This takes precedence over every environment and profile endpoint setting, including
+    /// `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS`. The URL needs an `https` or `http` scheme and a
+    /// host, may carry a path prefix, and has no query.
+    ///
+    /// An `http://` endpoint sends the web identity token, and receives the temporary
+    /// credentials, in cleartext. Use it only on a network you trust to carry them.
+    pub fn with_sts_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.sts_endpoint = Some(endpoint.into());
+        self
+    }
+
+    /// Select the profile whose STS endpoint settings apply, ahead of `AWS_PROFILE` and
+    /// `default`. Set by `DefaultCredentialProviderBuilder::with_profile`.
+    pub(crate) fn with_profile(mut self, profile: String) -> Self {
+        self.profile = Some(profile);
         self
     }
 }
@@ -284,8 +330,15 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
                 .unwrap_or(false)
         });
 
-        let endpoint = sts_endpoint(region.as_deref(), use_regional)
-            .map_err(|e| e.with_context(format!("role_arn: {role_arn}")))?;
+        let endpoint = resolve_sts_endpoint(
+            ctx,
+            self.sts_endpoint.as_deref(),
+            self.profile.as_deref(),
+            region.as_deref(),
+            use_regional,
+        )
+        .await
+        .map_err(|e| e.with_context(format!("role_arn: {role_arn}")))?;
 
         // Get session name from config or environment or use default
         let session_name = self
@@ -319,7 +372,7 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
 
             serializer.finish()
         };
-        let url = format!("https://{endpoint}/");
+        let url = endpoint.url();
         let req = http::request::Request::builder()
             .method("POST")
             .uri(url)
@@ -332,14 +385,14 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
                 Error::request_invalid("failed to build STS AssumeRoleWithWebIdentity request")
                     .with_source(e)
                     .with_context(format!("role_arn: {role_arn}"))
-                    .with_context(format!("endpoint: https://{endpoint}"))
+                    .with_context(format!("endpoint: {endpoint}"))
             })?;
 
         let resp = ctx.http_send_as_string(req).await.map_err(|e| {
             Error::unexpected("failed to send AssumeRoleWithWebIdentity request to STS")
                 .with_source(e)
                 .with_context(format!("role_arn: {role_arn}"))
-                .with_context(format!("endpoint: https://{endpoint}"))
+                .with_context(format!("endpoint: {endpoint}"))
                 .set_retryable(true)
         })?;
 
@@ -712,6 +765,168 @@ mod tests {
         );
         assert_eq!(http_send.method(), Some(http::Method::POST));
         assert!(!format!("{first:?}").contains("first.subject.token"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn sts_endpoint_follows_explicit_and_environment_settings() -> Result<()> {
+        let http_body = r#"<AssumeRoleWithWebIdentityResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <AssumeRoleWithWebIdentityResult>
+    <Credentials>
+      <AccessKeyId>access_key_id</AccessKeyId>
+      <SecretAccessKey>secret_access_key</SecretAccessKey>
+      <SessionToken>session_token</SessionToken>
+      <Expiration>2124-05-25T11:45:17Z</Expiration>
+    </Credentials>
+  </AssumeRoleWithWebIdentityResult>
+</AssumeRoleWithWebIdentityResponse>"#;
+        let provider = || {
+            AssumeRoleWithWebIdentityCredentialProvider::new()
+                .with_role_arn("arn:aws:iam::123456789012:role/test-role")
+                .with_subject_token("subject-token")
+        };
+        let ctx = |envs: &[(&str, &str)], http: CaptureHttpSend| {
+            crate::test_context()
+                .with_http_send(http)
+                .with_env(StaticEnv {
+                    home_dir: None,
+                    envs: envs
+                        .iter()
+                        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                        .collect(),
+                })
+        };
+
+        let http = CaptureHttpSend::new(http_body);
+        provider()
+            .provide_credential(&ctx(
+                &[("AWS_ENDPOINT_URL_STS", "http://sts.internal:8333")],
+                http.clone(),
+            ))
+            .await?
+            .expect("credential must be loaded");
+        assert_eq!(http.uri().as_deref(), Some("http://sts.internal:8333/"));
+
+        let http = CaptureHttpSend::new(http_body);
+        provider()
+            .with_sts_endpoint("https://sts.example.com:8443")
+            .provide_credential(&ctx(
+                &[
+                    ("AWS_ENDPOINT_URL_STS", "http://sts.internal:8333"),
+                    ("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "true"),
+                ],
+                http.clone(),
+            ))
+            .await?
+            .expect("credential must be loaded");
+        assert_eq!(http.uri().as_deref(), Some("https://sts.example.com:8443/"));
+
+        let http = CaptureHttpSend::new(http_body);
+        provider()
+            .provide_credential(&ctx(
+                &[
+                    ("AWS_ENDPOINT_URL", "http://sts.internal:8333"),
+                    ("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS", "true"),
+                ],
+                http.clone(),
+            ))
+            .await?
+            .expect("credential must be loaded");
+        assert_eq!(http.uri().as_deref(), Some("https://sts.amazonaws.com/"));
+
+        let http = CaptureHttpSend::new(http_body);
+        provider()
+            .with_sts_endpoint("https://gateway.example.com:8443/sts")
+            .provide_credential(&ctx(&[], http.clone()))
+            .await?
+            .expect("credential must be loaded");
+        assert_eq!(
+            http.uri().as_deref(),
+            Some("https://gateway.example.com:8443/sts/"),
+            "the path prefix joins the STS operation path"
+        );
+
+        let http = CaptureHttpSend::new(http_body);
+        provider()
+            .with_sts_endpoint("https://gateway.example.com:8443/sts//")
+            .provide_credential(&ctx(&[], http.clone()))
+            .await?
+            .expect("credential must be loaded");
+        assert_eq!(
+            http.uri().as_deref(),
+            Some("https://gateway.example.com:8443/sts//"),
+            "repeated trailing slashes keep all but one, as in Smithy"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn debug_redacts_the_explicit_sts_endpoint() {
+        let provider = AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_sts_endpoint("https://user:secret-token@sts.example.com:notaport");
+        let debug = format!("{provider:?}");
+        assert!(!debug.contains("secret-token"), "{debug}");
+        assert!(
+            debug.contains("sts_endpoint: Some(\"<redacted>\")"),
+            "{debug}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_selected_profile_supplies_the_sts_endpoint() -> Result<()> {
+        #[derive(Debug)]
+        struct Config;
+        impl FileRead for Config {
+            async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+                assert_eq!(path, "/home/test/.aws/config");
+                Ok(b"[profile ambient]\nendpoint_url = https://ambient.example.com\n\n[profile prod]\nservices = prod-services\n\n[services prod-services]\nsts =\n  endpoint_url = http://sts.prod.internal:8333/prefix\n".to_vec())
+            }
+        }
+        let http_body = r#"<AssumeRoleWithWebIdentityResponse><AssumeRoleWithWebIdentityResult><Credentials><AccessKeyId>a</AccessKeyId><SecretAccessKey>s</SecretAccessKey><SessionToken>t</SessionToken><Expiration>2124-05-25T11:45:17Z</Expiration></Credentials></AssumeRoleWithWebIdentityResult></AssumeRoleWithWebIdentityResponse>"#;
+        let http = CaptureHttpSend::new(http_body);
+        let ctx = crate::test_context()
+            .with_file_read(Config)
+            .with_http_send(http.clone())
+            .with_env(StaticEnv {
+                home_dir: Some(PathBuf::from("/home/test")),
+                envs: HashMap::from([("AWS_PROFILE".to_string(), "ambient".to_string())]),
+            });
+
+        AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_role_arn("arn:aws:iam::123456789012:role/test-role")
+            .with_subject_token("subject-token")
+            .with_profile("prod".to_string())
+            .provide_credential(&ctx)
+            .await?
+            .expect("credential must be loaded");
+        assert_eq!(
+            http.uri().as_deref(),
+            Some("http://sts.prod.internal:8333/prefix/")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn without_a_role_and_token_no_endpoint_configuration_is_read() -> Result<()> {
+        #[derive(Debug)]
+        struct NoFileRead;
+        impl FileRead for NoFileRead {
+            async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+                panic!("no file may be read, got {path}")
+            }
+        }
+        let ctx = crate::test_context()
+            .with_file_read(NoFileRead)
+            .with_env(StaticEnv {
+                home_dir: Some(PathBuf::from("/home/test")),
+                envs: HashMap::new(),
+            });
+        let loaded = AssumeRoleWithWebIdentityCredentialProvider::new()
+            .with_profile("prod".to_string())
+            .provide_credential(&ctx)
+            .await?;
+        assert!(loaded.is_none());
         Ok(())
     }
 

@@ -219,6 +219,20 @@ after a process restart, the disk registration and refresh token must still be
 usable. Legacy inline SSO configurations do not refresh, and Reqsign never
 starts interactive login.
 
+OAuth 2.0 refresh grants for Dropbox and later service crates follow the same
+in-memory model. Each `RefreshTokenGrant` retains only its latest refresh token;
+clones share that state and serialize the complete exchange from reading the
+old token through committing a replacement. Independently constructed grants
+and processes do not coordinate, and Reqsign never writes refresh tokens to
+disk. Refreshed access tokens are cached only by `Signer`, not by the shared
+grant. If a provider rotates a refresh token but its response is lost, Reqsign
+cannot recover the server-side token; the caller must supply a new one. The
+shared grant sends only the RFC 6749 form fields to its configured HTTPS token
+endpoint, does not send HTTP Basic authentication at the same time, and does
+not retry or discover another endpoint. The service crate rejects a refreshed
+credential whose required expiration is missing or already past instead of
+treating it as permanent.
+
 ### 4.3 Credential redaction and observability
 
 Reqsign must avoid exposing credentials through `Debug` output, error chains,
@@ -285,6 +299,18 @@ static or SSO credentials configured for that graph. Missing source profiles,
 cycles, conflicting `credential_source`, and an SSO source whose slot was
 removed fail without selecting a later provider. The STS requests use only the
 regional endpoint implied by the selected signing region.
+
+`AssumeRoleCredentialProvider` and `AssumeRoleWithWebIdentityCredentialProvider`
+send STS requests to the endpoint configured on the provider, including any path
+prefix it carries; otherwise to the first of `AWS_ENDPOINT_URL_STS`,
+`AWS_ENDPOINT_URL`, the selected profile's `sts` service `endpoint_url`, and the
+profile's `endpoint_url`, unless
+`AWS_IGNORE_CONFIGURED_ENDPOINT_URLS` or the profile's
+`ignore_configured_endpoint_urls` is true; and otherwise to the regional or
+partition default. Endpoint settings in the environment and the shared config
+file are trusted caller configuration, as in the AWS SDKs. An `http://` endpoint
+carries the web identity token or signed request, and the returned temporary
+credentials, in cleartext; choosing one is the caller's responsibility.
 
 AWS shared configuration and region discovery are separate from credential
 acquisition. Loading `SharedConfig` does not execute credential processes or

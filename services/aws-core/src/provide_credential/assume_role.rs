@@ -21,9 +21,20 @@ use reqsign_core::{Context, ProvideCredential, Result, Signer};
 
 use crate::Credential;
 use crate::assume_role::{AssumeRoleGrant, AssumeRoleOperation};
-use crate::provide_credential::utils::sts_endpoint;
+use crate::provide_credential::sts_endpoint::resolve_sts_endpoint;
 
 /// Loads credentials through one fixed AWS STS `AssumeRole` flow.
+///
+/// The STS endpoint follows the AWS SDKs' endpoint settings: an endpoint set with
+/// [`Self::with_sts_endpoint`], then `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL`, the selected
+/// profile's `sts` service `endpoint_url` and its global `endpoint_url`, and finally the
+/// regional or partition default. The global `AWS_ENDPOINT_URL` and profile `endpoint_url`
+/// therefore also redirect STS; set `AWS_ENDPOINT_URL_STS` (or the profile's `sts` service
+/// endpoint) to send STS elsewhere, or set `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true` (or the
+/// profile's `ignore_configured_endpoint_urls = true`) to ignore every configured endpoint
+/// except the explicit one. The profile is `AWS_PROFILE`, else `default`. An endpoint may
+/// carry a path prefix: `https://host/prefix` sends the request to `/prefix/`, and that final
+/// path is what the STS signer signs, for the region it was built with, whatever the endpoint.
 ///
 /// Use [`reqsign_core::Granter`] with the SigV4 crate's explicit AssumeRole
 /// granter when the source credential and grant are supplied per vending
@@ -33,6 +44,7 @@ pub struct AssumeRoleCredentialProvider {
     duration_seconds: Option<u32>,
     region: Option<String>,
     use_regional_sts_endpoint: bool,
+    sts_endpoint: Option<String>,
     sts_signer: Signer<Credential>,
 }
 
@@ -51,6 +63,7 @@ impl AssumeRoleCredentialProvider {
             duration_seconds: Some(3_600),
             region: None,
             use_regional_sts_endpoint: false,
+            sts_endpoint: None,
             sts_signer,
         }
     }
@@ -103,6 +116,19 @@ impl AssumeRoleCredentialProvider {
         self
     }
 
+    /// Send the STS request to this endpoint, for example `https://sts.example.com:8443`.
+    ///
+    /// This takes precedence over every environment and profile endpoint setting, including
+    /// `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS`. The URL needs an `https` or `http` scheme and a
+    /// host, may carry a path prefix, and has no query.
+    ///
+    /// An `http://` endpoint sends the signed request, and receives the temporary
+    /// credentials, in cleartext. Use it only on a network you trust to carry them.
+    pub fn with_sts_endpoint(mut self, endpoint: impl Into<String>) -> Self {
+        self.sts_endpoint = Some(endpoint.into());
+        self
+    }
+
     /// Set the MFA serial number.
     pub fn with_mfa_serial(mut self, serial_number: String) -> Self {
         self.grant.serial_number = Some(serial_number);
@@ -145,8 +171,16 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
             Some(region) => self.grant.validate_for_region(region)?,
             None => self.grant.validate_for_partition("aws")?,
         }
-        let endpoint = sts_endpoint(self.region.as_deref(), self.use_regional_sts_endpoint)?;
-        let operation = AssumeRoleOperation::new(endpoint, &self.grant, self.duration_seconds)?;
+        let endpoint = resolve_sts_endpoint(
+            ctx,
+            self.sts_endpoint.as_deref(),
+            None,
+            self.region.as_deref(),
+            self.use_regional_sts_endpoint,
+        )
+        .await?;
+        let operation =
+            AssumeRoleOperation::with_endpoint(endpoint, &self.grant, self.duration_seconds)?;
         operation.execute(ctx, &self.sts_signer).await.map(Some)
     }
 }

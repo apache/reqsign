@@ -42,6 +42,9 @@ pub mod aws;
 #[cfg(feature = "azure")]
 pub mod azure;
 
+#[cfg(feature = "dropbox")]
+pub mod dropbox;
+
 #[cfg(feature = "google")]
 pub mod google;
 
@@ -50,6 +53,9 @@ pub mod huaweicloud;
 
 #[cfg(feature = "http-message-signatures")]
 pub mod http_message_signatures;
+
+#[cfg(feature = "oauth2")]
+pub mod oauth2;
 
 #[cfg(feature = "openstack")]
 pub mod openstack;
