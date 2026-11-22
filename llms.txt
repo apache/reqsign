@@ -33,6 +33,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 - [Google Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/google/): OAuth 2.0 tokens and V4 signed URLs for Google Cloud services.
 - [HTTP Message Signatures (RFC 9421) | Apache Reqsign™](https://reqsign.apache.org/docs/providers/http-message-signatures/): RFC 9421 request signatures with caller-selected covered components.
 - [Huawei Cloud OBS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/huaweicloud-obs/): OBS signature signing for Huawei Cloud Object Storage.
+- [Koofr | Apache Reqsign™](https://reqsign.apache.org/docs/providers/koofr/): Token exchange and request signing for Koofr and Koofr-compatible storage.
 - [OneDrive | Apache Reqsign™](https://reqsign.apache.org/docs/providers/onedrive/): Microsoft Graph access tokens and Microsoft Entra refresh-token exchange for OneDrive.
 - [OpenStack Keystone | Apache Reqsign™](https://reqsign.apache.org/docs/providers/openstack-keystone/): Keystone v3 token authentication, X-Auth-Token signing, and Swift TempURL presigning for OpenStack services.
 - [Oracle Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/oracle/): OCI HTTP request signatures from API keys and config files.
