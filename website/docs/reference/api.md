@@ -57,9 +57,12 @@ rustdoc owns signatures.
 - [`reqsign-koofr`](https://docs.rs/reqsign-koofr)
 - [`reqsign-openstack-keystone`](https://docs.rs/reqsign-openstack-keystone)
 - [`reqsign-oracle`](https://docs.rs/reqsign-oracle)
+- [`reqsign-seafile`](https://docs.rs/reqsign-seafile)
 - [`reqsign-tencent-cos`](https://docs.rs/reqsign-tencent-cos)
 - [`reqsign-upyun`](https://docs.rs/reqsign-upyun)
+- [`reqsign-vercel`](https://docs.rs/reqsign-vercel)
 - [`reqsign-volcengine-tos`](https://docs.rs/reqsign-volcengine-tos)
+- [`reqsign-yandex-disk`](https://docs.rs/reqsign-yandex-disk)
 
 ## Shared token support
 

@@ -81,14 +81,23 @@ pub mod openstack;
 #[cfg(feature = "oracle")]
 pub mod oracle;
 
+#[cfg(feature = "seafile")]
+pub mod seafile;
+
 #[cfg(feature = "tencent")]
 pub mod tencent;
 
 #[cfg(feature = "upyun")]
 pub mod upyun;
 
+#[cfg(feature = "vercel")]
+pub mod vercel;
+
 #[cfg(feature = "volcengine")]
 pub mod volcengine;
+
+#[cfg(feature = "yandex-disk")]
+pub mod yandex_disk;
 
 #[cfg(all(test, feature = "aws-v4"))]
 mod tests {

@@ -33,7 +33,7 @@ export default function Home() {
   return (
     <Layout
       title="Build. Sign. Send."
-      description="Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Cloudflare, Dropbox, GitHub, OneDrive, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine — without pulling in full vendor SDKs."
+      description="Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Cloudflare, Dropbox, GitHub, OneDrive, Google, Aliyun, Huawei Cloud, Oracle, Tencent, Vercel, Volcengine, and Yandex Disk — without pulling in full vendor SDKs."
     >
       <main>
         <Hero />

@@ -356,6 +356,129 @@
       "credential_provider_crate": "reqsign-azure-storage"
     },
     {
+      "id": "vercel-blob",
+      "display_name": "Vercel Blob",
+      "family": "Vercel",
+      "blurb": "Vercel Blob read-write tokens, discovered from the deployment environment.",
+      "service_scope": "Vercel Blob API requests authenticated with a read-write token. The endpoint, pathname, access level, upload options, and Blob API headers stay with the caller.",
+      "signing_schemes": [
+        "Bearer token"
+      ],
+      "crates": [
+        "reqsign-vercel"
+      ],
+      "facade_features": [
+        {
+          "name": "vercel",
+          "capability": "Enables reqsign-vercel."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::vercel::default_blob_signer(ctx)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "BLOB_READ_WRITE_TOKEN",
+          "provider": "BlobEnvCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts a sensitive Authorization: Bearer header and leaves the URI and every other header unchanged; expires_in is rejected because Vercel Blob has no query authentication."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-vercel and builds the facade with --features vercel for wasm32-unknown-unknown. Environment, static, and header signing run under wasm-bindgen-test without a JavaScript clock."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Environment and static credentials, slot removal, cross-service source isolation, fail-closed errors, redaction, and header signing are asserted with fabricated tokens; no live Vercel traffic is required.",
+        "refs": [
+          "services/vercel/tests"
+        ]
+      },
+      "source_refs": [
+        "services/vercel/src/blob"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static Vercel Blob read-write token",
+          "provider": "BlobStaticCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-vercel"
+    },
+    {
+      "id": "vercel-artifacts",
+      "display_name": "Vercel Artifacts",
+      "family": "Vercel",
+      "blurb": "Vercel Artifacts bearer tokens for the Turborepo Remote Cache.",
+      "service_scope": "Vercel Artifacts API requests at https://api.vercel.com/v8/artifacts authenticated with a bearer token. The cache key, team or owner scope query, endpoint, and artifact headers stay with the caller.",
+      "signing_schemes": [
+        "Bearer token"
+      ],
+      "crates": [
+        "reqsign-vercel"
+      ],
+      "facade_features": [
+        {
+          "name": "vercel",
+          "capability": "Enables reqsign-vercel."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::vercel::default_artifacts_signer(ctx)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "TURBO_TOKEN",
+          "provider": "ArtifactsEnvCredentialProvider"
+        },
+        {
+          "id": "vercel_env",
+          "label": "VERCEL_ARTIFACTS_TOKEN injected by Vercel",
+          "provider": "ArtifactsVercelEnvCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts a sensitive Authorization: Bearer header and leaves the URI and every other header unchanged; expires_in is rejected because the Vercel Remote Cache API has no query authentication."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-vercel and builds the facade with --features vercel for wasm32-unknown-unknown. Environment, static, and header signing run under wasm-bindgen-test without a JavaScript clock."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Environment precedence, slot removal, cross-service source isolation, fail-closed errors, redaction, and header signing are asserted with fabricated tokens; no live Vercel traffic is required.",
+        "refs": [
+          "services/vercel/tests"
+        ]
+      },
+      "source_refs": [
+        "services/vercel/src/artifacts"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static Vercel Artifacts bearer token",
+          "provider": "ArtifactsStaticCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-vercel"
+    },
+    {
       "id": "cloudflare",
       "display_name": "Cloudflare",
       "family": "Cloudflare",
@@ -1389,6 +1512,123 @@
         }
       ],
       "credential_provider_crate": "reqsign-onedrive"
+    },
+    {
+      "id": "yandex-disk",
+      "display_name": "Yandex Disk",
+      "family": "Yandex",
+      "blurb": "OAuth access-token injection for the Yandex Disk REST API.",
+      "service_scope": "Yandex Disk REST API requests to cloud-api.yandex.net authenticated with an OAuth access token. The API version, resource path, query parameters, upload or download URLs, and storage parameters stay with the caller.",
+      "signing_schemes": [
+        "OAuth access token"
+      ],
+      "crates": [
+        "reqsign-yandex-disk"
+      ],
+      "facade_features": [
+        {
+          "name": "yandex-disk",
+          "capability": "Enables reqsign-yandex-disk."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::yandex_disk::default_signer(ctx, access_token)"
+      },
+      "credential_sources": [],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts a sensitive Authorization: OAuth header and leaves the URI and every other header unchanged; expires_in is rejected because Yandex Disk has no query authentication."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-yandex-disk and builds the facade with --features yandex-disk for wasm32-unknown-unknown. Static credentials without an expiry and header signing run under wasm-bindgen-test without a JavaScript clock."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Static and explicitly configured credentials, the empty default chain, fail-closed invalid values, token validation, expiration and refresh boundaries, redaction, header sensitivity, request preservation, and facade wiring are asserted with fabricated tokens; no live Yandex traffic is required.",
+        "refs": [
+          "services/yandex-disk/tests"
+        ]
+      },
+      "source_refs": [
+        "services/yandex-disk/src"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static Yandex Disk OAuth access token",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-yandex-disk"
+    },
+    {
+      "id": "seafile",
+      "display_name": "Seafile",
+      "family": "Seafile",
+      "blurb": "Account-token exchange and Token header signing for self-hosted Seafile.",
+      "service_scope": "Self-hosted Seafile Web API requests authenticated with an account token or repository API token.",
+      "signing_schemes": [
+        "Authorization: Token header"
+      ],
+      "crates": [
+        "reqsign-seafile"
+      ],
+      "facade_features": [
+        {
+          "name": "seafile",
+          "capability": "Enables reqsign-seafile."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::seafile::default_signer(ctx)"
+      },
+      "credential_sources": [
+        {
+          "id": "config_file",
+          "label": "Seafile CLI user configuration (~/.seafile.conf)",
+          "provider": "ConfigFileCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts a sensitive Authorization: Token header. Configuration-discovered and account-exchange credentials are bound to the deployment scheme, host, effective port, and base path; static credentials remain caller-scoped. Seafile has no query authentication, so expires_in is rejected."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-seafile, builds the facade with --features seafile, and runs its wasm signing test for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Account-token exchange, configuration-file discovery, account selection, deployment-scope checks across cached signing, content-free errors, and header redaction are asserted against injected mock HTTP and file readers; no live Seafile API is used.",
+        "refs": [
+          "services/seafile/tests"
+        ]
+      },
+      "source_refs": [
+        "services/seafile"
+      ],
+      "last_verified": "2026-11-22",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static account or repository API token",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "account",
+          "label": "Configured username and password exchange",
+          "provider": "AccountTokenCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-seafile"
     },
     {
       "id": "koofr",

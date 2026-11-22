@@ -38,6 +38,7 @@ Use this skill when preparing or executing an Apache Reqsign release.
 
    - `reqsign`: patch bump, for example `0.20.0 -> 0.20.1`.
    - Crate with new public capability: minor bump, for example `reqsign-aliyun-oss 3.0.0 -> 3.1.0`.
+   - New provider crates use independent versions starting at `1.0.0`; bump them by their own change, not the core lockstep.
    - Other workspace crates published in the same workspace release: patch bump.
    - Keep root `[workspace.dependencies]` version requirements aligned with each crate manifest.
 
@@ -315,7 +316,7 @@ NAME
      reqsign-oauth2 reqsign-dropbox reqsign-onedrive reqsign-http-message-signatures reqsign-github \
      reqsign-command-execute-tokio reqsign-file-read-tokio reqsign-google \
      reqsign-http-send-reqwest reqsign-huaweicloud-obs reqsign-oracle \
-     reqsign-tencent-cos reqsign-upyun reqsign-volcengine-tos
+     reqsign-seafile reqsign-tencent-cos reqsign-upyun reqsign-vercel reqsign-volcengine-tos reqsign-yandex-disk
    do
      cargo info "$c" --registry crates-io | sed -n '1,4p'
    done

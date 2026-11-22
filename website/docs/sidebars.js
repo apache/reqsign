@@ -39,6 +39,8 @@ module.exports = {
         "providers/aws-sigv4",
         "providers/aws-sigv4a",
         "providers/azure-storage",
+        "providers/vercel-blob",
+        "providers/vercel-artifacts",
         "providers/b2",
         "providers/cloudflare",
         "providers/github",
@@ -55,6 +57,8 @@ module.exports = {
         "providers/dropbox",
         "providers/koofr",
         "providers/onedrive",
+        "providers/yandex-disk",
+        "providers/seafile",
       ],
     },
     {

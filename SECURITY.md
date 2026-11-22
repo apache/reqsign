@@ -34,7 +34,8 @@ When reporting, include:
 - the affected signing service, such as AWS SigV4, Azure Storage, Cloudflare,
   Dropbox, Backblaze B2, GitHub, OneDrive, Google, Aliyun OSS, Aliyun Drive,
   Huawei Cloud OBS, HTTP Message Signatures (RFC 9421), Oracle Cloud, Tencent
-  COS, Volcengine TOS, or another supported service;
+  COS, Volcengine TOS, Vercel Blob, Vercel Artifacts, Yandex Disk, or another
+  supported service;
 - whether the issue affects direct `reqsign` use, Apache OpenDAL integration,
   or another embedding application;
 - a minimal reproduction, affected request, credential-provider configuration,
