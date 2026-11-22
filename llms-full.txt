@@ -1,6 +1,6 @@
 # Apache Reqsign™: Build. Sign. Send.
 
-> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Dropbox, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.
+> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.
 
 Reqsign keeps explicit per-provider signing protocols while sharing one composition pattern: build the request, load or grant credentials, sign, then send with your own HTTP client.
 
@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-14signing providers
+15signing providers
 
 5granting operations
 
-9WASM-ready providers
+10WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 14 providers. Explicit schemes.
+## 15 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -792,6 +792,7 @@ cargo add http anyhow
 | azure                                         | Azure Storage                                |
 | b2                                            | Backblaze B2 Native API                      |
 | dropbox                                       | Dropbox                                      |
+| github                                        | GitHub.com                                   |
 | google                                        | Google Cloud                                 |
 | google-credential-access-boundary-client-side | Client-side CAB downscoping (implies google) |
 | aliyun                                        | Aliyun OSS                                   |
@@ -897,6 +898,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [Azure Storage](/docs/providers/azure-storage/)                                | azure::default\_signer(ctx)                                      |
 | [Backblaze B2](/docs/providers/b2/)                                            | b2::default\_signer(ctx)                                         |
 | [Dropbox](/docs/providers/dropbox/)                                            | dropbox::default\_signer(ctx)                                    |
+| [GitHub](/docs/providers/github/)                                              | github::default\_signer(ctx)                                     |
 | [Google Cloud](/docs/providers/google/)                                        | google::default\_signer(ctx, service)                            |
 | [Aliyun OSS](/docs/providers/aliyun-oss/)                                      | aliyun::default\_signer(ctx, bucket)                             |
 | [Aliyun Drive](/docs/providers/aliyun-drive/)                                  | aliyun\_drive::default\_signer(ctx)                              |
@@ -989,6 +991,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | [Volcengine TOS](/docs/providers/volcengine-tos/)                              | TOS signature                                             | ✓      | ✓               | —        | —    |
 | [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | RFC 9421 HMAC-SHA256, RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256 | ✓      | —               | —        | ✓    |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | X-Auth-Token header                                       | ✓      | —               | —        | —    |
+| [GitHub](/docs/providers/github/)                                              | Bearer token                                              | ✓      | —               | —        | ✓    |
 | [Dropbox](/docs/providers/dropbox/)                                            | OAuth 2.0 bearer token                                    | ✓      | —               | —        | ✓    |
 
 CI checks crate, feature, page, and source-path consistency; capability semantics are reviewed by maintainers. Found a mismatch? [Open an issue.](https://github.com/apache/reqsign/issues)
@@ -1380,7 +1383,9 @@ Slots you do not provide stay as no-op stubs that error when used — a credenti
 Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
 
 * `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Aliyun Drive, Tencent COS, Dropbox** (facade features `aws`, `aws-v4a`, `azure`,`aliyun`, `aliyun-drive`, `tencent`, `dropbox`, `oauth2`)
+* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Tencent COS, Dropbox** (facade features `aws`,`aws-v4a`, `azure`, `github`, `aliyun`, `aliyun-drive`, `b2`, `tencent`,`dropbox`, `oauth2`)
+
+GitHub environment, static, and anonymous signing need no JavaScript clock. GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in bare WASM runtimes.
 
 The [provider matrix](/docs/providers/) marks WASM status per provider; treat providers outside this set as unsupported there until the catalog says otherwise.
 
@@ -2467,6 +2472,145 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 ---
 
 ---
+url: https://reqsign.apache.org/docs/providers/github/
+---
+# GitHub | Apache Reqsign™
+
+# GitHub
+
+GitHub.com REST API requests at https://api.github.com, authenticated with a bearer token or sent anonymously for public resources.
+
+Bearer token✓ header signing— query / presign✓ WASM[docs.rs/reqsign-github ↗](https://docs.rs/reqsign-github)
+
+Inserts a sensitive Authorization: Bearer header for token credentials and removes any existing Authorization header for anonymous credentials; other headers and the URI are unchanged, and expires\_in is rejected.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features github
+
+
+```
+
+```
+
+use reqsign::{default_context, github};
+
+
+// GH_TOKEN/GITHUB_TOKEN, then the GitHub CLI, then anonymous public access.
+
+let ctx = default_context();
+
+let signer = github::default_signer(ctx);
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://api.github.com/repos/apache/reqsign/contents/README.md")
+
+    .header("user-agent", "my-application")
+
+    .header("x-github-api-version", "2022-11-28")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+The default chain reads `GH_TOKEN` before `GITHUB_TOKEN`. If neither is set and the context has a `CommandExecute` adapter, it resolves the active stored account with `gh config get user --host github.com`, then reads that account's token with`gh auth token --hostname github.com --user <user> --no-refresh`. The explicit user prevents `GH_TOKEN` or `GITHUB_TOKEN` in the child process environment from shadowing the stored credential; safe stored-token discovery requires GitHub CLI 2.40.0 or newer. The commands run directly, never through a shell; the explicit host keeps discovery independent of `GH_HOST` and local Git remotes; and Reqsign does not parse the CLI's configuration files.
+
+`--no-refresh` keeps discovery read-only on GitHub CLI 2.103.0 and newer. Older supported versions do not refresh when printing a stored token, so the provider retries without the flag only after the CLI reports that specific flag as unknown. If the stored token has expired, run `gh auth refresh`, then recreate the signer so it loads the new token.
+
+The default slots stop at the first error instead of silently selecting a different identity. A malformed environment token, malformed or failed stored-token discovery, or an invalid prepended or static provider fails signing. Only an absent credential reaches anonymous access.
+
+With no token, the chain ends with anonymous access. Signing with an anonymous credential removes any existing `Authorization` header and leaves other headers and the URI unchanged, so a reused request cannot carry stale authentication material. Anonymous requests can read public resources and are subject to GitHub's 60-requests-per-hour unauthenticated rate limit. Remove the fallback with `.no_anonymous()` when every request must be authenticated.
+
+## Explicit credentials[​](#explicit-credentials "Direct link to Explicit credentials")
+
+Replace the provider for a token managed by your application:
+
+```
+
+use reqsign::github::{StaticCredentialProvider, default_signer};
+
+
+let ctx = reqsign::default_context();
+
+let signer = default_signer(ctx)
+
+    .with_credential_provider(StaticCredentialProvider::new("github-token"));
+
+
+```
+
+The builder exposes one positive method and one removal method per slot:
+
+```
+
+use reqsign::github::DefaultCredentialProvider;
+
+
+let provider = DefaultCredentialProvider::builder()
+
+    .no_env()
+
+    .no_gh_cli()
+
+    .build();
+
+
+```
+
+Removed slots are not re-enabled during `build()`. `.env(provider)`,`.gh_cli(provider)`, and `.anonymous(provider)` replace a slot, while`push_front` and `with_chain` compose a provider in front of or instead of the default chain.
+
+## Request behavior[​](#request-behavior "Direct link to Request behavior")
+
+`RequestSigner` adds a sensitive `Authorization: Bearer` header for a token credential and removes any existing `Authorization` header for an explicit anonymous credential. Other headers and the URI are unchanged. It does not add or replace `User-Agent` (GitHub requires the caller to send one), `Accept`, or`X-GitHub-Api-Version`, so keep those request headers in the caller. GitHub has no query authentication, so signing rejects `expires_in`. GitHub credentials in this crate carry no expiration and signing writes no protocol time, so signing has no clock dependency.
+
+## Host and scope[​](#host-and-scope "Direct link to Host and scope")
+
+The built-in providers discover GitHub.com credentials only. They ignore`GH_HOST`, `GH_ENTERPRISE_TOKEN`, and `GITHUB_ENTERPRISE_TOKEN`; use`StaticCredentialProvider` or a custom provider for GitHub Enterprise Server.`GH_TOKEN` and `GITHUB_TOKEN` are interpreted as the GitHub CLI's GitHub.com token; pass the intended token explicitly when you use multiple hosts. The signer does not restrict the request host, so caller-supplied credentials may be used with another GitHub host. GitHub assigns each token's host and its OAuth scopes or fine-grained repository permissions. Reqsign neither requests nor inspects them, and it does not implement GitHub App installation-token exchange.
+
+The caller owns the HTTP client and its redirect policy. Do not forward the signed `Authorization` header to a different host.
+
+## WASM[​](#wasm "Direct link to WASM")
+
+Environment, static, and anonymous signing work on `wasm32-unknown-unknown`without a JavaScript clock. GitHub CLI discovery requires a `CommandExecute`adapter and is unavailable in bare WASM runtimes.
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. GH\_TOKEN, then GITHUB\_TOKEN, for github.com
+2. Stored GitHub.com token from gh config get user and gh auth token --user (gh 2.40+)
+3. Anonymous public access
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-github/latest/reqsign%5Fgithub/struct.EnvCredentialProvider.html) — GH\_TOKEN, then GITHUB\_TOKEN, for github.com
+* [GhCliCredentialProvider](https://docs.rs/reqsign-github/latest/reqsign%5Fgithub/struct.GhCliCredentialProvider.html) — Stored GitHub.com token from gh config get user and gh auth token --user (gh 2.40+)
+* [AnonymousCredentialProvider](https://docs.rs/reqsign-github/latest/reqsign%5Fgithub/struct.AnonymousCredentialProvider.html) — Anonymous public access
+* [StaticCredentialProvider](https://docs.rs/reqsign-github/latest/reqsign%5Fgithub/struct.StaticCredentialProvider.html) — Static GitHub token
+
+---
+
+---
 url: https://reqsign.apache.org/docs/providers/google/
 ---
 # Google Cloud | Apache Reqsign™
@@ -3074,6 +3218,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-azure-storage](https://docs.rs/reqsign-azure-storage)
 * [reqsign-b2](https://docs.rs/reqsign-b2)
 * [reqsign-dropbox](https://docs.rs/reqsign-dropbox)
+* [reqsign-github](https://docs.rs/reqsign-github)
 * [reqsign-google](https://docs.rs/reqsign-google)
 * [reqsign-aliyun-oss](https://docs.rs/reqsign-aliyun-oss)
 * [reqsign-aliyun-drive](https://docs.rs/reqsign-aliyun-drive)
@@ -3215,7 +3360,7 @@ Reqsign publishes many crates on four tracks:
 | Track                          | Crates                                                                                                                                  | Scheme                                                                              |
 | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio | Lockstep major (currently 3.x)                                                      |
-| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, and later crates introduced after the lockstep line                                        | Independent major, starting at 1.0.0                                                |
+| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, reqsign-aliyun-drive, reqsign-github, and later crates introduced after the lockstep line  | Independent major, starting at 1.0.0                                                |
 | Reqwest adapter                | reqsign-http-send-reqwest                                                                                                               | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
 | Facade                         | reqsign                                                                                                                                 | Independent (currently 0.20.x)                                                      |
 
@@ -3247,7 +3392,7 @@ Every release ships as an ASF source release plus crates.io packages — see[Dow
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
 
-**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Aliyun Drive, Backblaze B2, Tencent COS, and Dropbox providers. The shared `reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Dropbox, OAuth2, and Aliyun Drive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Tencent COS, and Dropbox providers. The shared `reqsign-oauth2` crate and the`oauth2` facade feature are checked in the same subset. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute` adapter and is unavailable in bare WASM runtimes. Dropbox, OAuth2, and Aliyun Drive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
 
