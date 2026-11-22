@@ -8,7 +8,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 
 ### Docs
 
-- [Build. Sign. Send. | Apache Reqsign™](https://reqsign.apache.org/): Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine — without pulling in full vendor SDKs.
+- [Build. Sign. Send. | Apache Reqsign™](https://reqsign.apache.org/): Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Cloudflare, Dropbox, GitHub, OneDrive, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine — without pulling in full vendor SDKs.
 - [Community | Apache Reqsign™](https://reqsign.apache.org/community/): How Apache Reqsign is governed and where to ask questions, report issues, and contribute.
 - [Download | Apache Reqsign™](https://reqsign.apache.org/download/): Official Apache source releases, signatures, checksums, and crates.io convenience packages for Apache Reqsign.
 - [Architecture | Apache Reqsign™](https://reqsign.apache.org/docs/architecture/): How Reqsign is put together — Context, ProvideCredential, SignRequest, Signer, and Granter — and the three levels at which you can plug in.
@@ -33,6 +33,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 - [Google Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/google/): OAuth 2.0 tokens and V4 signed URLs for Google Cloud services.
 - [HTTP Message Signatures (RFC 9421) | Apache Reqsign™](https://reqsign.apache.org/docs/providers/http-message-signatures/): RFC 9421 request signatures with caller-selected covered components.
 - [Huawei Cloud OBS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/huaweicloud-obs/): OBS signature signing for Huawei Cloud Object Storage.
+- [OneDrive | Apache Reqsign™](https://reqsign.apache.org/docs/providers/onedrive/): Microsoft Graph access tokens and Microsoft Entra refresh-token exchange for OneDrive.
 - [OpenStack Keystone | Apache Reqsign™](https://reqsign.apache.org/docs/providers/openstack-keystone/): Keystone v3 token authentication, X-Auth-Token signing, and Swift TempURL presigning for OpenStack services.
 - [Oracle Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/oracle/): OCI HTTP request signatures from API keys and config files.
 - [Tencent COS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/tencent-cos/): COS signatures with OIDC federation for Tencent Cloud Object Storage.

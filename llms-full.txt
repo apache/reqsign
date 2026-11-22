@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-16signing providers
+17signing providers
 
 5granting operations
 
-11WASM-ready providers
+12WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 16 providers. Explicit schemes.
+## 17 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -801,6 +801,7 @@ cargo add http anyhow
 | huaweicloud                                   | Huawei Cloud OBS                             |
 | http-message-signatures                       | RFC 9421 request signatures                  |
 | oauth2                                        | Shared OAuth 2.0 refresh-token grant         |
+| onedrive                                      | OneDrive                                     |
 | openstack                                     | OpenStack Keystone                           |
 | oracle                                        | Oracle Cloud                                 |
 | tencent                                       | Tencent COS                                  |
@@ -901,6 +902,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [Cloudflare](/docs/providers/cloudflare/)                                      | cloudflare::default\_signer(ctx)                                 |
 | [Dropbox](/docs/providers/dropbox/)                                            | dropbox::default\_signer(ctx)                                    |
 | [GitHub](/docs/providers/github/)                                              | github::default\_signer(ctx)                                     |
+| [OneDrive](/docs/providers/onedrive/)                                          | onedrive::default\_signer(ctx)                                   |
 | [Google Cloud](/docs/providers/google/)                                        | google::default\_signer(ctx, service)                            |
 | [Aliyun OSS](/docs/providers/aliyun-oss/)                                      | aliyun::default\_signer(ctx, bucket)                             |
 | [Aliyun Drive](/docs/providers/aliyun-drive/)                                  | aliyun\_drive::default\_signer(ctx)                              |
@@ -911,7 +913,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [Tencent COS](/docs/providers/tencent-cos/)                                    | tencent::default\_signer(ctx)                                    |
 | [Volcengine TOS](/docs/providers/volcengine-tos/)                              | volcengine::default\_signer(ctx, region)                         |
 
-Aliyun Drive has no documented ambient source; replace its default provider with a static access token or refresh-token provider.
+Aliyun Drive has no documented ambient source; replace its default provider with a static access token or refresh-token provider. OneDrive's default chain is also empty; prepend a refresh-token or static provider explicitly.
 
 A default signer is an ordinary `Signer`: replace any component and keep the rest —
 
@@ -996,6 +998,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | X-Auth-Token header, Swift TempURL (HMAC-SHA1/256/512)    | ✓      | ✓               | —        | —    |
 | [GitHub](/docs/providers/github/)                                              | Bearer token                                              | ✓      | —               | —        | ✓    |
 | [Dropbox](/docs/providers/dropbox/)                                            | OAuth 2.0 bearer token                                    | ✓      | —               | —        | ✓    |
+| [OneDrive](/docs/providers/onedrive/)                                          | OAuth 2.0 bearer token                                    | ✓      | —               | —        | ✓    |
 
 CI checks crate, feature, page, and source-path consistency; capability semantics are reviewed by maintainers. Found a mismatch? [Open an issue.](https://github.com/apache/reqsign/issues)
 
@@ -1386,7 +1389,7 @@ Slots you do not provide stay as no-op stubs that error when used — a credenti
 Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
 
 * `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Tencent COS, Dropbox** (facade features `aws`, `aws-v4a`, `azure`, `github`, `aliyun`, `aliyun-drive`, `b2`,`cloudflare`, `tencent`, `dropbox`, `oauth2`)
+* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Tencent COS, Dropbox, OneDrive**(facade features `aws`, `aws-v4a`, `azure`, `github`, `aliyun`,`aliyun-drive`, `b2`, `cloudflare`, `tencent`, `dropbox`, `onedrive`,`oauth2`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock. GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in bare WASM runtimes.
 
@@ -1394,7 +1397,7 @@ Cloudflare environment and static credentials plus header signing need no JavaSc
 
 The [provider matrix](/docs/providers/) marks WASM status per provider; treat providers outside this set as unsupported there until the catalog says otherwise.
 
-The OAuth 2.0, Dropbox, and Aliyun Drive paths enable Jiff's `js` feature for`wasm32-unknown-unknown`. Their public signing and refresh entry points read the clock from a wasm-bindgen JavaScript host such as a browser or Node. A bare WASM runtime without a JavaScript clock can compile the crates but is not a supported runtime; calling `Timestamp::now` traps there. CI exercises the public Dropbox signing, OAuth2 mock-refresh, and Aliyun Drive static/refresh paths under`wasm-bindgen-test` in Node.
+The OAuth 2.0, Dropbox, Aliyun Drive, and OneDrive paths enable Jiff's `js`feature for `wasm32-unknown-unknown`. Their public signing and refresh entry points read the clock from a wasm-bindgen JavaScript host such as a browser or Node. A bare WASM runtime without a JavaScript clock can compile the crates but is not a supported runtime; calling `Timestamp::now` traps there. CI exercises the public Dropbox signing, OAuth2 mock-refresh, Aliyun Drive static and refresh, and OneDrive signing and refresh paths under `wasm-bindgen-test` in Node.
 
 ```
 
@@ -3049,6 +3052,180 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 ---
 
 ---
+url: https://reqsign.apache.org/docs/providers/onedrive/
+---
+# OneDrive | Apache Reqsign™
+
+# OneDrive
+
+OneDrive and Microsoft Graph drive requests authenticated with a Microsoft Entra access token.
+
+OAuth 2.0 bearer token✓ header signing— query / presign✓ WASM[docs.rs/reqsign-onedrive ↗](https://docs.rs/reqsign-onedrive)
+
+Inserts a sensitive Authorization: Bearer header; expires\_in is rejected because this crate implements header authentication only.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features onedrive
+
+
+```
+
+OneDrive requests go to Microsoft Graph with a Microsoft Entra access token in an `Authorization: Bearer` header. Reqsign signs the request head; the caller builds the Graph request, for example`GET https://graph.microsoft.com/v1.0/me/drive/root`.
+
+```
+
+use reqsign::{default_context, onedrive::default_signer};
+
+use reqsign::onedrive::{DefaultCredentialProvider, StaticCredentialProvider};
+
+
+let ctx = default_context();
+
+let provider = DefaultCredentialProvider::new()
+
+    .push_front(StaticCredentialProvider::new("graph-access-token"));
+
+let signer = default_signer(ctx).with_credential_provider(provider);
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://graph.microsoft.com/v1.0/me/drive")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+Microsoft documents no environment variable or shared configuration file that carries a Microsoft Graph user token, and MSAL token caches are library-specific. `default_signer(ctx)` therefore composes a default provider whose automatic chain is empty: it does not run the Azure CLI, read MSAL caches, or start a login flow. Configure one source before signing:
+
+* the documented refresh exchange, composed with`DefaultCredentialProvider::new().push_front(RefreshCredentialProvider::new(..)?)`
+* a static access token or a custom provider, also composed with `push_front`; the provider pushed last is tried first
+
+Supplying a provider directly to `Signer::new` or`Signer::with_credential_provider` is equivalent when you do not need the default chain.
+
+## Refresh tokens[​](#refresh-tokens "Direct link to Refresh tokens")
+
+The authorization request must include `offline_access` to receive a refresh token, plus the Microsoft Graph scope your access needs. `Files.ReadWrite` is the least privileged delegated permission that lets the app read, create, update, and delete the signed-in user's files, and `Files.Read` is the read-only alternative. Reqsign refreshes through`https://login.microsoftonline.com/common/oauth2/v2.0/token`.
+
+A **public client** — desktop, mobile, browserless, or client-side app — cannot store an application secret, so the exchange sends none:
+
+```
+
+use reqsign::{default_context, onedrive::default_signer};
+
+use reqsign::onedrive::{DefaultCredentialProvider, RefreshCredentialProvider};
+
+
+let provider = DefaultCredentialProvider::new()
+
+    .push_front(RefreshCredentialProvider::new("client-id", "refresh-token")?);
+
+let signer = default_signer(default_context()).with_credential_provider(provider);
+
+
+```
+
+A **confidential client** — web app, web API, or daemon that keeps the secret on the server side — adds it to the same form-body exchange:
+
+```
+
+use reqsign::{default_context, onedrive::default_signer};
+
+use reqsign::onedrive::{DefaultCredentialProvider, RefreshCredentialProvider};
+
+
+let provider = DefaultCredentialProvider::new().push_front(
+
+    RefreshCredentialProvider::builder("client-id", "refresh-token")
+
+        .client_secret("client-secret")
+
+        .build()?,
+
+);
+
+let signer = default_signer(default_context()).with_credential_provider(provider);
+
+
+```
+
+Microsoft returns a new refresh token with every successful exchange and documents that the client must discard the previous one. A provider keeps only the latest refresh token in memory, clones share it, and exchanges are serialized, so concurrent signing never races two exchanges with the same token. Reqsign never writes refresh tokens to disk; a refresh token lost with the process must be obtained again through the authorization flow.
+
+A Microsoft Graph token response carries `expires_in`. A successful exchange that omits it, or whose token is already expired, is rejected rather than cached as a token with an unknown lifetime; the returned refresh token from that response is still committed for the next exchange. Access-token caching and proactive refresh belong to `Signer`.
+
+## Tenant, scope, and endpoint[​](#tenant-scope-and-endpoint "Direct link to Tenant, scope, and endpoint")
+
+The default token endpoint is the global Microsoft Entra v2.0 endpoint for the`common` tenant. Microsoft documents `common`, `organizations`, `consumers`, or a tenant identifier such as a domain name or GUID; select one with `.tenant`:
+
+```
+
+use reqsign::onedrive::RefreshCredentialProvider;
+
+
+let provider = RefreshCredentialProvider::builder("client-id", "refresh-token")
+
+    .tenant("contoso.onmicrosoft.com")
+
+    .build()?;
+
+
+```
+
+By default the exchange omits `scope`, which keeps the new access token limited to what the original grant received. To repeat the scope explicitly, use`.scope("offline_access Files.ReadWrite")`; Microsoft requires the value to be equivalent to or a subset of the original grant. Requesting a broader scope than the user consented to fails the exchange.
+
+National clouds publish their own Microsoft Entra authentication endpoints, for example `https://login.microsoftonline.us` for Microsoft Entra ID for US Government and `https://login.partner.microsoftonline.cn` for Microsoft Entra China. Replace the whole endpoint in those clouds; it must be HTTPS:
+
+```
+
+use reqsign::onedrive::RefreshCredentialProvider;
+
+
+let provider = RefreshCredentialProvider::builder("client-id", "refresh-token")
+
+    .token_endpoint("https://login.microsoftonline.us/common/oauth2/v2.0/token")
+
+    .build()?;
+
+
+```
+
+## Request authentication[​](#request-authentication "Direct link to Request authentication")
+
+OneDrive uses header authentication only. Signing adds a sensitive`Authorization: Bearer` header and rejects `expires_in`, because this crate does not implement query authentication; it never modifies the URI or other headers. Business headers and parameters such as `$select`, `If-Match`, or the Graph drive path stay with the caller.
+
+On `wasm32-unknown-unknown`, this provider enables Jiff's JavaScript clock. Runtime signing or refresh requires a wasm-bindgen JavaScript host such as a browser or Node; a bare WASM runtime without a JavaScript clock is not supported. CI exercises the public signing and refresh paths under`wasm-bindgen-test` in Node.
+
+## Credentials
+
+### Default credential chain
+
+This provider has no ambient default source. Supply an explicit credential provider as described on this page.
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [StaticCredentialProvider](https://docs.rs/reqsign-onedrive/latest/reqsign%5Fonedrive/struct.StaticCredentialProvider.html) — Static Microsoft Graph access token with optional absolute expiry
+* [RefreshCredentialProvider](https://docs.rs/reqsign-onedrive/latest/reqsign%5Fonedrive/struct.RefreshCredentialProvider.html) — Microsoft Entra refresh-token exchange for a public or confidential client
+
+---
+
+---
 url: https://reqsign.apache.org/docs/providers/openstack-keystone/
 ---
 # OpenStack Keystone | Apache Reqsign™
@@ -3419,6 +3596,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-cloudflare](https://docs.rs/reqsign-cloudflare)
 * [reqsign-dropbox](https://docs.rs/reqsign-dropbox)
 * [reqsign-github](https://docs.rs/reqsign-github)
+* [reqsign-onedrive](https://docs.rs/reqsign-onedrive)
 * [reqsign-google](https://docs.rs/reqsign-google)
 * [reqsign-aliyun-oss](https://docs.rs/reqsign-aliyun-oss)
 * [reqsign-aliyun-drive](https://docs.rs/reqsign-aliyun-drive)
@@ -3559,12 +3737,12 @@ url: https://reqsign.apache.org/docs/reference/versioning-and-targets/
 
 Reqsign publishes many crates on four tracks:
 
-| Track                          | Crates                                                                                                                                                     | Scheme                                                                              |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                    | Lockstep major (currently 3.x)                                                      |
-| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, reqsign-aliyun-drive, reqsign-github, reqsign-cloudflare, and later crates introduced after the lockstep line | Independent major, starting at 1.0.0                                                |
-| Reqwest adapter                | reqsign-http-send-reqwest                                                                                                                                  | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
-| Facade                         | reqsign                                                                                                                                                    | Independent (currently 0.20.x)                                                      |
+| Track                          | Crates                                                                                                                                                                       | Scheme                                                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                                      | Lockstep major (currently 3.x)                                                      |
+| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, reqsign-aliyun-drive, reqsign-github, reqsign-cloudflare, reqsign-onedrive, and later crates introduced after the lockstep line | Independent major, starting at 1.0.0                                                |
+| Reqwest adapter                | reqsign-http-send-reqwest                                                                                                                                                    | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
+| Facade                         | reqsign                                                                                                                                                                      | Independent (currently 0.20.x)                                                      |
 
 Lockstep means any `3.x` established service crate composes with any `3.x`core. New provider and shared crates start at `1.0.0` and depend on the current core major, so a `1.x` crate composes with `3.x` core. Mixing core majors fails to compile — the trait definitions are the compatibility boundary, and Cargo enforces it.
 
@@ -3594,7 +3772,7 @@ Every release ships as an ASF source release plus crates.io packages — see[Dow
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
 
-**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Tencent COS, and Dropbox providers. The shared `reqsign-oauth2`crate and the `oauth2` facade feature are checked in the same subset. Cloudflare environment and static credentials plus header signing work without a JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute`adapter and is unavailable in bare WASM runtimes. Dropbox, OAuth2, and Aliyun Drive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Tencent COS, Dropbox, and OneDrive providers. The shared`reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Cloudflare environment and static credentials plus header signing work without a JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute`adapter and is unavailable in bare WASM runtimes. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
 
