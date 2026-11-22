@@ -166,6 +166,10 @@ let ctx = reqsign::default_context();
 use reqsign::azure;
 let signer = azure::default_signer(ctx.clone());
 
+// Backblaze B2
+use reqsign::b2;
+let signer = b2::default_signer(ctx.clone());
+
 // Google Cloud
 use reqsign::google;
 let signer = google::default_signer(ctx.clone(), "storage.googleapis.com");
@@ -205,6 +209,7 @@ let signer = oracle::default_signer(ctx);
 - `aliyun-drive`: Enable Aliyun Drive Open Platform support
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
+- `b2`: Enable Backblaze B2 Native API support
 - `google`: Enable Google Cloud support
 - `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
 - `huaweicloud`: Enable Huawei Cloud OBS support

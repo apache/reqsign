@@ -44,6 +44,7 @@ rustdoc owns signatures.
 - [`reqsign-aws-core`](https://docs.rs/reqsign-aws-core) — shared AWS
   credential chain and canonicalization
 - [`reqsign-azure-storage`](https://docs.rs/reqsign-azure-storage)
+- [`reqsign-b2`](https://docs.rs/reqsign-b2)
 - [`reqsign-dropbox`](https://docs.rs/reqsign-dropbox)
 - [`reqsign-google`](https://docs.rs/reqsign-google)
 - [`reqsign-aliyun-oss`](https://docs.rs/reqsign-aliyun-oss)

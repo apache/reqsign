@@ -45,6 +45,9 @@ pub mod aws;
 #[cfg(feature = "azure")]
 pub mod azure;
 
+#[cfg(feature = "b2")]
+pub mod b2;
+
 #[cfg(feature = "dropbox")]
 pub mod dropbox;
 

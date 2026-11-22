@@ -80,14 +80,15 @@ servers checked into `services/aws-v4/tests/mocks/`.
 ## WASM Compatibility
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
-`aliyun`, `tencent`, `oauth2`, `dropbox`) must compile for
+`aliyun`, `b2`, `tencent`, `oauth2`, `dropbox`) must compile for
 `wasm32-unknown-unknown`. CI verifies this supported subset.
 
 ## Versioning
 
 - Existing service crates and core share a lockstep major version (`3.0.0`).
-- `reqsign-oauth2` and `reqsign-dropbox` each start an independent `1.0.0`
-  version line.
+- New provider and shared crates (`reqsign-b2`, `reqsign-oauth2`,
+  `reqsign-dropbox`) start independent `1.0.0` version lines and depend on the
+  current core major.
 - `reqsign-http-send-reqwest` has its own major (`4.0.0`).
 - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
   version lines, starting at `1.0.0`.

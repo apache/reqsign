@@ -54,6 +54,7 @@ jobs:
             reqsign-aws-v4
             reqsign-aws-v4a
             reqsign-azure-storage
+            reqsign-b2
             reqsign-dropbox
             reqsign-google
             reqsign-huaweicloud-obs
@@ -121,7 +122,7 @@ jobs:
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,tencent,dropbox
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,tencent,dropbox
 
   # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
   wasm_compat:
@@ -139,8 +140,8 @@ jobs:
           cargo check -p reqsign-aws-v4a --target wasm32-unknown-unknown
           cargo check -p reqsign-aliyun-drive --target wasm32-unknown-unknown
           cargo check -p reqsign-oauth2 -p reqsign-dropbox --target wasm32-unknown-unknown
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,tencent,dropbox
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,tencent,dropbox
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,tencent,dropbox
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,b2,tencent,dropbox
 
   unit:
     runs-on: ubuntu-latest

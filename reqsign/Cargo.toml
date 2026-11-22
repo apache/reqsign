@@ -44,6 +44,7 @@ reqsign-aliyun-oss = { workspace = true, optional = true }
 reqsign-aws-v4 = { workspace = true, optional = true }
 reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
+reqsign-b2 = { workspace = true, optional = true }
 reqsign-dropbox = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
@@ -74,6 +75,7 @@ aws = ["aws-v4"]
 aws-v4 = ["dep:reqsign-aws-v4"]
 aws-v4a = ["dep:reqsign-aws-v4a"]
 azure = ["dep:reqsign-azure-storage"]
+b2 = ["dep:reqsign-b2"]
 dropbox = ["dep:reqsign-dropbox", "oauth2"]
 google = ["dep:reqsign-google"]
 google-credential-access-boundary-client-side = [
@@ -94,6 +96,7 @@ full = [
   "aws",
   "aws-v4a",
   "azure",
+  "b2",
   "dropbox",
   "google",
   "google-credential-access-boundary-client-side",
