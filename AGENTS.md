@@ -4,7 +4,7 @@
 
 Apache Reqsign — a Rust library for signing HTTP API requests across
 providers (AWS, Azure, Cloudflare, Dropbox, GitHub, Google, OneDrive, Aliyun,
-Huawei, Tencent, Oracle, Volcengine).
+Huawei, Tencent, Oracle, Volcengine, Vercel).
 
 ## Architecture
 
@@ -81,19 +81,19 @@ servers checked into `services/aws-v4/tests/mocks/`.
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
 `aliyun`, `aliyun-drive`, `b2`, `tencent`, `cloudflare`, `oauth2`, `dropbox`,
-`http-message-signatures`, `github`, `onedrive`) must compile for
+`http-message-signatures`, `github`, `onedrive`, `vercel`) must compile for
 `wasm32-unknown-unknown`. CI verifies this supported subset. GitHub environment,
 static, and anonymous signing need no JavaScript clock; GitHub CLI discovery
 still requires a `CommandExecute` adapter at runtime and is unavailable in bare
-WASM runtimes. Cloudflare environment, static, and header signing need no
-JavaScript clock.
+WASM runtimes. Cloudflare and Vercel environment, static, and header signing
+need no JavaScript clock.
 
 ## Versioning
 
 - Existing service crates and core share a lockstep major version (`3.0.0`).
 - New provider and shared crates (`reqsign-cloudflare`, `reqsign-b2`,
-  `reqsign-oauth2`, `reqsign-dropbox`) start independent `1.0.0` version lines
-  and depend on the current core major.
+  `reqsign-oauth2`, `reqsign-dropbox`, `reqsign-vercel`) start independent
+  `1.0.0` version lines and depend on the current core major.
 - `reqsign-aliyun-drive`, `reqsign-github`, and `reqsign-onedrive` start
   independent `1.0.0` version lines.
 - `reqsign-http-send-reqwest` has its own major (`4.0.0`).

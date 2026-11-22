@@ -70,6 +70,7 @@ This crate is typically used with service-specific implementations:
 - `reqsign-aliyun-oss` for Aliyun OSS
 - `reqsign-aliyun-drive` for Aliyun Drive Open Platform
 - `reqsign-azure-storage` for Azure Storage
+- `reqsign-vercel` for Vercel Blob and Artifacts
 - And more...
 
 ## License

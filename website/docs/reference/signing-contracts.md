@@ -107,6 +107,7 @@ signer and credential type determine how the duration is interpreted.
 | Bounds credential validity; header signing regardless | Oracle Cloud |
 | Ignored; header signing always uses the current `Date` | Upyun |
 | Rejected; header authentication only | Aliyun Drive, Cloudflare |
+| Rejected; header signing only | Vercel Blob, Vercel Artifacts |
 | Requests a granted credential's validity window | Granting operations (subject to the operation's own maximum) |
 
 Whatever the provider does with it, one obligation is universal: the

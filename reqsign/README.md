@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Upyun and Oracle services.
+Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Upyun, Oracle and Vercel services.
 
 ## Features
 
@@ -18,6 +18,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Tencent Cloud**: Cloud Object Storage (COS)
 - **Upyun**: UPYUN header signing for Upyun Storage
 - **Oracle**: Oracle Cloud services
+- **Vercel**: Vercel Blob and Artifacts (Turborepo Remote Cache) bearer tokens
 
 ## Request URI Contract
 
@@ -218,6 +219,13 @@ let signer = tencent::default_signer(ctx.clone());
 use reqsign::upyun;
 let signer = upyun::default_signer(ctx.clone(), "mybucket");
 
+// Vercel Blob
+use reqsign::vercel;
+let blob_signer = vercel::default_blob_signer(ctx.clone());
+
+// Vercel Artifacts
+let artifacts_signer = vercel::default_artifacts_signer(ctx.clone());
+
 // Oracle Cloud
 use reqsign::oracle;
 let signer = oracle::default_signer(ctx);
@@ -246,6 +254,7 @@ let signer = oracle::default_signer(ctx);
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support
 - `upyun`: Enable Upyun support
+- `vercel`: Enable Vercel Blob and Artifacts support
 
 ## WASM Support
 
