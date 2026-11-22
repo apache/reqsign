@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-13signing providers
+14signing providers
 
 5granting operations
 
-8WASM-ready providers
+9WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 13 providers. Explicit schemes.
+## 14 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -797,6 +797,7 @@ cargo add http anyhow
 | aliyun                                        | Aliyun OSS                                   |
 | aliyun-drive                                  | Aliyun Drive Open Platform                   |
 | huaweicloud                                   | Huawei Cloud OBS                             |
+| http-message-signatures                       | RFC 9421 request signatures                  |
 | oauth2                                        | Shared OAuth 2.0 refresh-token grant         |
 | openstack                                     | OpenStack Keystone                           |
 | oracle                                        | Oracle Cloud                                 |
@@ -889,21 +890,22 @@ The example signs the request and prints a confirmation; sending it is your HTTP
 
 Swap the entry point and the rest of the code stays the same. Each entry composes that provider's own credential chain — the[provider pages](/docs/providers/) document exactly which sources:
 
-| Provider                                                  | Entry                                                |
-| --------------------------------------------------------- | ---------------------------------------------------- |
-| [AWS SigV4](/docs/providers/aws-sigv4/)                   | aws::default\_signer(ctx, service, region)           |
-| [AWS SigV4a](/docs/providers/aws-sigv4a/)                 | aws::v4a::default\_signer(ctx, service, region\_set) |
-| [Azure Storage](/docs/providers/azure-storage/)           | azure::default\_signer(ctx)                          |
-| [Backblaze B2](/docs/providers/b2/)                       | b2::default\_signer(ctx)                             |
-| [Dropbox](/docs/providers/dropbox/)                       | dropbox::default\_signer(ctx)                        |
-| [Google Cloud](/docs/providers/google/)                   | google::default\_signer(ctx, service)                |
-| [Aliyun OSS](/docs/providers/aliyun-oss/)                 | aliyun::default\_signer(ctx, bucket)                 |
-| [Aliyun Drive](/docs/providers/aliyun-drive/)             | aliyun\_drive::default\_signer(ctx)                  |
-| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)      | huaweicloud::default\_signer(ctx, bucket)            |
-| [OpenStack Keystone](/docs/providers/openstack-keystone/) | openstack::default\_signer(ctx)                      |
-| [Oracle Cloud](/docs/providers/oracle/)                   | oracle::default\_signer(ctx)                         |
-| [Tencent COS](/docs/providers/tencent-cos/)               | tencent::default\_signer(ctx)                        |
-| [Volcengine TOS](/docs/providers/volcengine-tos/)         | volcengine::default\_signer(ctx, region)             |
+| Provider                                                                       | Entry                                                            |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| [AWS SigV4](/docs/providers/aws-sigv4/)                                        | aws::default\_signer(ctx, service, region)                       |
+| [AWS SigV4a](/docs/providers/aws-sigv4a/)                                      | aws::v4a::default\_signer(ctx, service, region\_set)             |
+| [Azure Storage](/docs/providers/azure-storage/)                                | azure::default\_signer(ctx)                                      |
+| [Backblaze B2](/docs/providers/b2/)                                            | b2::default\_signer(ctx)                                         |
+| [Dropbox](/docs/providers/dropbox/)                                            | dropbox::default\_signer(ctx)                                    |
+| [Google Cloud](/docs/providers/google/)                                        | google::default\_signer(ctx, service)                            |
+| [Aliyun OSS](/docs/providers/aliyun-oss/)                                      | aliyun::default\_signer(ctx, bucket)                             |
+| [Aliyun Drive](/docs/providers/aliyun-drive/)                                  | aliyun\_drive::default\_signer(ctx)                              |
+| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)                           | huaweicloud::default\_signer(ctx, bucket)                        |
+| [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | http\_message\_signatures::RequestSigner::new(label, components) |
+| [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | openstack::default\_signer(ctx)                                  |
+| [Oracle Cloud](/docs/providers/oracle/)                                        | oracle::default\_signer(ctx)                                     |
+| [Tencent COS](/docs/providers/tencent-cos/)                                    | tencent::default\_signer(ctx)                                    |
+| [Volcengine TOS](/docs/providers/volcengine-tos/)                              | volcengine::default\_signer(ctx, region)                         |
 
 Aliyun Drive has no documented ambient source; replace its default provider with a static access token or refresh-token provider.
 
@@ -972,21 +974,22 @@ url: https://reqsign.apache.org/docs/providers/
 
 Reqsign keeps each provider's signing protocol and credential semantics explicit instead of hiding them behind one abstraction. This matrix and every detail page are rendered from the[provider catalog](https://github.com/apache/reqsign/blob/main/website/data/providers.json). CI checks crate, feature, page, and source-path consistency. Maintainers review signing capabilities and credential-chain semantics against the referenced source; those behavioral claims are not inferred by the validator.
 
-| Provider                                                  | Signing schemes                                      | Header | Query / presign | Granting | WASM |
-| --------------------------------------------------------- | ---------------------------------------------------- | ------ | --------------- | -------- | ---- |
-| [AWS SigV4](/docs/providers/aws-sigv4/)                   | AWS Signature Version 4                              | ✓      | ✓               | ✓ 2      | ✓    |
-| [AWS SigV4a](/docs/providers/aws-sigv4a/)                 | AWS Signature Version 4A                             | ✓      | ✓               | —        | ✓    |
-| [Azure Storage](/docs/providers/azure-storage/)           | Shared Key, SAS token, Entra ID bearer token         | ✓      | ✓               | ✓ 1      | ✓    |
-| [Backblaze B2](/docs/providers/b2/)                       | B2 Native API account authorization token            | ✓      | —               | —        | ✓    |
-| [Google Cloud](/docs/providers/google/)                   | OAuth 2.0 bearer token, V4 signed URLs               | ✓      | ✓               | ✓ 2      | —    |
-| [Aliyun OSS](/docs/providers/aliyun-oss/)                 | OSS signature V1, OSS signature V2, OSS signature V4 | ✓      | ✓               | —        | ✓    |
-| [Aliyun Drive](/docs/providers/aliyun-drive/)             | Bearer token                                         | ✓      | —               | —        | ✓    |
-| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)      | OBS signature                                        | ✓      | ✓               | —        | —    |
-| [Oracle Cloud](/docs/providers/oracle/)                   | OCI request signature                                | ✓      | —               | —        | —    |
-| [Tencent COS](/docs/providers/tencent-cos/)               | COS signature                                        | ✓      | ✓               | —        | ✓    |
-| [Volcengine TOS](/docs/providers/volcengine-tos/)         | TOS signature                                        | ✓      | ✓               | —        | —    |
-| [OpenStack Keystone](/docs/providers/openstack-keystone/) | X-Auth-Token header                                  | ✓      | —               | —        | —    |
-| [Dropbox](/docs/providers/dropbox/)                       | OAuth 2.0 bearer token                               | ✓      | —               | —        | ✓    |
+| Provider                                                                       | Signing schemes                                           | Header | Query / presign | Granting | WASM |
+| ------------------------------------------------------------------------------ | --------------------------------------------------------- | ------ | --------------- | -------- | ---- |
+| [AWS SigV4](/docs/providers/aws-sigv4/)                                        | AWS Signature Version 4                                   | ✓      | ✓               | ✓ 2      | ✓    |
+| [AWS SigV4a](/docs/providers/aws-sigv4a/)                                      | AWS Signature Version 4A                                  | ✓      | ✓               | —        | ✓    |
+| [Azure Storage](/docs/providers/azure-storage/)                                | Shared Key, SAS token, Entra ID bearer token              | ✓      | ✓               | ✓ 1      | ✓    |
+| [Backblaze B2](/docs/providers/b2/)                                            | B2 Native API account authorization token                 | ✓      | —               | —        | ✓    |
+| [Google Cloud](/docs/providers/google/)                                        | OAuth 2.0 bearer token, V4 signed URLs                    | ✓      | ✓               | ✓ 2      | —    |
+| [Aliyun OSS](/docs/providers/aliyun-oss/)                                      | OSS signature V1, OSS signature V2, OSS signature V4      | ✓      | ✓               | —        | ✓    |
+| [Aliyun Drive](/docs/providers/aliyun-drive/)                                  | Bearer token                                              | ✓      | —               | —        | ✓    |
+| [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)                           | OBS signature                                             | ✓      | ✓               | —        | —    |
+| [Oracle Cloud](/docs/providers/oracle/)                                        | OCI request signature                                     | ✓      | —               | —        | —    |
+| [Tencent COS](/docs/providers/tencent-cos/)                                    | COS signature                                             | ✓      | ✓               | —        | ✓    |
+| [Volcengine TOS](/docs/providers/volcengine-tos/)                              | TOS signature                                             | ✓      | ✓               | —        | —    |
+| [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | RFC 9421 HMAC-SHA256, RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256 | ✓      | —               | —        | ✓    |
+| [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | X-Auth-Token header                                       | ✓      | —               | —        | —    |
+| [Dropbox](/docs/providers/dropbox/)                                            | OAuth 2.0 bearer token                                    | ✓      | —               | —        | ✓    |
 
 CI checks crate, feature, page, and source-path consistency; capability semantics are reviewed by maintainers. Found a mismatch? [Open an issue.](https://github.com/apache/reqsign/issues)
 
@@ -2554,6 +2557,120 @@ This provider can exchange credentials for downscoped ones before any request is
 ---
 
 ---
+url: https://reqsign.apache.org/docs/providers/http-message-signatures/
+---
+# HTTP Message Signatures (RFC 9421) | Apache Reqsign™
+
+# HTTP Message Signatures (RFC 9421)
+
+HTTP APIs that accept RFC 9421 request signatures, with the caller choosing the signature label, covered components, and an HMAC-SHA256 or RSA PKCS#1 v1.5 SHA-256 credential.
+
+RFC 9421 HMAC-SHA256RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256✓ header signing— query / presign✓ WASM[docs.rs/reqsign-http-message-signatures ↗](https://docs.rs/reqsign-http-message-signatures)
+
+Adds Signature-Input and Signature request headers. The caller supplies any Content-Digest. expires\_in adds a checked expires parameter; it does not select query authentication.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features http-message-signatures
+
+
+```
+
+RFC 9421 leaves the signature label and covered components to the application, so there is no default signer. Assemble the policy explicitly:
+
+```
+
+use http::header::HeaderName;
+
+use reqsign::http_message_signatures::{
+
+    Component, Credential, RequestSigner, StaticCredentialProvider,
+
+};
+
+use reqsign::{Signer, default_context};
+
+
+let ctx = default_context();
+
+let request_signer = RequestSigner::new(
+
+    "sig1",
+
+    [
+
+        Component::Method,
+
+        Component::Authority,
+
+        Component::Path,
+
+        Component::Header(HeaderName::from_static("content-digest")),
+
+    ],
+
+)?;
+
+let signer = Signer::new(
+
+    ctx,
+
+    StaticCredentialProvider::new(Credential::hmac_sha256("my-key", b"shared secret")?),
+
+    request_signer,
+
+);
+
+
+let mut parts = http::Request::builder()
+
+    .method("POST")
+
+    .uri("https://example.com/upload?part=1")
+
+    .header("content-digest", "sha-256=:...:")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+signer.sign(&mut parts, None).await?;
+
+
+```
+
+## Scope[​](#scope "Direct link to Scope")
+
+This first version signs request heads with HMAC-SHA256 or RSASSA-PKCS1-v1\_5 SHA-256\. It supports ordinary request fields and the`@method`, `@target-uri`, `@authority`, `@scheme`, `@path`, and `@query`derived components. Percent escapes, query order, and repeated query parameters are preserved.
+
+The signer requires an absolute HTTP or HTTPS URI. `@target-uri` is rebuilt from the scheme, the authority exactly as written, and the origin-form path/query, with an empty path normalized to `/`. A present `Host` header must be unique and byte-identical to the URI authority; case-only or explicit/default-port differences are rejected because an HTTP/1.1 origin-form receiver could reconstruct a different target URI. Origin-form request targets without an absolute URI are not supported.
+
+Verification, response signing, multiple signatures in one call, component parameters, `@request-target`, and body I/O are out of scope. To cover a body, compute a `Content-Digest` before signing and include it in the component list.
+
+HMAC uses raw shared-key bytes. RSA accepts unencrypted PKCS#1 or PKCS#8 PEM and uses the context's `CryptoProvider`. The RustCrypto provider supports RSA on native targets but returns `ConfigInvalid` for it on `wasm32-unknown-unknown`. The HMAC path runs on `wasm32-unknown-unknown` when hosted by a JavaScript runtime through wasm-bindgen, such as a browser or Node. Jiff reads the clock from that host; a bare WASM runtime without a JavaScript clock is unsupported.
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Caller-supplied HMAC or RSA credential
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [StaticCredentialProvider](https://docs.rs/reqsign-http-message-signatures/latest/reqsign%5Fhttp%5Fmessage%5Fsignatures/struct.StaticCredentialProvider.html) — Caller-supplied HMAC or RSA credential
+
+---
+
+---
 url: https://reqsign.apache.org/docs/providers/huaweicloud-obs/
 ---
 # Huawei Cloud OBS | Apache Reqsign™
@@ -2961,6 +3078,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-aliyun-oss](https://docs.rs/reqsign-aliyun-oss)
 * [reqsign-aliyun-drive](https://docs.rs/reqsign-aliyun-drive)
 * [reqsign-huaweicloud-obs](https://docs.rs/reqsign-huaweicloud-obs)
+* [reqsign-http-message-signatures](https://docs.rs/reqsign-http-message-signatures)
 * [reqsign-openstack-keystone](https://docs.rs/reqsign-openstack-keystone)
 * [reqsign-oracle](https://docs.rs/reqsign-oracle)
 * [reqsign-tencent-cos](https://docs.rs/reqsign-tencent-cos)

@@ -29,6 +29,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 - [Backblaze B2 | Apache Reqsign™](https://reqsign.apache.org/docs/providers/b2/): Native API account authorization and Authorization header signing for Backblaze B2.
 - [Dropbox | Apache Reqsign™](https://reqsign.apache.org/docs/providers/dropbox/): OAuth 2.0 access tokens and refresh-token exchange for the Dropbox API.
 - [Google Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/google/): OAuth 2.0 tokens and V4 signed URLs for Google Cloud services.
+- [HTTP Message Signatures (RFC 9421) | Apache Reqsign™](https://reqsign.apache.org/docs/providers/http-message-signatures/): RFC 9421 request signatures with caller-selected covered components.
 - [Huawei Cloud OBS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/huaweicloud-obs/): OBS signature signing for Huawei Cloud Object Storage.
 - [OpenStack Keystone | Apache Reqsign™](https://reqsign.apache.org/docs/providers/openstack-keystone/): Keystone v3 token authentication and X-Auth-Token signing for OpenStack services.
 - [Oracle Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/oracle/): OCI HTTP request signatures from API keys and config files.
