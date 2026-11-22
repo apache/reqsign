@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Google, Huawei, Aliyun, Tencent, Oracle and Vercel services.
+Signing HTTP requests for AWS, Azure, Dropbox, Google, Huawei, Aliyun, Tencent, Oracle and Vercel services.
 
 ## Features
 
@@ -8,6 +8,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 
 - **AWS**: Signature V4 for AWS services
 - **Azure**: Azure Storage services
+- **Dropbox**: OAuth 2.0 bearer authentication
 - **Google**: Google Cloud services
 - **Aliyun**: Aliyun Object Storage Service (OSS)
 - **Huawei Cloud**: Object Storage Service (OBS)
@@ -206,9 +207,11 @@ let signer = oracle::default_signer(ctx);
 - `aliyun`: Enable Aliyun OSS support
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
+- `dropbox`: Enable Dropbox support
 - `google`: Enable Google Cloud support
 - `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
 - `huaweicloud`: Enable Huawei Cloud OBS support
+- `oauth2`: Enable the shared OAuth 2.0 refresh-token grant without a service crate
 - `openstack`: Enable OpenStack Keystone support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support

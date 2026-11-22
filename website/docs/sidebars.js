@@ -48,6 +48,7 @@ module.exports = {
         "providers/tencent-cos",
         "providers/volcengine-tos",
         "providers/openstack-keystone",
+        "providers/dropbox",
       ],
     },
     {

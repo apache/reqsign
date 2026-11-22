@@ -3,8 +3,8 @@
 ## Project Overview
 
 Apache Reqsign — a Rust library for signing HTTP API requests across
-cloud providers (AWS, Azure, Google, Aliyun, Huawei, Tencent, Oracle,
-Volcengine, Vercel).
+cloud providers (AWS, Azure, Dropbox, Google, Aliyun, Huawei, Tencent,
+Oracle, Volcengine, Vercel).
 
 ## Architecture
 
@@ -80,14 +80,15 @@ servers checked into `services/aws-v4/tests/mocks/`.
 ## WASM Compatibility
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
-`aliyun`, `tencent`, `vercel`) must compile for `wasm32-unknown-unknown`. CI
-verifies this supported subset. Vercel environment, static, and header signing
-need no JavaScript clock.
+`aliyun`, `tencent`, `oauth2`, `dropbox`, `vercel`) must compile for
+`wasm32-unknown-unknown`. CI verifies this supported subset. Vercel environment,
+static, and header signing need no JavaScript clock.
 
 ## Versioning
 
-- Service crates and core share a lockstep major version (`3.0.0`).
-- `reqsign-vercel` starts an independent `1.0.0` version line.
+- Existing service crates and core share a lockstep major version (`3.0.0`).
+- `reqsign-oauth2`, `reqsign-dropbox`, and `reqsign-vercel` each start an
+  independent `1.0.0` version line.
 - `reqsign-http-send-reqwest` has its own major (`4.0.0`).
 - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
   version lines, starting at `1.0.0`.

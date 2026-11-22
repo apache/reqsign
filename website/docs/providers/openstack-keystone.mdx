@@ -51,9 +51,21 @@ let mut req = http::Request::builder()
 signer.sign(&mut req, None).await?;
 ```
 
-The default chain authenticates against the Keystone v3 identity API with
-`OS_AUTH_URL`, `OS_USERNAME`, and `OS_PASSWORD`. A scoped token also carries the
-service catalog Keystone returned for it, so `Credential::endpoint_in_region`
-resolves the endpoint of a service such as Swift without another request.
+The default chain uses a non-empty `OS_AUTH_TOKEN` as a pre-issued token and
+makes no Keystone request. When it is set, `OS_AUTH_URL`, `OS_USERNAME`, and
+`OS_PASSWORD` are not required, and an empty `OS_AUTH_TOKEN` is ignored. Without
+`OS_AUTH_TOKEN`, the chain authenticates against the Keystone v3 identity API
+with `OS_AUTH_URL`, `OS_USERNAME`, and `OS_PASSWORD`. A scoped token also
+carries the service catalog Keystone returned for it, so
+`Credential::endpoint_in_region` resolves the endpoint of a service such as
+Swift without another request.
+
+A pre-issued token has no service catalog. When `OS_STORAGE_URL` is also set,
+the environment provider exposes it as the public `object-store` endpoint;
+otherwise the endpoint remains caller configuration. `StaticCredentialProvider`
+accepts an explicit token and optional catalog metadata. Install it directly or
+prepend it with `DefaultCredentialProvider::push_front`, and use
+`DefaultCredentialProvider::builder().no_env()` to remove both environment
+sources together.
 
 <ProviderDetails id="openstack-keystone" />
