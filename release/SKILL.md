@@ -312,7 +312,7 @@ NAME
    for c in \
      reqsign reqsign-core reqsign-aliyun-drive reqsign-aliyun-oss reqsign-aws-core reqsign-aws-v4 \
      reqsign-aws-v4a reqsign-azure-storage reqsign-cloudflare reqsign-b2 \
-     reqsign-oauth2 reqsign-dropbox reqsign-http-message-signatures reqsign-github \
+     reqsign-oauth2 reqsign-dropbox reqsign-onedrive reqsign-http-message-signatures reqsign-github \
      reqsign-command-execute-tokio reqsign-file-read-tokio reqsign-google \
      reqsign-http-send-reqwest reqsign-huaweicloud-obs reqsign-oracle \
      reqsign-tencent-cos reqsign-upyun reqsign-volcengine-tos

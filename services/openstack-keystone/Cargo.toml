@@ -29,6 +29,7 @@ rust-version.workspace = true
 [dependencies]
 http = { workspace = true }
 log = { workspace = true }
+percent-encoding = { workspace = true }
 reqsign-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -37,6 +38,7 @@ serde_json = { workspace = true }
 bytes = { workspace = true }
 dotenvy = { workspace = true }
 env_logger = { workspace = true }
+reqsign-crypto-rustcrypto = { workspace = true }
 reqsign-file-read-tokio = { workspace = true }
 reqsign-http-send-reqwest = { workspace = true }
 reqwest = { workspace = true, features = ["default-tls"] }
