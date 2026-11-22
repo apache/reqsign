@@ -415,6 +415,70 @@
       "credential_provider_crate": "reqsign-cloudflare"
     },
     {
+      "id": "b2",
+      "display_name": "Backblaze B2",
+      "family": "Backblaze",
+      "blurb": "B2 Native API account authorization and Authorization header signing.",
+      "service_scope": "Backblaze B2 Native API requests authorized by an account authorization token. S3-compatible requests, bucket and file upload URL creation, download authorization, and storage operations remain the caller's responsibility.",
+      "signing_schemes": [
+        "B2 Native API account authorization token"
+      ],
+      "crates": [
+        "reqsign-b2"
+      ],
+      "facade_features": [
+        {
+          "name": "b2",
+          "capability": "Enables reqsign-b2."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::b2::default_signer(ctx)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY",
+          "provider": "EnvCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts the native account authorization token as a sensitive Authorization header. expires_in raises the required credential validity but does not presign URLs; upload URL and download authorization calls stay with the caller."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI builds the facade with --features b2 for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Account exchange, provider behavior, error redaction, and caching are asserted against an injected mock HttpSend; no live account is required.",
+        "refs": [
+          "services/b2/tests"
+        ]
+      },
+      "source_refs": [
+        "services/b2"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static authorization token and Native API endpoints",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "account_authorize",
+          "label": "Explicit application key",
+          "provider": "AccountAuthorizationCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-b2"
+    },
+    {
       "id": "google",
       "display_name": "Google Cloud",
       "family": "Google",
@@ -628,6 +692,64 @@
         }
       ],
       "credential_provider_crate": "reqsign-aliyun-oss"
+    },
+    {
+      "id": "aliyun-drive",
+      "display_name": "Aliyun Drive",
+      "family": "Aliyun",
+      "blurb": "Aliyun Drive Open Platform bearer tokens with a dedicated JSON refresh flow.",
+      "service_scope": "Aliyun Drive Open Platform API requests authenticated with an OAuth access token. The drive ID, file paths, upload URLs, request bodies, and storage API requests stay with the caller.",
+      "signing_schemes": [
+        "Bearer token"
+      ],
+      "crates": [
+        "reqsign-aliyun-drive"
+      ],
+      "facade_features": [
+        {
+          "name": "aliyun-drive",
+          "capability": "Enables reqsign-aliyun-drive."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::aliyun_drive::default_signer(ctx)"
+      },
+      "credential_sources": [],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts a sensitive Authorization: Bearer header and leaves the URI and every other header unchanged; expires_in is rejected because the service has no query authentication. The caller supplies the User-Agent required by the storage API."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-aliyun-drive and builds the facade with --features aliyun-drive for wasm32-unknown-unknown. Static signing and JSON refresh with a mock transport run under wasm-bindgen-test with the JavaScript clock."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Static and confidential-client refresh credentials, vendor JSON request shape, required User-Agent, trusted endpoint, expiry, serialized refresh-token rotation, redaction, and header signing are asserted with fabricated tokens and a mock transport; no live Aliyun Drive traffic is required.",
+        "refs": [
+          "services/aliyun-drive/tests"
+        ]
+      },
+      "source_refs": [
+        "services/aliyun-drive"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access token",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "refresh",
+          "label": "Confidential-client OAuth refresh token with a vendor JSON exchange",
+          "provider": "RefreshCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-aliyun-drive"
     },
     {
       "id": "huaweicloud-obs",
@@ -891,6 +1013,59 @@
       "credential_provider_crate": "reqsign-volcengine-tos"
     },
     {
+      "id": "http-message-signatures",
+      "display_name": "HTTP Message Signatures (RFC 9421)",
+      "family": "HTTP standards",
+      "blurb": "RFC 9421 request signatures with caller-selected covered components.",
+      "service_scope": "HTTP APIs that accept RFC 9421 request signatures, with the caller choosing the signature label, covered components, and an HMAC-SHA256 or RSA PKCS#1 v1.5 SHA-256 credential.",
+      "signing_schemes": [
+        "RFC 9421 HMAC-SHA256",
+        "RFC 9421 RSASSA-PKCS1-v1_5 SHA-256"
+      ],
+      "crates": [
+        "reqsign-http-message-signatures"
+      ],
+      "facade_features": [
+        {
+          "name": "http-message-signatures",
+          "capability": "Enables reqsign-http-message-signatures."
+        }
+      ],
+      "default_signer": {
+        "available": false,
+        "notes": "No default signer: the signature label and covered components are caller policy."
+      },
+      "credential_sources": [
+        {
+          "id": "static",
+          "label": "Caller-supplied HMAC or RSA credential",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Adds Signature-Input and Signature request headers. The caller supplies any Content-Digest. expires_in adds a checked expires parameter; it does not select query authentication."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI builds the crate and facade feature for wasm32-unknown-unknown and runs a public HMAC Signer test under wasm-bindgen in Node. The RustCrypto RSA operation returns ConfigInvalid on wasm."
+      },
+      "integration_tests": {
+        "level": "fixture",
+        "notes": "Exact RFC 9421 HMAC vector, RFC 9421 section 4.3 canonical base/parameter checks, normal RSA PEM through the public Signer, URI/Host and failure-path tests, and an offline OpenSSL check of the official section 4.3 RSA signature.",
+        "refs": [
+          "services/http-message-signatures/tests"
+        ]
+      },
+      "source_refs": [
+        "services/http-message-signatures"
+      ],
+      "last_verified": "2026-11-21",
+      "credential_provider_crate": "reqsign-http-message-signatures"
+    },
+    {
       "id": "openstack-keystone",
       "display_name": "OpenStack Keystone",
       "family": "OpenStack",
@@ -953,6 +1128,75 @@
         }
       ],
       "credential_provider_crate": "reqsign-openstack-keystone"
+    },
+    {
+      "id": "github",
+      "display_name": "GitHub",
+      "family": "GitHub",
+      "blurb": "GitHub.com bearer tokens discovered from the environment or the GitHub CLI, with anonymous public fallback.",
+      "service_scope": "GitHub.com REST API requests at https://api.github.com, authenticated with a bearer token or sent anonymously for public resources.",
+      "signing_schemes": [
+        "Bearer token"
+      ],
+      "crates": [
+        "reqsign-github"
+      ],
+      "facade_features": [
+        {
+          "name": "github",
+          "capability": "Enables reqsign-github."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::github::default_signer(ctx)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "GH_TOKEN, then GITHUB_TOKEN, for github.com",
+          "provider": "EnvCredentialProvider"
+        },
+        {
+          "id": "gh_cli",
+          "label": "Stored GitHub.com token from gh config get user and gh auth token --user (gh 2.40+)",
+          "provider": "GhCliCredentialProvider"
+        },
+        {
+          "id": "anonymous",
+          "label": "Anonymous public access",
+          "provider": "AnonymousCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts a sensitive Authorization: Bearer header for token credentials and removes any existing Authorization header for anonymous credentials; other headers and the URI are unchanged, and expires_in is rejected."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-github and builds the facade with --features github for wasm32-unknown-unknown. Environment, static, and anonymous signing run under wasm-bindgen-test without a JavaScript clock; GitHub CLI discovery needs a CommandExecute adapter and is unavailable in bare WASM runtimes."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Provider precedence, fail-closed errors, GitHub CLI command scoping and version fallback, anonymous removal of stale authorization, redaction, and signing behavior are asserted against injected StaticEnv and CommandExecute mocks. No live GitHub traffic is required.",
+        "refs": [
+          "services/github/tests"
+        ]
+      },
+      "source_refs": [
+        "services/github"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static GitHub token",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-github"
     },
     {
       "id": "dropbox",

@@ -233,6 +233,19 @@ not retry or discover another endpoint. The service crate rejects a refreshed
 credential whose required expiration is missing or already past instead of
 treating it as permanent.
 
+Aliyun Drive refresh providers retain only the latest rotated refresh token in
+memory. A provider and its clones share this state and serialize exchanges;
+independently constructed providers do not coordinate. The exchange is sent only
+to the provider's configured HTTPS token endpoint, which defaults to the
+first-party endpoint, and tokens are never persisted. A successful, parseable
+token response commits a non-empty rotated refresh token even when the
+accompanying access token or expiry is unusable, because Aliyun Drive makes the
+previous refresh token single-use. Access-token caching and refresh-on-expiry
+remain in `Signer`. Reqsign exposes no refresh-token getter or persistence
+callback. After a successful exchange, restarting with the initially configured
+token may require a fresh authorized grant, or an application that manages and
+persists its own exchange and supplies an access token.
+
 ### 4.3 Credential redaction and observability
 
 Reqsign must avoid exposing credentials through `Debug` output, error chains,
@@ -317,6 +330,27 @@ acquisition. Loading `SharedConfig` does not execute credential processes or
 contact the network. IMDSv2 region fallback requires explicit opt-in and applies
 a deadline to the complete metadata-token and region exchange. Exposed endpoint
 settings remain the caller's responsibility to interpret.
+
+GitHub credential discovery reads `GH_TOKEN` before `GITHUB_TOKEN`. When the
+context has a command executor, it resolves the active stored account with
+`gh config get user --host github.com` and reads that account's token with
+`gh auth token --hostname github.com --user <user> --no-refresh` through the
+configured `CommandExecute`. The explicit hostname keeps discovery on
+GitHub.com regardless of `GH_HOST` or a local Git remote, and the explicit user
+prevents `GH_TOKEN` or `GITHUB_TOKEN` in the child process environment from
+shadowing the stored credential. Safe stored-token discovery requires GitHub CLI
+2.40.0 or newer. `--no-refresh` keeps discovery read-only on GitHub CLI 2.103.0
+and newer; older supported versions do not refresh stored tokens, so the
+provider retries without the flag only after the CLI reports that specific flag
+as unknown. The default provider does not read `GH_ENTERPRISE_TOKEN` or
+`GITHUB_ENTERPRISE_TOKEN`, does not run a shell, and does not silently fall
+through to another identity when a configured default slot fails. A
+caller-supplied `ProvideCredentialChain` keeps that chain's documented error
+policy. Command output, including stderr, never appears in errors or `Debug`
+output. The explicit anonymous provider is the only supported fallback when no
+credential is found; signing with it removes any existing `Authorization`
+header, leaves other headers and the URI unchanged, and is subject to GitHub's
+unauthenticated rate limit.
 
 The Cloudflare default credential provider reads only `CLOUDFLARE_API_TOKEN`
 through the context environment. It does not read `CLOUDFLARE_API_KEY` or

@@ -42,12 +42,16 @@ cargo add http anyhow
 | `aws` | AWS SigV4 (alias of `aws-v4`) |
 | `aws-v4a` | AWS SigV4a multi-region signing |
 | `azure` | Azure Storage |
+| `b2` | Backblaze B2 Native API |
 | `cloudflare` | Cloudflare API (KV, D1) |
 | `dropbox` | Dropbox |
+| `github` | GitHub.com |
 | `google` | Google Cloud |
 | `google-credential-access-boundary-client-side` | Client-side CAB downscoping (implies `google`) |
 | `aliyun` | Aliyun OSS |
+| `aliyun-drive` | Aliyun Drive Open Platform |
 | `huaweicloud` | Huawei Cloud OBS |
+| `http-message-signatures` | RFC 9421 request signatures |
 | `oauth2` | Shared OAuth 2.0 refresh-token grant |
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
@@ -106,15 +110,22 @@ composes that provider's own credential chain — the
 | [AWS SigV4](/docs/providers/aws-sigv4/) | `aws::default_signer(ctx, service, region)` |
 | [AWS SigV4a](/docs/providers/aws-sigv4a/) | `aws::v4a::default_signer(ctx, service, region_set)` |
 | [Azure Storage](/docs/providers/azure-storage/) | `azure::default_signer(ctx)` |
+| [Backblaze B2](/docs/providers/b2/) | `b2::default_signer(ctx)` |
 | [Cloudflare](/docs/providers/cloudflare/) | `cloudflare::default_signer(ctx)` |
 | [Dropbox](/docs/providers/dropbox/) | `dropbox::default_signer(ctx)` |
+| [GitHub](/docs/providers/github/) | `github::default_signer(ctx)` |
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |
+| [Aliyun Drive](/docs/providers/aliyun-drive/) | `aliyun_drive::default_signer(ctx)` |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | `huaweicloud::default_signer(ctx, bucket)` |
+| [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | `http_message_signatures::RequestSigner::new(label, components)` |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer(ctx)` |
 | [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer(ctx)` |
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
+
+Aliyun Drive has no documented ambient source; replace its default provider
+with a static access token or refresh-token provider.
 
 A default signer is an ordinary `Signer`: replace any component and keep the
 rest —

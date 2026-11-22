@@ -161,6 +161,17 @@ let ctx = default_context();
 let signer = cloudflare::default_signer(ctx);
 ```
 
+#### GitHub
+
+```rust
+use reqsign::{default_context, github};
+
+// Reads GH_TOKEN/GITHUB_TOKEN, then the GitHub CLI, then falls back to
+// anonymous access for public resources.
+let ctx = default_context();
+let signer = github::default_signer(ctx);
+```
+
 #### Google Cloud
 
 ```rust
@@ -181,20 +192,35 @@ let ctx = default_context();
 let signer = aliyun::default_signer(ctx, "mybucket");
 ```
 
+#### Aliyun Drive
+
+```rust
+use reqsign::{aliyun_drive, default_context};
+
+// Aliyun Drive has no ambient credential contract. Supply an explicit provider.
+let ctx = default_context();
+let signer = aliyun_drive::default_signer(ctx)
+    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+```
+
 ## Features
 
 - Pure Rust with minimal dependencies.
 - Tested against official SDKs and services.
 - Supported services
   - Aliyun OSS: `reqsign-aliyun-oss`
+  - Aliyun Drive: `reqsign-aliyun-drive`
   - AWS shared credentials and canonicalization: `reqsign-aws-core`
   - AWS services (SigV4): `reqsign-aws-v4`
   - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
+  - Backblaze B2 Native API: `reqsign-b2`
   - Cloudflare API (KV, D1): `reqsign-cloudflare`
   - Dropbox: `reqsign-dropbox`
+  - GitHub.com: `reqsign-github`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
+  - HTTP Message Signatures (RFC 9421): `reqsign-http-message-signatures`
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
   - OAuth 2.0 refresh-token support: `reqsign-oauth2`
