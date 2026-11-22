@@ -30,8 +30,9 @@ bend it, or replace it entirely.
 
 Every service crate ships a `DefaultCredentialProvider` composing that
 provider's documented default chain — the same sources the official CLIs and
-SDKs consult, in a documented order. Each
-[provider page](/docs/providers/) lists its exact sources.
+SDKs consult, in a documented order. A provider with no documented ambient
+source has an empty default chain and requires an explicit credential
+provider. Each [provider page](/docs/providers/) lists its exact sources.
 
 ```rust
 use reqsign::aws::DefaultCredentialProvider;

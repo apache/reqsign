@@ -45,16 +45,25 @@ export default function ProviderDetails({ id }) {
       <h2>Credentials</h2>
 
       <h3>Default credential chain</h3>
-      <p>
-        The default signer tries these sources in order and uses the first one
-        that yields a credential — no configuration needed when any of them is
-        present:
-      </p>
-      <ol>
-        {p.credential_sources.map((s) => (
-          <li key={s.id}>{s.label}</li>
-        ))}
-      </ol>
+      {p.credential_sources.length === 0 ? (
+        <p>
+          This provider has no ambient default source. Supply an explicit
+          credential provider as described on this page.
+        </p>
+      ) : (
+        <>
+          <p>
+            The default signer tries these sources in order and uses the first
+            one that yields a credential — no configuration needed when any of
+            them is present:
+          </p>
+          <ol>
+            {p.credential_sources.map((s) => (
+              <li key={s.id}>{s.label}</li>
+            ))}
+          </ol>
+        </>
+      )}
 
       <h3>Credential providers</h3>
       <p>

@@ -84,8 +84,9 @@ sandboxes. CI verifies this exact set on every commit:
 
 - `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
 - Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS,
-  Tencent COS, Dropbox** (facade features `aws`, `aws-v4a`, `azure`, `github`,
-  `aliyun`, `tencent`, `dropbox`, `oauth2`)
+  Aliyun Drive, Backblaze B2, Tencent COS, Dropbox** (facade features `aws`,
+  `aws-v4a`, `azure`, `github`, `aliyun`, `aliyun-drive`, `b2`, `tencent`,
+  `dropbox`, `oauth2`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock.
 GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in
@@ -95,12 +96,13 @@ The [provider matrix](/docs/providers/) marks WASM status per provider;
 treat providers outside this set as unsupported there until the catalog says
 otherwise.
 
-The OAuth 2.0 and Dropbox paths enable Jiff's `js` feature for
+The OAuth 2.0, Dropbox, and Aliyun Drive paths enable Jiff's `js` feature for
 `wasm32-unknown-unknown`. Their public signing and refresh entry points read the
 clock from a wasm-bindgen JavaScript host such as a browser or Node. A bare WASM
 runtime without a JavaScript clock can compile the crates but is not a
 supported runtime; calling `Timestamp::now` traps there. CI exercises the public
-Dropbox signing and OAuth2 mock-refresh paths under `wasm-bindgen-test` in Node.
+Dropbox signing, OAuth2 mock-refresh, and Aliyun Drive static/refresh paths under
+`wasm-bindgen-test` in Node.
 
 ```bash
 rustup target add wasm32-unknown-unknown

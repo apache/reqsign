@@ -233,6 +233,19 @@ not retry or discover another endpoint. The service crate rejects a refreshed
 credential whose required expiration is missing or already past instead of
 treating it as permanent.
 
+Aliyun Drive refresh providers retain only the latest rotated refresh token in
+memory. A provider and its clones share this state and serialize exchanges;
+independently constructed providers do not coordinate. The exchange is sent only
+to the provider's configured HTTPS token endpoint, which defaults to the
+first-party endpoint, and tokens are never persisted. A successful, parseable
+token response commits a non-empty rotated refresh token even when the
+accompanying access token or expiry is unusable, because Aliyun Drive makes the
+previous refresh token single-use. Access-token caching and refresh-on-expiry
+remain in `Signer`. Reqsign exposes no refresh-token getter or persistence
+callback. After a successful exchange, restarting with the initially configured
+token may require a fresh authorized grant, or an application that manages and
+persists its own exchange and supplies an access token.
+
 ### 4.3 Credential redaction and observability
 
 Reqsign must avoid exposing credentials through `Debug` output, error chains,
