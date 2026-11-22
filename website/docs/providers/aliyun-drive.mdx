@@ -1,0 +1,137 @@
+---
+title: Aliyun Drive
+description: Aliyun Drive Open Platform bearer tokens and JSON refresh-token exchange.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="aliyun-drive" />
+
+## Get started
+
+```bash
+cargo add reqsign --features aliyun-drive
+cargo add http@1
+```
+
+The default provider has no ambient source. Supply the identity explicitly:
+
+```rust
+use reqsign::{aliyun_drive, default_context};
+
+let ctx = default_context();
+let signer = aliyun_drive::default_signer(ctx)
+    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+
+// The caller owns the drive ID, file path, and request body.
+let mut req = http::Request::builder()
+    .method(http::Method::POST)
+    .uri("https://openapi.alipan.com/adrive/v1.0/openFile/get_by_path")
+    .header(http::header::USER_AGENT, "my-application")
+    .body(())?
+    .into_parts()
+    .0;
+
+// Sign in place, then send with the HTTP client you already use.
+signer.sign(&mut req, None).await?;
+```
+
+## Credentials
+
+Aliyun Drive Open Platform documents OAuth authorization and its token endpoint,
+but no CLI, SDK, environment-variable, or local-file credential discovery
+contract. Reqsign therefore does not invent an ambient source. Use
+`StaticCredentialProvider` for a caller-managed access token, or
+`RefreshCredentialProvider` for a confidential-client refresh token.
+
+An explicit provider fails closed: an invalid token or refresh configuration
+returns an error instead of silently switching to a different identity.
+
+### Refresh-token exchange
+
+Aliyun Drive uses OAuth 2.0 authorization but not the RFC 6749 form-encoded
+refresh request. The provider sends a vendor-specific JSON body:
+
+```text
+POST https://openapi.alipan.com/oauth/access_token
+Content-Type: application/json
+User-Agent: reqsign-aliyun-drive/<version>
+
+{"client_id":"...","client_secret":"...","grant_type":"refresh_token","refresh_token":"..."}
+```
+
+All three confidential-client credentials are required. Aliyun Drive's
+official PKCE public-client flow returns a 30-day access token without a refresh
+token, so public clients use `StaticCredentialProvider` with that access token,
+optionally with its absolute expiration. The endpoint requires a non-empty
+`User-Agent`. Use `with_token_endpoint` only to select another explicitly
+trusted HTTPS endpoint for the same confidential-client protocol.
+
+A successful response returns `access_token`, `token_type`, `expires_in`, and a
+new single-use `refresh_token`. The provider keeps only the latest refresh token
+in memory. Clones share that state and exchanges are serialized, so concurrent
+callers use the latest rotated token. A successful, parseable response commits a
+non-empty rotated token even when the accompanying access token or expiry is
+unusable, because the previous refresh token was consumed. Tokens are never
+persisted, and Reqsign exposes no getter or persistence callback.
+`reqsign::Signer` owns access-token caching and refresh on expiry.
+
+After a successful refresh, the initially configured refresh token may already
+have been consumed. Restarting with that original value can therefore fail.
+Restart with a fresh authorized grant, or let the application manage and persist
+its own refresh exchange and supply the resulting access token through
+`StaticCredentialProvider`.
+
+```rust
+use reqsign::{Signer, aliyun_drive, default_context};
+
+let provider = aliyun_drive::RefreshCredentialProvider::new(
+    "client-id",
+    "client-secret",
+    "refresh-token",
+)?;
+let signer = Signer::new(default_context(), provider, aliyun_drive::RequestSigner);
+```
+
+## Request behavior
+
+`RequestSigner` inserts a sensitive `Authorization: Bearer` header and leaves the
+URI and every other header unchanged. Drive IDs, file paths, upload URLs, request
+bodies, and the storage API requests stay with the caller. The service has no
+query authentication, so signing rejects `expires_in`.
+
+The first-party storage API also requires a caller-supplied `User-Agent`; the
+signer does not add or replace it. The refresh request sets its own
+`User-Agent` because the token endpoint requires one.
+
+The caller owns the HTTP client and its redirect policy. Do not forward the
+signed `Authorization` header to a different host.
+
+## WASM
+
+Static credentials and header signing work on `wasm32-unknown-unknown`.
+Refresh-token exchange works with a caller-provided HTTP adapter. On the
+`wasm-bindgen`-hosted target, the crate enables Jiff's JavaScript clock so
+expiration checks can read time from the JS host.
+
+<ProviderDetails id="aliyun-drive" />

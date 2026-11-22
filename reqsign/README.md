@@ -1,6 +1,6 @@
 # Apache Reqsign
 
-Signing HTTP requests for AWS, Azure, Dropbox, Google, Huawei, Aliyun, Tencent and Oracle services.
+Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Upyun and Oracle services.
 
 ## Features
 
@@ -8,11 +8,15 @@ This crate provides a unified interface for signing HTTP requests across multipl
 
 - **AWS**: Signature V4 for AWS services
 - **Azure**: Azure Storage services
+- **Cloudflare**: Cloudflare API v4 requests with an API token, including KV and D1
 - **Dropbox**: OAuth 2.0 bearer authentication
+- **GitHub**: GitHub.com bearer tokens and anonymous public access
+- **OneDrive**: Microsoft Graph OAuth 2.0 bearer authentication
 - **Google**: Google Cloud services
-- **Aliyun**: Aliyun Object Storage Service (OSS)
+- **Aliyun**: Aliyun Object Storage Service (OSS) and Aliyun Drive Open Platform
 - **Huawei Cloud**: Object Storage Service (OBS)
 - **Tencent Cloud**: Cloud Object Storage (COS)
+- **Upyun**: UPYUN header signing for Upyun Storage
 - **Oracle**: Oracle Cloud services
 
 ## Request URI Contract
@@ -166,6 +170,18 @@ let ctx = reqsign::default_context();
 use reqsign::azure;
 let signer = azure::default_signer(ctx.clone());
 
+// Cloudflare (KV and D1)
+use reqsign::cloudflare;
+let signer = cloudflare::default_signer(ctx.clone());
+
+// Backblaze B2
+use reqsign::b2;
+let signer = b2::default_signer(ctx.clone());
+
+// GitHub
+use reqsign::github;
+let signer = github::default_signer(ctx.clone());
+
 // Google Cloud
 use reqsign::google;
 let signer = google::default_signer(ctx.clone(), "storage.googleapis.com");
@@ -173,6 +189,18 @@ let signer = google::default_signer(ctx.clone(), "storage.googleapis.com");
 // Aliyun OSS
 use reqsign::aliyun;
 let signer = aliyun::default_signer(ctx.clone(), "mybucket");
+
+// Aliyun Drive (supply an explicit provider; there is no ambient source)
+use reqsign::aliyun_drive;
+let signer = aliyun_drive::default_signer(ctx.clone())
+    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+
+// OneDrive (supply an explicit static or refresh provider; there is no ambient source)
+use reqsign::onedrive;
+let signer = onedrive::default_signer(ctx.clone()).with_credential_provider(
+    onedrive::DefaultCredentialProvider::new()
+        .push_front(onedrive::StaticCredentialProvider::new("graph-access-token")),
+);
 
 // Huawei Cloud OBS
 use reqsign::huaweicloud;
@@ -186,6 +214,10 @@ let signer = openstack::default_signer(ctx.clone());
 use reqsign::tencent;
 let signer = tencent::default_signer(ctx.clone());
 
+// Upyun
+use reqsign::upyun;
+let signer = upyun::default_signer(ctx.clone(), "mybucket");
+
 // Oracle Cloud
 use reqsign::oracle;
 let signer = oracle::default_signer(ctx);
@@ -197,14 +229,23 @@ let signer = oracle::default_signer(ctx);
 - `default-context`: Provides a default context implementation using `reqwest` and `tokio`
 - `default-crypto`: Re-exports `RustCryptoProvider`; `default_context()` binds it when no process-wide provider is installed
 - `aliyun`: Enable Aliyun OSS support
+- `aliyun-drive`: Enable Aliyun Drive Open Platform support
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
+- `b2`: Enable Backblaze B2 Native API support
+- `cloudflare`: Enable Cloudflare API support (KV and D1)
+- `dropbox`: Enable Dropbox OAuth 2.0 support
+- `github`: Enable GitHub.com support
 - `google`: Enable Google Cloud support
 - `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
+- `http-message-signatures`: Enable HTTP Message Signatures (RFC 9421) support
 - `huaweicloud`: Enable Huawei Cloud OBS support
+- `oauth2`: Enable the shared OAuth 2.0 refresh-token support
+- `onedrive`: Enable OneDrive support (implies `oauth2`)
 - `openstack`: Enable OpenStack Keystone support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support
+- `upyun`: Enable Upyun support
 
 ## WASM Support
 

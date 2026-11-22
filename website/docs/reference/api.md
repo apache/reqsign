@@ -44,13 +44,20 @@ rustdoc owns signatures.
 - [`reqsign-aws-core`](https://docs.rs/reqsign-aws-core) — shared AWS
   credential chain and canonicalization
 - [`reqsign-azure-storage`](https://docs.rs/reqsign-azure-storage)
+- [`reqsign-b2`](https://docs.rs/reqsign-b2)
+- [`reqsign-cloudflare`](https://docs.rs/reqsign-cloudflare)
 - [`reqsign-dropbox`](https://docs.rs/reqsign-dropbox)
+- [`reqsign-github`](https://docs.rs/reqsign-github)
+- [`reqsign-onedrive`](https://docs.rs/reqsign-onedrive)
 - [`reqsign-google`](https://docs.rs/reqsign-google)
 - [`reqsign-aliyun-oss`](https://docs.rs/reqsign-aliyun-oss)
+- [`reqsign-aliyun-drive`](https://docs.rs/reqsign-aliyun-drive)
 - [`reqsign-huaweicloud-obs`](https://docs.rs/reqsign-huaweicloud-obs)
+- [`reqsign-http-message-signatures`](https://docs.rs/reqsign-http-message-signatures)
 - [`reqsign-openstack-keystone`](https://docs.rs/reqsign-openstack-keystone)
 - [`reqsign-oracle`](https://docs.rs/reqsign-oracle)
 - [`reqsign-tencent-cos`](https://docs.rs/reqsign-tencent-cos)
+- [`reqsign-upyun`](https://docs.rs/reqsign-upyun)
 - [`reqsign-volcengine-tos`](https://docs.rs/reqsign-volcengine-tos)
 - [`reqsign-yandex-disk`](https://docs.rs/reqsign-yandex-disk)
 

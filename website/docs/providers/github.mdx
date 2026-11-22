@@ -1,0 +1,145 @@
+---
+title: GitHub
+description: GitHub.com bearer tokens discovered from the environment or the GitHub CLI, with anonymous public fallback.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="github" />
+
+## Get started
+
+```bash
+cargo add reqsign --features github
+```
+
+```rust
+use reqsign::{default_context, github};
+
+// GH_TOKEN/GITHUB_TOKEN, then the GitHub CLI, then anonymous public access.
+let ctx = default_context();
+let signer = github::default_signer(ctx);
+
+let mut req = http::Request::builder()
+    .method(http::Method::GET)
+    .uri("https://api.github.com/repos/apache/reqsign/contents/README.md")
+    .header("user-agent", "my-application")
+    .header("x-github-api-version", "2022-11-28")
+    .body(())?
+    .into_parts()
+    .0;
+
+// Sign in place, then send with the HTTP client you already use.
+signer.sign(&mut req, None).await?;
+```
+
+The default chain reads `GH_TOKEN` before `GITHUB_TOKEN`. If neither is set
+and the context has a `CommandExecute` adapter, it resolves the active stored
+account with `gh config get user --host github.com`, then reads that account's
+token with
+`gh auth token --hostname github.com --user <user> --no-refresh`. The explicit
+user prevents `GH_TOKEN` or `GITHUB_TOKEN` in the child process environment
+from shadowing the stored credential; safe stored-token discovery requires
+GitHub CLI 2.40.0 or newer. The commands run directly, never through a shell;
+the explicit host keeps discovery independent of `GH_HOST` and local Git
+remotes; and Reqsign does not parse the CLI's configuration files.
+
+`--no-refresh` keeps discovery read-only on GitHub CLI 2.103.0 and newer. Older
+supported versions do not refresh when printing a stored token, so the provider
+retries without the flag only after the CLI reports that specific flag as
+unknown. If the stored token has expired, run `gh auth refresh`, then recreate
+the signer so it loads the new token.
+
+The default slots stop at the first error instead of silently selecting a
+different identity. A malformed environment token, malformed or failed
+stored-token discovery, or an invalid prepended or static provider fails
+signing. Only an absent credential reaches anonymous access.
+
+With no token, the chain ends with anonymous access. Signing with an anonymous
+credential removes any existing `Authorization` header and leaves other headers
+and the URI unchanged, so a reused request cannot carry stale authentication
+material. Anonymous requests can read public resources and are subject to
+GitHub's 60-requests-per-hour unauthenticated rate limit. Remove the fallback
+with `.no_anonymous()` when every request must be authenticated.
+
+## Explicit credentials
+
+Replace the provider for a token managed by your application:
+
+```rust
+use reqsign::github::{StaticCredentialProvider, default_signer};
+
+let ctx = reqsign::default_context();
+let signer = default_signer(ctx)
+    .with_credential_provider(StaticCredentialProvider::new("github-token"));
+```
+
+The builder exposes one positive method and one removal method per slot:
+
+```rust
+use reqsign::github::DefaultCredentialProvider;
+
+let provider = DefaultCredentialProvider::builder()
+    .no_env()
+    .no_gh_cli()
+    .build();
+```
+
+Removed slots are not re-enabled during `build()`. `.env(provider)`,
+`.gh_cli(provider)`, and `.anonymous(provider)` replace a slot, while
+`push_front` and `with_chain` compose a provider in front of or instead of the
+default chain.
+
+## Request behavior
+
+`RequestSigner` adds a sensitive `Authorization: Bearer` header for a token
+credential and removes any existing `Authorization` header for an explicit
+anonymous credential. Other headers and the URI are unchanged. It does not add
+or replace `User-Agent` (GitHub requires the caller to send one), `Accept`, or
+`X-GitHub-Api-Version`, so keep those request headers in the caller. GitHub has
+no query authentication, so signing rejects `expires_in`. GitHub credentials in
+this crate carry no expiration and signing writes no protocol time, so signing
+has no clock dependency.
+
+## Host and scope
+
+The built-in providers discover GitHub.com credentials only. They ignore
+`GH_HOST`, `GH_ENTERPRISE_TOKEN`, and `GITHUB_ENTERPRISE_TOKEN`; use
+`StaticCredentialProvider` or a custom provider for GitHub Enterprise Server.
+`GH_TOKEN` and `GITHUB_TOKEN` are interpreted as the GitHub CLI's GitHub.com
+token; pass the intended token explicitly when you use multiple hosts. The
+signer does not restrict the request host, so caller-supplied credentials may
+be used with another GitHub host. GitHub assigns each token's host and its OAuth
+scopes or fine-grained repository permissions. Reqsign neither requests nor
+inspects them, and it does not implement GitHub App installation-token exchange.
+
+The caller owns the HTTP client and its redirect policy. Do not forward the
+signed `Authorization` header to a different host.
+
+## WASM
+
+Environment, static, and anonymous signing work on `wasm32-unknown-unknown`
+without a JavaScript clock. GitHub CLI discovery requires a `CommandExecute`
+adapter and is unavailable in bare WASM runtimes.
+
+<ProviderDetails id="github" />

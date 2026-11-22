@@ -28,23 +28,30 @@ rust-version = "1.87.0"
 
 [workspace.dependencies]
 # Workspace dependencies
+reqsign-aliyun-drive = { version = "1.0.0", path = "services/aliyun-drive" }
 reqsign-aliyun-oss = { version = "3.2.2", path = "services/aliyun-oss" }
 reqsign-aws-core = { version = "3.4.0", path = "services/aws-core" }
 reqsign-aws-v4 = { version = "3.5.0", path = "services/aws-v4" }
 reqsign-aws-v4a = { version = "3.2.0", path = "services/aws-v4a" }
 reqsign-azure-storage = { version = "3.3.2", path = "services/azure-storage" }
+reqsign-b2 = { version = "1.0.0", path = "services/b2" }
+reqsign-cloudflare = { version = "1.0.0", path = "services/cloudflare" }
 reqsign-command-execute-tokio = { version = "3.0.9", path = "context/command-execute-tokio" }
 reqsign-core = { version = "3.3.4", path = "core" }
 reqsign-crypto-rustcrypto = { version = "1.0.0", path = "crypto/rustcrypto" }
 reqsign-dropbox = { version = "1.0.0", path = "services/dropbox" }
 reqsign-file-read-tokio = { version = "3.0.9", path = "context/file-read-tokio" }
+reqsign-github = { version = "1.0.0", path = "services/github" }
 reqsign-google = { version = "3.4.0", path = "services/google" }
 reqsign-http-send-reqwest = { version = "4.0.9", path = "context/http-send-reqwest" }
 reqsign-huaweicloud-obs = { version = "3.1.0", path = "services/huaweicloud-obs" }
+reqsign-http-message-signatures = { version = "3.0.0", path = "services/http-message-signatures" }
 reqsign-oauth2 = { version = "1.0.0", path = "services/oauth2" }
+reqsign-onedrive = { version = "1.0.0", path = "services/onedrive" }
 reqsign-openstack-keystone = { version = "3.0.1", path = "services/openstack-keystone" }
 reqsign-oracle = { version = "3.1.0", path = "services/oracle" }
 reqsign-tencent-cos = { version = "3.1.0", path = "services/tencent-cos" }
+reqsign-upyun = { version = "1.0.0", path = "services/upyun" }
 reqsign-volcengine-tos = { version = "3.2.0", path = "services/volcengine-tos" }
 reqsign-yandex-disk = { version = "1.0.0", path = "services/yandex-disk" }
 

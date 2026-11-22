@@ -48,18 +48,25 @@ jobs:
         run: |
           packages=(
             reqsign-core
+            reqsign-aliyun-drive
             reqsign-aliyun-oss
             reqsign-aws-core
             reqsign-aws-v4
             reqsign-aws-v4a
             reqsign-azure-storage
+            reqsign-b2
+            reqsign-cloudflare
             reqsign-dropbox
+            reqsign-github
             reqsign-google
             reqsign-huaweicloud-obs
+            reqsign-http-message-signatures
             reqsign-oauth2
+            reqsign-onedrive
             reqsign-openstack-keystone
             reqsign-oracle
             reqsign-tencent-cos
+            reqsign-upyun
             reqsign-volcengine-tos
             reqsign-yandex-disk
           )
@@ -121,7 +128,7 @@ jobs:
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent,dropbox,yandex-disk
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,onedrive,upyun,yandex-disk
 
   # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
   wasm_compat:
@@ -137,10 +144,15 @@ jobs:
           cargo check --package reqsign-crypto-rustcrypto --target wasm32-unknown-unknown
           cargo check -p reqsign-aws-core --target wasm32-unknown-unknown
           cargo check -p reqsign-aws-v4a --target wasm32-unknown-unknown
-          cargo check -p reqsign-oauth2 -p reqsign-dropbox --target wasm32-unknown-unknown
+          cargo check -p reqsign-cloudflare --target wasm32-unknown-unknown
+          cargo check -p reqsign-http-message-signatures --target wasm32-unknown-unknown
+          cargo check -p reqsign-aliyun-drive --target wasm32-unknown-unknown
+          cargo check -p reqsign-oauth2 -p reqsign-dropbox -p reqsign-onedrive --target wasm32-unknown-unknown
+          cargo check -p reqsign-github --target wasm32-unknown-unknown
+          cargo check -p reqsign-upyun --target wasm32-unknown-unknown
           cargo check -p reqsign-yandex-disk --target wasm32-unknown-unknown
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,tencent,dropbox,yandex-disk
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,tencent,dropbox,yandex-disk
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,onedrive,upyun,yandex-disk
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,b2,cloudflare,tencent,dropbox,github,http-message-signatures,onedrive,upyun,yandex-disk
 
   unit:
     runs-on: ubuntu-latest
@@ -155,9 +167,9 @@ jobs:
         env:
           RUST_LOG: DEBUG
           RUST_BACKTRACE: full
-      - name: Facade crypto feature tests
+      - name: Facade feature tests
         run: |
-          cargo test --package reqsign --all-features --test crypto --test default_signer --test yandex_disk
+          cargo test --package reqsign --all-features --test crypto --test default_signer --test aliyun_drive --test cloudflare --test github --test onedrive --test upyun --test yandex_disk
           cargo test --package reqsign --no-default-features --features default-context --test crypto_without_default_crypto
       - name: Doc Test
         run: cargo +nightly test --doc --all-features --workspace
@@ -192,6 +204,12 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo test --target wasm32-unknown-unknown -p reqsign-http-send-reqwest --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-cloudflare --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-http-message-signatures --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-aliyun-drive --test wasm
           cargo test --target wasm32-unknown-unknown -p reqsign-oauth2 --test wasm
           cargo test --target wasm32-unknown-unknown -p reqsign-dropbox --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-github --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-onedrive --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-upyun --test wasm
           cargo test --target wasm32-unknown-unknown -p reqsign-yandex-disk --test wasm

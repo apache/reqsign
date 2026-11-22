@@ -1,0 +1,140 @@
+---
+title: Cloudflare
+description: Cloudflare API tokens for the KV and D1 request paths, discovered from the environment.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="cloudflare" />
+
+## Get started
+
+```bash
+cargo add reqsign --features cloudflare
+```
+
+```rust
+use reqsign::{cloudflare, default_context};
+
+// CLOUDFLARE_API_TOKEN — resolved by the default chain.
+let ctx = default_context();
+let signer = cloudflare::default_signer(ctx);
+
+let mut req = http::Request::builder()
+    .method(http::Method::GET)
+    .uri("https://api.cloudflare.com/client/v4/accounts/<account_id>/storage/kv/namespaces/<namespace_id>/values/my-key")
+    .body(())?
+    .into_parts()
+    .0;
+
+// Sign in place, then send with the HTTP client you already use.
+signer.sign(&mut req, None).await?;
+```
+
+The signer inserts `Authorization: Bearer <token>`, which is how API tokens
+authenticate the Cloudflare API v4. One token signs KV and D1 requests alike.
+
+## Resource identifiers stay in the request
+
+The account, database, and namespace identifiers are part of the request URL
+rather than the credential:
+
+```text
+KV   /accounts/<account_id>/storage/kv/namespaces/<namespace_id>/values/<key>
+D1   /accounts/<account_id>/d1/database/<database_id>/query
+```
+
+They stay with the code that builds the request, so one credential signs for
+every account, database, and namespace the token is scoped to. Reqsign does not
+build the business URL, choose the HTTP method, or touch the request body: keep
+the multipart `Content-Type` for KV writes and the JSON body for D1 queries in
+the caller.
+
+## Credential discovery
+
+The default chain reads `CLOUDFLARE_API_TOKEN` through `Context` environment
+access. That is the variable Wrangler and Cloudflare's official SDKs use for
+non-interactive authentication. There is no other default source.
+
+Cloudflare's global API key is not an API token source: it authenticates with
+`X-Auth-Key` and `X-Auth-Email` instead of a bearer token, so
+`CLOUDFLARE_API_KEY` and `CLOUDFLARE_EMAIL` are not read. Supply a custom
+provider when a request really needs that authentication.
+
+`CLOUDFLARE_ACCOUNT_ID` is not read either; it selects a resource in the URL,
+not an identity.
+
+The configured sources fail closed. A present but unusable
+`CLOUDFLARE_API_TOKEN`, or an invalid prepended or static provider, fails
+signing instead of silently selecting a different identity. An absent token
+yields no credential, and signing then reports `CredentialInvalid`.
+
+## Explicit credentials
+
+Replace the provider for a token managed by your application:
+
+```rust
+use reqsign::cloudflare::{StaticCredentialProvider, default_signer};
+
+let ctx = reqsign::default_context();
+let signer = default_signer(ctx)
+    .with_credential_provider(StaticCredentialProvider::new("cloudflare-api-token"));
+```
+
+The builder exposes one positive method and one removal method per slot:
+
+```rust
+use reqsign::cloudflare::{DefaultCredentialProvider, EnvCredentialProvider};
+
+let provider = DefaultCredentialProvider::builder()
+    .no_env()
+    .env(EnvCredentialProvider::new())
+    .build();
+```
+
+Removed slots are not re-enabled during `build()`. `push_front` composes a
+higher-priority provider, and an error from a prepended provider is returned
+instead of falling through to the default chain. A caller-supplied
+`ProvideCredentialChain` keeps that chain's own error policy.
+
+## Request behavior
+
+`RequestSigner` inserts a sensitive `Authorization` header and leaves the URI
+and every other header unchanged. The Cloudflare API has no query
+authentication, so signing rejects `expires_in`.
+
+Cloudflare assigns each token its permissions and optional expiry when the token
+is created; neither is readable from the token. Reqsign does not track that
+expiry, and signing writes no protocol time, so signing has no clock dependency.
+A token that Cloudflare has expired fails at the API, so rotate it with the
+mechanism your deployment already uses.
+
+The caller owns the HTTP client and its redirect policy. Do not forward the
+signed `Authorization` header to a different host.
+
+## WASM
+
+Environment and static credentials plus header signing work on
+`wasm32-unknown-unknown` without a JavaScript clock.
+
+<ProviderDetails id="cloudflare" />

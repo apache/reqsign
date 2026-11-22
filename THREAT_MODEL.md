@@ -219,19 +219,42 @@ after a process restart, the disk registration and refresh token must still be
 usable. Legacy inline SSO configurations do not refresh, and Reqsign never
 starts interactive login.
 
-OAuth 2.0 refresh grants for Dropbox and later service crates follow the same
-in-memory model. Each `RefreshTokenGrant` retains only its latest refresh token;
-clones share that state and serialize the complete exchange from reading the
-old token through committing a replacement. Independently constructed grants
-and processes do not coordinate, and Reqsign never writes refresh tokens to
-disk. Refreshed access tokens are cached only by `Signer`, not by the shared
-grant. If a provider rotates a refresh token but its response is lost, Reqsign
-cannot recover the server-side token; the caller must supply a new one. The
-shared grant sends only the RFC 6749 form fields to its configured HTTPS token
+OAuth 2.0 refresh grants for Dropbox and OneDrive follow the same in-memory
+model. Each `RefreshTokenGrant` retains only its latest refresh token; clones
+share that state and serialize the complete exchange from reading the old token
+through committing the new one. Independently constructed grants and processes
+do not coordinate, and Reqsign never writes refresh tokens to disk. Refreshed
+access tokens are cached only by `Signer`, not by the shared grant. If a
+provider rotates a refresh token but its response is lost, Reqsign cannot
+recover the server-side token; the caller must supply a new one. The shared
+grant sends only the RFC 6749 form fields to its configured HTTPS token
 endpoint, does not send HTTP Basic authentication at the same time, and does
 not retry or discover another endpoint. The service crate rejects a refreshed
 credential whose required expiration is missing or already past instead of
 treating it as permanent.
+
+Aliyun Drive refresh providers retain only the latest rotated refresh token in
+memory. A provider and its clones share this state and serialize exchanges;
+independently constructed providers do not coordinate. The exchange is sent only
+to the provider's configured HTTPS token endpoint, which defaults to the
+first-party endpoint, and tokens are never persisted. A successful, parseable
+token response commits a non-empty rotated refresh token even when the
+accompanying access token or expiry is unusable, because Aliyun Drive makes the
+previous refresh token single-use. Access-token caching and refresh-on-expiry
+remain in `Signer`. Reqsign exposes no refresh-token getter or persistence
+callback. After a successful exchange, restarting with the initially configured
+token may require a fresh authorized grant, or an application that manages and
+persists its own exchange and supplies an access token.
+
+OneDrive follows Microsoft's client types: a public-client exchange sends no
+client secret, while a confidential client sends its secret as an RFC 6749 form
+field. Microsoft documents no environment variable or shared configuration
+file for Microsoft Graph user tokens, and MSAL token caches are
+library-specific, so the OneDrive default provider's automatic chain is empty:
+it does not read MSAL token caches, run the Azure CLI, or discover a token
+endpoint. The token endpoint is the documented Microsoft Entra v2.0 endpoint
+for an explicit tenant, or an explicitly configured HTTPS endpoint such as a
+national cloud, and the caller owns that trust decision.
 
 ### 4.3 Credential redaction and observability
 
@@ -318,6 +341,40 @@ contact the network. IMDSv2 region fallback requires explicit opt-in and applies
 a deadline to the complete metadata-token and region exchange. Exposed endpoint
 settings remain the caller's responsibility to interpret.
 
+GitHub credential discovery reads `GH_TOKEN` before `GITHUB_TOKEN`. When the
+context has a command executor, it resolves the active stored account with
+`gh config get user --host github.com` and reads that account's token with
+`gh auth token --hostname github.com --user <user> --no-refresh` through the
+configured `CommandExecute`. The explicit hostname keeps discovery on
+GitHub.com regardless of `GH_HOST` or a local Git remote, and the explicit user
+prevents `GH_TOKEN` or `GITHUB_TOKEN` in the child process environment from
+shadowing the stored credential. Safe stored-token discovery requires GitHub CLI
+2.40.0 or newer. `--no-refresh` keeps discovery read-only on GitHub CLI 2.103.0
+and newer; older supported versions do not refresh stored tokens, so the
+provider retries without the flag only after the CLI reports that specific flag
+as unknown. The default provider does not read `GH_ENTERPRISE_TOKEN` or
+`GITHUB_ENTERPRISE_TOKEN`, does not run a shell, and does not silently fall
+through to another identity when a configured default slot fails. A
+caller-supplied `ProvideCredentialChain` keeps that chain's documented error
+policy. Command output, including stderr, never appears in errors or `Debug`
+output. The explicit anonymous provider is the only supported fallback when no
+credential is found; signing with it removes any existing `Authorization`
+header, leaves other headers and the URI unchanged, and is subject to GitHub's
+unauthenticated rate limit.
+
+The Cloudflare default credential provider reads only `CLOUDFLARE_API_TOKEN`
+through the context environment. It does not read `CLOUDFLARE_API_KEY` or
+`CLOUDFLARE_EMAIL`: Cloudflare's global API key authenticates with a different
+header pair rather than the bearer token that the KV and D1 endpoints use. The
+account, database, and namespace identifiers stay in the caller-built request
+URL, so credential discovery never selects a resource. A present but unusable
+token, or an invalid prepended provider, fails instead of falling through to
+another source. Cloudflare assigns each token its permissions and optional
+expiry when the token is created; Reqsign neither reads nor tracks that expiry,
+so an expired token fails at the API. The signed `Authorization` header is
+marked sensitive, and forwarding it to a different host is the caller's
+responsibility.
+
 The Yandex Disk provider reads no environment variable, CLI token store, or
 well-known credential file: Yandex documents no automatic token source. Its
 default provider yields no credential until the caller supplies an explicit
@@ -352,6 +409,11 @@ Examples:
 - Query-based signing and presigning must apply expiry and signed query
   parameters according to the provider's rules and must not leave stale
   signature material from a previous signing pass.
+- OpenStack Swift TempURL signing must use the configured account or container
+  key, never the Keystone identity token, and must cover the method, expiry, and
+  the object path after one percent-decoding step, matching Swift's decoded
+  request path, while preserving the caller's encoded path and query bytes in
+  the outgoing URI. The resulting URL is secret-bearing authorization material.
 - Signing must use the request endpoint, authority, scheme, path, query, and
   headers selected by the trusted caller and signer implementation.
 - A service-specific signer must not send credentials to an unrelated endpoint
