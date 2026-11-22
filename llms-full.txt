@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-12signing providers
+13signing providers
 
 5granting operations
 
-7WASM-ready providers
+8WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 12 providers. Explicit schemes.
+## 13 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -795,6 +795,7 @@ cargo add http anyhow
 | google                                        | Google Cloud                                 |
 | google-credential-access-boundary-client-side | Client-side CAB downscoping (implies google) |
 | aliyun                                        | Aliyun OSS                                   |
+| aliyun-drive                                  | Aliyun Drive Open Platform                   |
 | huaweicloud                                   | Huawei Cloud OBS                             |
 | oauth2                                        | Shared OAuth 2.0 refresh-token grant         |
 | openstack                                     | OpenStack Keystone                           |
@@ -897,11 +898,14 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [Dropbox](/docs/providers/dropbox/)                       | dropbox::default\_signer(ctx)                        |
 | [Google Cloud](/docs/providers/google/)                   | google::default\_signer(ctx, service)                |
 | [Aliyun OSS](/docs/providers/aliyun-oss/)                 | aliyun::default\_signer(ctx, bucket)                 |
+| [Aliyun Drive](/docs/providers/aliyun-drive/)             | aliyun\_drive::default\_signer(ctx)                  |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)      | huaweicloud::default\_signer(ctx, bucket)            |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/) | openstack::default\_signer(ctx)                      |
 | [Oracle Cloud](/docs/providers/oracle/)                   | oracle::default\_signer(ctx)                         |
 | [Tencent COS](/docs/providers/tencent-cos/)               | tencent::default\_signer(ctx)                        |
 | [Volcengine TOS](/docs/providers/volcengine-tos/)         | volcengine::default\_signer(ctx, region)             |
+
+Aliyun Drive has no documented ambient source; replace its default provider with a static access token or refresh-token provider.
 
 A default signer is an ordinary `Signer`: replace any component and keep the rest —
 
@@ -976,6 +980,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | [Backblaze B2](/docs/providers/b2/)                       | B2 Native API account authorization token            | ✓      | —               | —        | ✓    |
 | [Google Cloud](/docs/providers/google/)                   | OAuth 2.0 bearer token, V4 signed URLs               | ✓      | ✓               | ✓ 2      | —    |
 | [Aliyun OSS](/docs/providers/aliyun-oss/)                 | OSS signature V1, OSS signature V2, OSS signature V4 | ✓      | ✓               | —        | ✓    |
+| [Aliyun Drive](/docs/providers/aliyun-drive/)             | Bearer token                                         | ✓      | —               | —        | ✓    |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)      | OBS signature                                        | ✓      | ✓               | —        | —    |
 | [Oracle Cloud](/docs/providers/oracle/)                   | OCI request signature                                | ✓      | —               | —        | —    |
 | [Tencent COS](/docs/providers/tencent-cos/)               | COS signature                                        | ✓      | ✓               | —        | ✓    |
@@ -1091,7 +1096,7 @@ Everything about getting credentials into a signer: use the default chain, bend 
 
 ## Use the default chain[​](#use-the-default-chain "Direct link to Use the default chain")
 
-Every service crate ships a `DefaultCredentialProvider` composing that provider's documented default chain — the same sources the official CLIs and SDKs consult, in a documented order. Each[provider page](/docs/providers/) lists its exact sources.
+Every service crate ships a `DefaultCredentialProvider` composing that provider's documented default chain — the same sources the official CLIs and SDKs consult, in a documented order. A provider with no documented ambient source has an empty default chain and requires an explicit credential provider. Each [provider page](/docs/providers/) lists its exact sources.
 
 ```
 
@@ -1372,11 +1377,11 @@ Slots you do not provide stay as no-op stubs that error when used — a credenti
 Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
 
 * `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Tencent COS, Dropbox** (facade features `aws`, `aws-v4a`, `azure`, `aliyun`,`tencent`, `dropbox`, `oauth2`)
+* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Aliyun Drive, Tencent COS, Dropbox** (facade features `aws`, `aws-v4a`, `azure`,`aliyun`, `aliyun-drive`, `tencent`, `dropbox`, `oauth2`)
 
 The [provider matrix](/docs/providers/) marks WASM status per provider; treat providers outside this set as unsupported there until the catalog says otherwise.
 
-The OAuth 2.0 and Dropbox paths enable Jiff's `js` feature for`wasm32-unknown-unknown`. Their public signing and refresh entry points read the clock from a wasm-bindgen JavaScript host such as a browser or Node. A bare WASM runtime without a JavaScript clock can compile the crates but is not a supported runtime; calling `Timestamp::now` traps there. CI exercises the public Dropbox signing and OAuth2 mock-refresh paths under `wasm-bindgen-test` in Node.
+The OAuth 2.0, Dropbox, and Aliyun Drive paths enable Jiff's `js` feature for`wasm32-unknown-unknown`. Their public signing and refresh entry points read the clock from a wasm-bindgen JavaScript host such as a browser or Node. A bare WASM runtime without a JavaScript clock can compile the crates but is not a supported runtime; calling `Timestamp::now` traps there. CI exercises the public Dropbox signing, OAuth2 mock-refresh, and Aliyun Drive static/refresh paths under`wasm-bindgen-test` in Node.
 
 ```
 
@@ -1781,6 +1786,145 @@ The same pattern applies to `HttpSend` (canned metadata/STS responses) and`FileR
 ## Integration tests against real services[​](#integration-tests-against-real-services "Direct link to Integration tests against real services")
 
 Per-service integration suites live under `services/<name>/tests/` and stay skipped unless their `REQSIGN_*` environment variables opt in — see each suite's README for the exact gate. CI wires secrets for them; locally you can run the mock-backed tests with plain `cargo test`.
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/aliyun-drive/
+---
+# Aliyun Drive | Apache Reqsign™
+
+# Aliyun Drive
+
+Aliyun Drive Open Platform API requests authenticated with an OAuth access token. The drive ID, file paths, upload URLs, request bodies, and storage API requests stay with the caller.
+
+Bearer token✓ header signing— query / presign✓ WASM[docs.rs/reqsign-aliyun-drive ↗](https://docs.rs/reqsign-aliyun-drive)
+
+Inserts a sensitive Authorization: Bearer header and leaves the URI and every other header unchanged; expires\_in is rejected because the service has no query authentication. The caller supplies the User-Agent required by the storage API.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features aliyun-drive
+
+cargo add http@1
+
+
+```
+
+The default provider has no ambient source. Supply the identity explicitly:
+
+```
+
+use reqsign::{aliyun_drive, default_context};
+
+
+let ctx = default_context();
+
+let signer = aliyun_drive::default_signer(ctx)
+
+    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+
+
+// The caller owns the drive ID, file path, and request body.
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::POST)
+
+    .uri("https://openapi.alipan.com/adrive/v1.0/openFile/get_by_path")
+
+    .header(http::header::USER_AGENT, "my-application")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+## Credentials[​](#credentials "Direct link to Credentials")
+
+Aliyun Drive Open Platform documents OAuth authorization and its token endpoint, but no CLI, SDK, environment-variable, or local-file credential discovery contract. Reqsign therefore does not invent an ambient source. Use`StaticCredentialProvider` for a caller-managed access token, or`RefreshCredentialProvider` for a confidential-client refresh token.
+
+An explicit provider fails closed: an invalid token or refresh configuration returns an error instead of silently switching to a different identity.
+
+### Refresh-token exchange[​](#refresh-token-exchange "Direct link to Refresh-token exchange")
+
+Aliyun Drive uses OAuth 2.0 authorization but not the RFC 6749 form-encoded refresh request. The provider sends a vendor-specific JSON body:
+
+```
+
+POST https://openapi.alipan.com/oauth/access_token
+
+Content-Type: application/json
+
+User-Agent: reqsign-aliyun-drive/<version>
+
+
+{"client_id":"...","client_secret":"...","grant_type":"refresh_token","refresh_token":"..."}
+
+
+```
+
+All three confidential-client credentials are required. Aliyun Drive's official PKCE public-client flow returns a 30-day access token without a refresh token, so public clients use `StaticCredentialProvider` with that access token, optionally with its absolute expiration. The endpoint requires a non-empty`User-Agent`. Use `with_token_endpoint` only to select another explicitly trusted HTTPS endpoint for the same confidential-client protocol.
+
+A successful response returns `access_token`, `token_type`, `expires_in`, and a new single-use `refresh_token`. The provider keeps only the latest refresh token in memory. Clones share that state and exchanges are serialized, so concurrent callers use the latest rotated token. A successful, parseable response commits a non-empty rotated token even when the accompanying access token or expiry is unusable, because the previous refresh token was consumed. Tokens are never persisted, and Reqsign exposes no getter or persistence callback.`reqsign::Signer` owns access-token caching and refresh on expiry.
+
+After a successful refresh, the initially configured refresh token may already have been consumed. Restarting with that original value can therefore fail. Restart with a fresh authorized grant, or let the application manage and persist its own refresh exchange and supply the resulting access token through`StaticCredentialProvider`.
+
+```
+
+use reqsign::{Signer, aliyun_drive, default_context};
+
+
+let provider = aliyun_drive::RefreshCredentialProvider::new(
+
+    "client-id",
+
+    "client-secret",
+
+    "refresh-token",
+
+)?;
+
+let signer = Signer::new(default_context(), provider, aliyun_drive::RequestSigner);
+
+
+```
+
+## Request behavior[​](#request-behavior "Direct link to Request behavior")
+
+`RequestSigner` inserts a sensitive `Authorization: Bearer` header and leaves the URI and every other header unchanged. Drive IDs, file paths, upload URLs, request bodies, and the storage API requests stay with the caller. The service has no query authentication, so signing rejects `expires_in`.
+
+The first-party storage API also requires a caller-supplied `User-Agent`; the signer does not add or replace it. The refresh request sets its own`User-Agent` because the token endpoint requires one.
+
+The caller owns the HTTP client and its redirect policy. Do not forward the signed `Authorization` header to a different host.
+
+## WASM[​](#wasm "Direct link to WASM")
+
+Static credentials and header signing work on `wasm32-unknown-unknown`. Refresh-token exchange works with a caller-provided HTTP adapter. On the`wasm-bindgen`\-hosted target, the crate enables Jiff's JavaScript clock so expiration checks can read time from the JS host.
+
+## Credentials
+
+### Default credential chain
+
+This provider has no ambient default source. Supply an explicit credential provider as described on this page.
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [StaticCredentialProvider](https://docs.rs/reqsign-aliyun-drive/latest/reqsign%5Faliyun%5Fdrive/struct.StaticCredentialProvider.html) — Static access token
+* [RefreshCredentialProvider](https://docs.rs/reqsign-aliyun-drive/latest/reqsign%5Faliyun%5Fdrive/struct.RefreshCredentialProvider.html) — Confidential-client OAuth refresh token with a vendor JSON exchange
 
 ---
 
@@ -2815,6 +2959,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-dropbox](https://docs.rs/reqsign-dropbox)
 * [reqsign-google](https://docs.rs/reqsign-google)
 * [reqsign-aliyun-oss](https://docs.rs/reqsign-aliyun-oss)
+* [reqsign-aliyun-drive](https://docs.rs/reqsign-aliyun-drive)
 * [reqsign-huaweicloud-obs](https://docs.rs/reqsign-huaweicloud-obs)
 * [reqsign-openstack-keystone](https://docs.rs/reqsign-openstack-keystone)
 * [reqsign-oracle](https://docs.rs/reqsign-oracle)
@@ -2897,6 +3042,7 @@ The two validity checks have different jobs — `is_valid()` answers the_caching
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
 | Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs), Huawei Cloud OBS |
 | Bounds credential validity; header signing regardless  | Oracle Cloud                                                                                                       |
+| Rejected; header authentication only                   | Aliyun Drive                                                                                                       |
 | Requests a granted credential's validity window        | Granting operations (subject to the operation's own maximum)                                                       |
 
 Whatever the provider does with it, one obligation is universal: the credential used must remain usable for the full window — the signer refreshes or errors rather than producing an artifact that dies early. And three things it never means: it never _shortens_ a credential's own lifetime; it never overrides a provider-side maximum (S3 presign caps at 7 days — exceeding a cap is a provider-side error, not silent truncation); and `None` never means "no expiry" for the artifact (header signatures still embed timestamps with provider-defined validity).
@@ -2983,7 +3129,7 @@ Every release ships as an ASF source release plus crates.io packages — see[Dow
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
 
-**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Backblaze B2, Tencent COS, and Dropbox providers. The shared `reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Dropbox and OAuth2 runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Aliyun Drive, Backblaze B2, Tencent COS, and Dropbox providers. The shared `reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Dropbox, OAuth2, and Aliyun Drive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
 

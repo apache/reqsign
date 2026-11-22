@@ -21,6 +21,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 - [Scoped credential granting | Apache Reqsign™](https://reqsign.apache.org/docs/guides/granting/): <!--
 - [Presigning and query authentication | Apache Reqsign™](https://reqsign.apache.org/docs/guides/presigning/): Move authentication from headers into the URL and hand out presigned requests safely.
 - [Testing with mocks | Apache Reqsign™](https://reqsign.apache.org/docs/guides/testing/): <!--
+- [Aliyun Drive | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aliyun-drive/): Aliyun Drive Open Platform bearer tokens and JSON refresh-token exchange.
 - [Aliyun OSS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aliyun-oss/): OSS signatures V1, V2, and V4 with a deep RAM credential chain.
 - [AWS SigV4 | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aws-sigv4/): Signature Version 4 for AWS services, with the full shared credential chain.
 - [AWS SigV4a | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aws-sigv4a/): Asymmetric multi-region signing for AWS, sharing the SigV4 credential chain.
