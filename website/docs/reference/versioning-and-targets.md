@@ -29,16 +29,16 @@ Reqsign publishes many crates on four tracks:
 
 | Track | Crates | Scheme |
 | --- | --- | --- |
-| Core + established services | `reqsign-core`, `reqsign-aws-core`, established `reqsign-<provider>` service crates, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | Lockstep major (currently `3.x`) |
-| New provider crates | `reqsign-b2` and later provider crates introduced after the lockstep line | Independent major, starting at `1.0.0` |
+| Core + existing services | `reqsign-core`, `reqsign-aws-core`, every existing `reqsign-<provider>` service crate, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | Lockstep major (currently `3.x`) |
+| New provider and shared crates | `reqsign-b2`, `reqsign-oauth2`, `reqsign-dropbox`, and later crates introduced after the lockstep line | Independent major, starting at `1.0.0` |
 | Reqwest adapter | `reqsign-http-send-reqwest` | Independent major (currently `4.x`), so reqwest major bumps do not force a core major |
 | Facade | `reqsign` | Independent (currently `0.20.x`) |
 
 Lockstep means any `3.x` established service crate composes with any `3.x`
-core. New provider crates start at `1.0.0` and depend on the current core
-major, so a `1.x` provider crate composes with `3.x` core. Mixing core majors
-fails to compile — the trait definitions are the compatibility boundary, and
-Cargo enforces it.
+core. New provider and shared crates start at `1.0.0` and depend on the current
+core major, so a `1.x` crate composes with `3.x` core. Mixing core majors fails
+to compile — the trait definitions are the compatibility boundary, and Cargo
+enforces it.
 
 Applications should depend on the facade and let it pin compatible
 components; libraries should depend on `reqsign-core` plus their service
@@ -73,10 +73,13 @@ do.
 
 **WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a
 defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS
-SigV4a, Azure Storage, Aliyun OSS, Backblaze B2, and Tencent COS providers. The
+SigV4a, Azure Storage, Aliyun OSS, Backblaze B2, Tencent COS, and Dropbox
+providers. The shared `reqsign-oauth2` crate and the `oauth2` facade feature
+are checked in the same subset. Dropbox and OAuth2 runtime signing or refresh
+additionally requires a wasm-bindgen JavaScript host for the clock; see the
+[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The
 [provider matrix](/docs/providers/) is the authoritative per-provider
-status; the [Custom runtimes & WASM guide](/docs/guides/custom-runtimes/)
-covers building and browser-backed contexts.
+status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core
 assumes Tokio. Runtime coupling lives only in the optional context crates;

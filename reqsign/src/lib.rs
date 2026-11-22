@@ -45,11 +45,17 @@ pub mod azure;
 #[cfg(feature = "b2")]
 pub mod b2;
 
+#[cfg(feature = "dropbox")]
+pub mod dropbox;
+
 #[cfg(feature = "google")]
 pub mod google;
 
 #[cfg(feature = "huaweicloud")]
 pub mod huaweicloud;
+
+#[cfg(feature = "oauth2")]
+pub mod oauth2;
 
 #[cfg(feature = "openstack")]
 pub mod openstack;
