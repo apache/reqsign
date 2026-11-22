@@ -14,6 +14,10 @@
       "role": "Shared AWS credential chain and canonicalization used by both SigV4 and SigV4a."
     },
     {
+      "name": "reqsign-oauth2",
+      "role": "Shared RFC 6749 refresh-token grant and Bearer token support used by OAuth 2.0 service crates."
+    },
+    {
       "name": "reqsign-file-read-tokio",
       "role": "Context component: file reading backed by Tokio."
     },
@@ -885,6 +889,75 @@
         }
       ],
       "credential_provider_crate": "reqsign-openstack-keystone"
+    },
+    {
+      "id": "dropbox",
+      "display_name": "Dropbox",
+      "family": "Dropbox",
+      "blurb": "OAuth 2.0 access tokens and refresh-token exchange for the Dropbox API.",
+      "service_scope": "Dropbox API requests authenticated with a Dropbox OAuth 2.0 access token.",
+      "signing_schemes": [
+        "OAuth 2.0 bearer token"
+      ],
+      "crates": [
+        "reqsign-dropbox"
+      ],
+      "facade_features": [
+        {
+          "name": "dropbox",
+          "capability": "Enables reqsign-dropbox and its shared reqsign-oauth2 dependency."
+        },
+        {
+          "name": "oauth2",
+          "capability": "Enables the shared reqsign-oauth2 crate without a service crate."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::dropbox::default_signer(ctx)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "DBXCLI_ACCESS_TOKEN from the official dbxcli tool",
+          "provider": "EnvCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Inserts a sensitive Authorization: Bearer header; expires_in is rejected because Dropbox has no query authentication."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-oauth2 and reqsign-dropbox, builds the facade with --features dropbox, and runs public WASM signing and refresh tests under wasm-bindgen-test in Node."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Provider, refresh, rotation, redaction, and signing behavior are asserted against an injected mock HttpSend. No live Dropbox traffic is required.",
+        "refs": [
+          "services/dropbox/tests"
+        ]
+      },
+      "source_refs": [
+        "services/dropbox",
+        "services/oauth2"
+      ],
+      "last_verified": "2026-11-21",
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static access token with optional absolute expiry",
+          "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "refresh",
+          "label": "OAuth 2.0 refresh-token exchange",
+          "provider": "RefreshCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-dropbox"
     }
   ]
 }
