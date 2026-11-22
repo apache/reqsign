@@ -148,6 +148,7 @@ class CryptoDependencyBoundaryTest(unittest.TestCase):
                 """,
                 "crypto/backend/Cargo.toml": """\
                     [dependencies]
+                    md-5 = "0.11"
                     sha2 = "0.11"
                     rsa = "0.10"
 
@@ -166,6 +167,24 @@ class CryptoDependencyBoundaryTest(unittest.TestCase):
             }
         )
         self.assertEqual(violations, [])
+
+    def test_md5_dependency_outside_crypto_is_rejected(self):
+        violations = self.check(
+            {
+                "Cargo.toml": """\
+                    [workspace]
+                    members = ["service"]
+                """,
+                "service/Cargo.toml": """\
+                    [dependencies]
+                    md-5 = "0.11"
+                """,
+            }
+        )
+        self.assertEqual(
+            [(item.table, item.key, item.package) for item in violations],
+            [("dependencies", "md-5", "md-5")],
+        )
 
     def test_target_directory_is_not_scanned(self):
         violations = self.check(

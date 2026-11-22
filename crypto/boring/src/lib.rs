@@ -21,6 +21,10 @@
 //! APIs. Each call creates and drops its own BoringSSL context, so concurrent
 //! calls do not share mutable state and the crate contains no `unsafe` code.
 //!
+//! MD5 is available only when BoringSSL is not running in FIPS mode. FIPS does
+//! not approve MD5, so [`CryptoProvider::md5`] returns `ConfigInvalid` instead
+//! of computing a digest that the deployment's security policy excludes.
+//!
 //! This crate is excluded from the reqsign workspace: building it requires a
 //! C/C++ toolchain and CMake, and the main workspace must stay pure Rust. The
 //! `fips` feature forwards to `boring/fips`.
@@ -139,12 +143,25 @@ impl CryptoProvider for BoringCryptoProvider {
         digest(MessageDigest::sha256(), input)
     }
 
+    fn md5(&self, input: &[u8]) -> Result<[u8; 16]> {
+        if boring::fips::enabled() {
+            return Err(Error::config_invalid(
+                "BoringSSL FIPS mode does not support MD5",
+            ));
+        }
+        digest(MessageDigest::md5(), input)
+    }
+
     fn hmac_sha1(&self, key: &[u8], input: &[u8]) -> Result<[u8; 20]> {
         hmac(MessageDigest::sha1(), key, input)
     }
 
     fn hmac_sha256(&self, key: &[u8], input: &[u8]) -> Result<[u8; 32]> {
         hmac(MessageDigest::sha256(), key, input)
+    }
+
+    fn hmac_sha512(&self, key: &[u8], input: &[u8]) -> Result<[u8; 64]> {
+        hmac(MessageDigest::sha512(), key, input)
     }
 
     fn rsa_pkcs1v15_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
