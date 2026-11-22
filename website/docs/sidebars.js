@@ -72,6 +72,7 @@ module.exports = {
         "guides/granting",
         "guides/custom-runtimes",
         "guides/testing",
+        "guides/upgrading-to-0.21",
       ],
     },
     "architecture",

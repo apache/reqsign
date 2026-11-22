@@ -29,6 +29,22 @@ signer.sign(&mut parts, None).await?;
 - **Environment Integration**: Access environment variables through the Context
 - **Type Safety**: Strong typing ensures compile-time correctness
 
+## Changelog: 4.0.0
+
+- Cryptography moved behind `reqsign_core::crypto::CryptoProvider`, resolved
+  through the `Context`: an explicit `Context::with_crypto` binding, then the
+  process-wide `install_default`, otherwise `ConfigInvalid` at the point of use.
+  `Context::new()` starts unbound and the crate links no cryptographic
+  implementation. Use `reqsign-crypto-rustcrypto` (or another backend) to bind
+  one.
+- The `jwt` module and `jwt` feature are removed. Hash and MAC helpers take
+  `&dyn CryptoProvider` and return `Result`; services format their own RS256
+  JWS through the selected provider.
+- `Signer::with_context` isolates the credential cache instead of reusing the
+  previous context's cached credential. `with_request_signer` and
+  `with_credential_granter` keep the cache.
+- The minimum supported Rust version is 1.87.0.
+
 ## Core Concepts
 
 ### Context

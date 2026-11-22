@@ -17,7 +17,7 @@
 
 [package]
 name = "reqsign"
-version = "0.20.9"
+version = "0.21.0"
 
 categories = ["authentication", "web-programming::http-client"]
 description = "Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Oracle, Vercel and Seafile services"
