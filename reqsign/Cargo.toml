@@ -39,6 +39,7 @@ reqsign-core = { workspace = true }
 reqsign-crypto-rustcrypto = { workspace = true, optional = true }
 
 # Service implementations (optional)
+reqsign-aliyun-drive = { workspace = true, optional = true }
 reqsign-aliyun-oss = { workspace = true, optional = true }
 reqsign-aws-v4 = { workspace = true, optional = true }
 reqsign-aws-v4a = { workspace = true, optional = true }
@@ -69,6 +70,7 @@ default-context = [
 
 # Service features
 aliyun = ["dep:reqsign-aliyun-oss"]
+aliyun-drive = ["dep:reqsign-aliyun-drive"]
 aws = ["aws-v4"]
 aws-v4 = ["dep:reqsign-aws-v4"]
 aws-v4a = ["dep:reqsign-aws-v4a"]
@@ -90,6 +92,7 @@ volcengine = ["dep:reqsign-volcengine-tos"]
 # Full feature set
 full = [
   "aliyun",
+  "aliyun-drive",
   "aws",
   "aws-v4a",
   "azure",
@@ -110,6 +113,7 @@ anyhow = "1"
 bytes = "1"
 env_logger = "0.11"
 http = "1"
+serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 
 [[example]]

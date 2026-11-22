@@ -170,12 +170,24 @@ let ctx = default_context();
 let signer = aliyun::default_signer(ctx, "mybucket");
 ```
 
+#### Aliyun Drive
+
+```rust
+use reqsign::{aliyun_drive, default_context};
+
+// Aliyun Drive has no ambient credential contract. Supply an explicit provider.
+let ctx = default_context();
+let signer = aliyun_drive::default_signer(ctx)
+    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+```
+
 ## Features
 
 - Pure Rust with minimal dependencies.
 - Tested against official SDKs and services.
 - Supported services
   - Aliyun OSS: `reqsign-aliyun-oss`
+  - Aliyun Drive: `reqsign-aliyun-drive`
   - AWS shared credentials and canonicalization: `reqsign-aws-core`
   - AWS services (SigV4): `reqsign-aws-v4`
   - AWS multi-region services (SigV4a): `reqsign-aws-v4a`

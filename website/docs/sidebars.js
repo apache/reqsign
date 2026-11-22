@@ -42,6 +42,7 @@ module.exports = {
         "providers/b2",
         "providers/google",
         "providers/aliyun-oss",
+        "providers/aliyun-drive",
         "providers/huaweicloud-obs",
         "providers/oracle",
         "providers/tencent-cos",

@@ -10,7 +10,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Azure**: Azure Storage services
 - **Dropbox**: OAuth 2.0 bearer authentication
 - **Google**: Google Cloud services
-- **Aliyun**: Aliyun Object Storage Service (OSS)
+- **Aliyun**: Aliyun Object Storage Service (OSS) and Aliyun Drive Open Platform
 - **Huawei Cloud**: Object Storage Service (OBS)
 - **Tencent Cloud**: Cloud Object Storage (COS)
 - **Oracle**: Oracle Cloud services
@@ -178,6 +178,11 @@ let signer = google::default_signer(ctx.clone(), "storage.googleapis.com");
 use reqsign::aliyun;
 let signer = aliyun::default_signer(ctx.clone(), "mybucket");
 
+// Aliyun Drive (supply an explicit provider; there is no ambient source)
+use reqsign::aliyun_drive;
+let signer = aliyun_drive::default_signer(ctx.clone())
+    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+
 // Huawei Cloud OBS
 use reqsign::huaweicloud;
 let signer = huaweicloud::default_signer(ctx.clone(), "mybucket");
@@ -201,6 +206,7 @@ let signer = oracle::default_signer(ctx);
 - `default-context`: Provides a default context implementation using `reqwest` and `tokio`
 - `default-crypto`: Re-exports `RustCryptoProvider`; `default_context()` binds it when no process-wide provider is installed
 - `aliyun`: Enable Aliyun OSS support
+- `aliyun-drive`: Enable Aliyun Drive Open Platform support
 - `aws`: Enable AWS services support
 - `azure`: Enable Azure Storage support
 - `b2`: Enable Backblaze B2 Native API support
