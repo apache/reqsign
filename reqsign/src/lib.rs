@@ -57,6 +57,9 @@ pub mod google;
 #[cfg(feature = "huaweicloud")]
 pub mod huaweicloud;
 
+#[cfg(feature = "http-message-signatures")]
+pub mod http_message_signatures;
+
 #[cfg(feature = "oauth2")]
 pub mod oauth2;
 

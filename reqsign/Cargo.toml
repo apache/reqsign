@@ -48,6 +48,7 @@ reqsign-b2 = { workspace = true, optional = true }
 reqsign-dropbox = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
+reqsign-http-message-signatures = { workspace = true, optional = true }
 reqsign-oauth2 = { workspace = true, optional = true }
 reqsign-openstack-keystone = { workspace = true, optional = true }
 reqsign-oracle = { workspace = true, optional = true }
@@ -84,6 +85,7 @@ google-credential-access-boundary-client-side = [
   "reqsign-google/credential-access-boundary-client-side",
 ]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
+http-message-signatures = ["dep:reqsign-http-message-signatures"]
 oauth2 = ["dep:reqsign-oauth2"]
 openstack = ["dep:reqsign-openstack-keystone"]
 oracle = ["dep:reqsign-oracle"]
@@ -102,6 +104,7 @@ full = [
   "dropbox",
   "google",
   "google-credential-access-boundary-client-side",
+  "http-message-signatures",
   "huaweicloud",
   "oauth2",
   "openstack",
