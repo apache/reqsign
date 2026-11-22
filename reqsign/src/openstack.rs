@@ -32,8 +32,9 @@ pub type DefaultSigner = Signer<Credential>;
 ///
 /// This function creates a signer with:
 /// - The caller-supplied [`Context`] (for example `reqsign::default_context()` when `default-context` is enabled)
-/// - Default credential provider (reads the standard `OS_AUTH_URL`,
-///   `OS_USERNAME`, and `OS_PASSWORD` environment variables)
+/// - Default credential provider (reads a pre-issued `OS_AUTH_TOKEN`, or the
+///   standard `OS_AUTH_URL`, `OS_USERNAME`, and `OS_PASSWORD` environment
+///   variables for password authentication)
 /// - Request signer that inserts `X-Auth-Token` header
 ///
 /// # Example

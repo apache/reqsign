@@ -24,7 +24,13 @@ use super::env::EnvCredentialProvider;
 /// Default credential provider for OpenStack Keystone.
 ///
 /// Tries credential sources in order:
-/// 1. Environment variables (`OS_AUTH_URL`, `OS_USERNAME`, etc.)
+/// 1. A non-empty `OS_AUTH_TOKEN`, used directly as a pre-issued token
+/// 2. Environment password credentials (`OS_AUTH_URL`, `OS_USERNAME`, etc.)
+///
+/// Both sources belong to the environment provider slot. Use
+/// [`DefaultCredentialProviderBuilder::no_env`] to remove them together, or
+/// install [`StaticCredentialProvider`](crate::StaticCredentialProvider) as an
+/// explicit provider instead of relying on the environment.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
@@ -60,10 +66,10 @@ impl DefaultCredentialProvider {
     /// # Example
     ///
     /// ```no_run
-    /// use reqsign_openstack_keystone::{DefaultCredentialProvider, EnvCredentialProvider};
+    /// use reqsign_openstack_keystone::{DefaultCredentialProvider, StaticCredentialProvider};
     ///
     /// let provider = DefaultCredentialProvider::new()
-    ///     .push_front(EnvCredentialProvider::new());
+    ///     .push_front(StaticCredentialProvider::new("pre-issued-token"));
     /// ```
     pub fn push_front(
         mut self,
@@ -156,6 +162,7 @@ mod tests {
     #[tokio::test]
     async fn test_builder_no_env_removes_env_provider() {
         let ctx = ctx_with_envs(HashMap::from([
+            (OS_AUTH_TOKEN.to_string(), "test-token-value".to_string()),
             (
                 OS_AUTH_URL.to_string(),
                 "http://127.0.0.1:5000/v3".to_string(),

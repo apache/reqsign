@@ -54,8 +54,10 @@ jobs:
             reqsign-aws-v4
             reqsign-aws-v4a
             reqsign-azure-storage
+            reqsign-dropbox
             reqsign-google
             reqsign-huaweicloud-obs
+            reqsign-oauth2
             reqsign-openstack-keystone
             reqsign-oracle
             reqsign-tencent-cos
@@ -66,7 +68,7 @@ jobs:
           # path; --target all also covers target-specific dependencies.
           for package in "${packages[@]}"; do
             if cargo tree --package "$package" --all-features --target all --edges normal --prefix none \
-              | grep -Eq '^(sha1|sha2|hmac|rsa|p256|aes-gcm) v'; then
+              | grep -Eq '^(md-5|sha1|sha2|hmac|rsa|p256|aes-gcm) v'; then
               echo "production cryptographic dependency found in $package"
               exit 1
             fi
@@ -119,7 +121,7 @@ jobs:
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,tencent
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,tencent,dropbox
 
   # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
   wasm_compat:
@@ -136,8 +138,9 @@ jobs:
           cargo check -p reqsign-aws-core --target wasm32-unknown-unknown
           cargo check -p reqsign-aws-v4a --target wasm32-unknown-unknown
           cargo check -p reqsign-aliyun-drive --target wasm32-unknown-unknown
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,tencent
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,tencent
+          cargo check -p reqsign-oauth2 -p reqsign-dropbox --target wasm32-unknown-unknown
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,tencent,dropbox
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,tencent,dropbox
 
   unit:
     runs-on: ubuntu-latest
@@ -190,3 +193,5 @@ jobs:
           rustup target add wasm32-unknown-unknown
           cargo test --target wasm32-unknown-unknown -p reqsign-http-send-reqwest --test wasm
           cargo test --target wasm32-unknown-unknown -p reqsign-aliyun-drive --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-oauth2 --test wasm
+          cargo test --target wasm32-unknown-unknown -p reqsign-dropbox --test wasm

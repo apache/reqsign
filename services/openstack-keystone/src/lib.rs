@@ -18,9 +18,10 @@
 //! OpenStack Keystone authentication for reqsign.
 //!
 //! This crate authenticates against the Keystone v3 identity API with password
-//! credentials, signs OpenStack service requests with the resulting token, and
-//! keeps the service catalog that Keystone returns for a scoped token so that
-//! callers can resolve the endpoint of a service such as Swift.
+//! credentials or accepts a pre-issued token, signs OpenStack service requests
+//! with the resulting token, and keeps the service catalog that Keystone
+//! returns for a scoped token so that callers can resolve the endpoint of a
+//! service such as Swift.
 //!
 //! ## Quick Start
 //!
@@ -37,7 +38,8 @@
 //!         .with_http_send(ReqwestHttpSend::default())
 //!         .with_env(OsEnv);
 //!
-//!     // The default chain reads OS_AUTH_URL, OS_USERNAME, and OS_PASSWORD.
+//!     // The default chain reads OS_AUTH_TOKEN, or OS_AUTH_URL, OS_USERNAME,
+//!     // and OS_PASSWORD for password authentication.
 //!     let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
 //!
 //!     let mut req =
@@ -52,8 +54,10 @@
 //! }
 //! ```
 //!
-//! Authentication with explicit credentials and endpoint lookup from the
-//! catalog are available through [`KeystoneCredentialProvider`] and
+//! A non-empty `OS_AUTH_TOKEN` takes priority over password authentication and
+//! makes no Keystone request. Authentication with explicit credentials,
+//! pre-issued tokens, and endpoint lookup from the catalog are available through
+//! [`KeystoneCredentialProvider`], [`StaticCredentialProvider`], and
 //! [`Credential::endpoint_in_region`].
 
 mod credential;
@@ -65,5 +69,5 @@ pub use sign_request::RequestSigner;
 mod provide_credential;
 pub use provide_credential::{
     DefaultCredentialProvider, DefaultCredentialProviderBuilder, EnvCredentialProvider,
-    KeystoneCredentialProvider,
+    KeystoneCredentialProvider, StaticCredentialProvider,
 };
