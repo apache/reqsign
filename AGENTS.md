@@ -80,12 +80,14 @@ servers checked into `services/aws-v4/tests/mocks/`.
 ## WASM Compatibility
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
-`aliyun`, `tencent`, `koofr`) must compile for `wasm32-unknown-unknown`. CI
-verifies this supported subset.
+`aliyun`, `tencent`, `oauth2`, `dropbox`, `koofr`) must compile for
+`wasm32-unknown-unknown`. CI verifies this supported subset.
 
 ## Versioning
 
-- Established service crates and core share a lockstep major version (`3.0.0`).
+- Existing service crates and core share a lockstep major version (`3.0.0`).
+- `reqsign-oauth2` and `reqsign-dropbox` each start an independent `1.0.0`
+  version line.
 - New provider crates introduced for remaining integrations, such as
   `reqsign-koofr`, have independent version lines starting at `1.0.0`; they
   depend on `reqsign-core` `3.x` for the shared trait contract.

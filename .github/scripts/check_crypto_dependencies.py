@@ -38,6 +38,7 @@ FORBIDDEN_PACKAGES = frozenset(
         "rsa",
         "p256",
         "aes-gcm",
+        "md-5",
         "getrandom",
         "boring",
         "openssl",
