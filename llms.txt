@@ -1,6 +1,6 @@
 # Apache Reqsign™: Build. Sign. Send.
 
-> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.
+> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, Volcengine, and Vercel services without pulling in full vendor SDKs.
 
 Reqsign keeps explicit per-provider signing protocols while sharing one composition pattern: build the request, load or grant credentials, sign, then send with your own HTTP client.
 
@@ -8,7 +8,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 
 ### Docs
 
-- [Build. Sign. Send. | Apache Reqsign™](https://reqsign.apache.org/): Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Cloudflare, Dropbox, GitHub, OneDrive, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine — without pulling in full vendor SDKs.
+- [Build. Sign. Send. | Apache Reqsign™](https://reqsign.apache.org/): Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Cloudflare, Dropbox, GitHub, OneDrive, Google, Aliyun, Huawei Cloud, Oracle, Tencent, Volcengine, and Vercel — without pulling in full vendor SDKs.
 - [Community | Apache Reqsign™](https://reqsign.apache.org/community/): How Apache Reqsign is governed and where to ask questions, report issues, and contribute.
 - [Download | Apache Reqsign™](https://reqsign.apache.org/download/): Official Apache source releases, signatures, checksums, and crates.io convenience packages for Apache Reqsign.
 - [Architecture | Apache Reqsign™](https://reqsign.apache.org/docs/architecture/): How Reqsign is put together — Context, ProvideCredential, SignRequest, Signer, and Granter — and the three levels at which you can plug in.
@@ -38,6 +38,8 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 - [Oracle Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/oracle/): OCI HTTP request signatures from API keys and config files.
 - [Tencent COS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/tencent-cos/): COS signatures with OIDC federation for Tencent Cloud Object Storage.
 - [Upyun | Apache Reqsign™](https://reqsign.apache.org/docs/providers/upyun/): UPYUN header signatures for Upyun Storage REST API requests.
+- [Vercel Artifacts | Apache Reqsign™](https://reqsign.apache.org/docs/providers/vercel-artifacts/): Vercel Artifacts bearer tokens for the Turborepo Remote Cache.
+- [Vercel Blob | Apache Reqsign™](https://reqsign.apache.org/docs/providers/vercel-blob/): Vercel Blob read-write tokens with bearer request signing.
 - [Volcengine TOS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/volcengine-tos/): TOS signatures and presigned URLs for Volcengine object storage.
 - [API Reference | Apache Reqsign™](https://reqsign.apache.org/docs/reference/api/): <!--
 - [Signing contracts | Apache Reqsign™](https://reqsign.apache.org/docs/reference/signing-contracts/): The behavioral guarantees of sign and grant — URI ownership, atomicity, freshness, expiration, redaction, and error semantics.
