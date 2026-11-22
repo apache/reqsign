@@ -36,14 +36,26 @@ pub use context::default_context;
 #[cfg(feature = "aliyun")]
 pub mod aliyun;
 
+#[cfg(feature = "aliyun-drive")]
+pub mod aliyun_drive;
+
 #[cfg(any(feature = "aws-v4", feature = "aws-v4a"))]
 pub mod aws;
 
 #[cfg(feature = "azure")]
 pub mod azure;
 
+#[cfg(feature = "b2")]
+pub mod b2;
+
+#[cfg(feature = "cloudflare")]
+pub mod cloudflare;
+
 #[cfg(feature = "dropbox")]
 pub mod dropbox;
+
+#[cfg(feature = "github")]
+pub mod github;
 
 #[cfg(feature = "google")]
 pub mod google;
@@ -51,8 +63,14 @@ pub mod google;
 #[cfg(feature = "huaweicloud")]
 pub mod huaweicloud;
 
+#[cfg(feature = "http-message-signatures")]
+pub mod http_message_signatures;
+
 #[cfg(feature = "oauth2")]
 pub mod oauth2;
+
+#[cfg(feature = "onedrive")]
+pub mod onedrive;
 
 #[cfg(feature = "openstack")]
 pub mod openstack;
@@ -65,6 +83,9 @@ pub mod seafile;
 
 #[cfg(feature = "tencent")]
 pub mod tencent;
+
+#[cfg(feature = "upyun")]
+pub mod upyun;
 
 #[cfg(feature = "volcengine")]
 pub mod volcengine;
