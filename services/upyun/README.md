@@ -60,14 +60,20 @@ let mut req = Request::put("https://v0.api.upyun.com/bucket/object.txt")
 `StaticCredentialProvider` uses an operator name and password supplied by the
 caller.
 
-`UpxConfigCredentialProvider` reads the active session from the Upyun CLI
-(`upx`) configuration file at `~/.upx.cfg`. The provider uses the session
-selected by `user_idx`; a missing file, an unset or invalid index, or an
-incomplete session returns no credential. Use `with_config_file` to isolate a
-different configuration file.
+`UpxConfigCredentialProvider` reads the Upyun CLI (`upx`) configuration file
+at `~/.upx.cfg`. The file has one session per bucket and operator pair. Without
+extra configuration, the provider returns the session selected by `user_idx`,
+which is the CLI's current bucket session. Use `with_bucket` to select the
+session for a specific bucket: a matching current session is preferred, then
+the first session for that bucket is used. The file has no account or endpoint
+scope beyond the bucket. A missing file, no matching session, or an incomplete
+session returns no credential. Use `with_config_file` to isolate a different
+configuration file.
 
-`DefaultCredentialProvider` uses the Upyun CLI configuration by default. Use
-`push_front` to install explicit credentials or another source:
+`DefaultCredentialProvider` uses the Upyun CLI configuration by default. The
+facade `default_signer(ctx, bucket)` therefore selects the CLI session for the
+request's bucket. Use `push_front` to install explicit credentials or another
+source:
 
 ```rust,no_run
 use reqsign_upyun::{DefaultCredentialProvider, StaticCredentialProvider};

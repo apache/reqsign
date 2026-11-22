@@ -38,7 +38,7 @@ use reqsign::upyun::StaticCredentialProvider;
 use reqsign::{default_context, upyun};
 
 let ctx = default_context();
-let signer = upyun::default_signer(ctx)
+let signer = upyun::default_signer(ctx, "bucket")
     .with_credential_provider(StaticCredentialProvider::new("operator", "password"));
 
 // Build the request and choose the bucket endpoint in the caller.
@@ -50,9 +50,11 @@ let mut req = http::Request::put("https://v0.api.upyun.com/bucket/object.txt")
 signer.sign(&mut req, None).await?;
 ```
 
-The default chain reads the active session from the Upyun CLI (`upx`)
-configuration at `~/.upx.cfg`. Install `StaticCredentialProvider` directly, or
-push it in front of the default chain, when credentials come from application
+The default chain selects the session for `bucket` from the Upyun CLI (`upx`)
+configuration at `~/.upx.cfg`. A matching current session is preferred, then
+the first session for that bucket. The file has no account or endpoint scope
+beyond the bucket. Install `StaticCredentialProvider` directly, or push it in
+front of the default chain, when credentials come from application
 configuration.
 
 The signer adds `Date` and `Authorization`. Set `Content-MD5` before signing

@@ -31,20 +31,26 @@ use serde::Deserialize;
 #[cfg(not(target_arch = "wasm32"))]
 const UPX_CONFIG_FILE: &str = "~/.upx.cfg";
 
-/// UpxConfigCredentialProvider loads the active session from `~/.upx.cfg`.
+/// UpxConfigCredentialProvider loads a session from the Upyun CLI `~/.upx.cfg`.
 ///
-/// The Upyun CLI stores its current session in a single configuration file.
-/// The file contains the bucket, operator name, and password for each session.
-/// Only the operator and password are used for signing; the caller remains
-/// responsible for choosing the bucket and endpoint.
+/// The Upyun CLI stores one session per bucket and operator pair. Each session
+/// contains the bucket, operator name, and password. The session selected by
+/// `user_idx` is the CLI's current session. Upyun operators can access multiple
+/// buckets, and the file has no account or endpoint scope beyond the bucket.
 ///
-/// The active session is the one selected by `user_idx`. A missing file, an
-/// unset or invalid active index, and an incomplete session are treated as no
-/// credential. A file that exists but cannot be decoded or parsed is a
-/// configuration error.
+/// Without [`UpxConfigCredentialProvider::with_bucket`], the provider returns
+/// the current CLI session. With a bucket, it prefers the current session when
+/// its bucket matches and otherwise selects the first session for that bucket,
+/// matching `upx switch`. This avoids signing for one bucket with the identity
+/// of a different bucket's session.
+///
+/// A missing file, an unset or invalid active index, no matching bucket, and an
+/// incomplete session are treated as no credential. A file that exists but
+/// cannot be decoded or parsed is a configuration error.
 #[derive(Debug, Default, Clone)]
 pub struct UpxConfigCredentialProvider {
     config_file: Option<String>,
+    bucket: Option<String>,
 }
 
 impl UpxConfigCredentialProvider {
@@ -59,6 +65,17 @@ impl UpxConfigCredentialProvider {
     /// for tests. A leading `~/` is expanded through the [`Context`].
     pub fn with_config_file(mut self, path: impl Into<String>) -> Self {
         self.config_file = Some(path.into());
+        self
+    }
+
+    /// Select the session for a specific bucket.
+    ///
+    /// When set, the provider prefers the current session if its bucket
+    /// matches, then falls back to the first session for that bucket. Without
+    /// this setting, the provider returns the current CLI session regardless of
+    /// its bucket.
+    pub fn with_bucket(mut self, bucket: impl Into<String>) -> Self {
+        self.bucket = Some(bucket.into());
         self
     }
 
@@ -109,20 +126,23 @@ impl ProvideCredential for UpxConfigCredentialProvider {
                 return Ok(None);
             };
 
-            let Some(index) = config
+            let current = config
                 .user_idx
                 .and_then(|index| usize::try_from(index).ok())
-            else {
-                debug!("the upx configuration has no current session");
-                return Ok(None);
+                .and_then(|index| config.users.get(index));
+            let session = match self.bucket.as_deref() {
+                Some(bucket) => current
+                    .filter(|session| session.bucket == bucket)
+                    .or_else(|| config.users.iter().find(|session| session.bucket == bucket)),
+                None => current,
             };
-            let Some(session) = config.users.get(index) else {
-                debug!("the current upx session index is out of range");
+            let Some(session) = session else {
+                debug!("the upx configuration has no matching session");
                 return Ok(None);
             };
 
             if session.username.is_empty() || session.password.is_empty() {
-                debug!("the current upx session is incomplete");
+                debug!("the selected upx session is incomplete");
                 return Ok(None);
             }
 
@@ -167,6 +187,8 @@ struct UpxConfig {
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Deserialize)]
 struct UpxSession {
+    #[serde(default)]
+    bucket: String,
     #[serde(default)]
     username: String,
     #[serde(default)]
@@ -252,6 +274,59 @@ mod tests {
 
         assert_eq!(credential.operator, "second-operator");
         assert_eq!(credential.password, "second-password");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn with_bucket_selects_the_session_for_that_bucket() -> anyhow::Result<()> {
+        let path = "/test/.upx.cfg";
+        let content = encode_upx_config(&serde_json::json!({
+            "user_idx": 1,
+            "users": [
+                {"bucket": "first", "username": "first-operator", "password": "first-password"},
+                {"bucket": "second", "username": "second-operator", "password": "second-password"}
+            ]
+        }));
+        let ctx = ctx_with_config(path, content);
+
+        for (bucket, expected) in [("first", "first-operator"), ("second", "second-operator")] {
+            let credential = UpxConfigCredentialProvider::new()
+                .with_config_file(path)
+                .with_bucket(bucket)
+                .provide_credential(&ctx)
+                .await?
+                .expect("the matching session must load");
+            assert_eq!(credential.operator, expected);
+        }
+
+        let credential = UpxConfigCredentialProvider::new()
+            .with_config_file(path)
+            .with_bucket("missing")
+            .provide_credential(&ctx)
+            .await?;
+        assert!(credential.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn with_bucket_does_not_require_a_current_index() -> anyhow::Result<()> {
+        let path = "/test/.upx.cfg";
+        let content = encode_upx_config(&serde_json::json!({
+            "user_idx": -1,
+            "users": [
+                {"bucket": "bucket", "username": "operator", "password": "password"}
+            ]
+        }));
+        let ctx = ctx_with_config(path, content);
+
+        let credential = UpxConfigCredentialProvider::new()
+            .with_config_file(path)
+            .with_bucket("bucket")
+            .provide_credential(&ctx)
+            .await?
+            .expect("the bucket session must load");
+
+        assert_eq!(credential.operator, "operator");
         Ok(())
     }
 

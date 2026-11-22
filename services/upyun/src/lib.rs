@@ -66,9 +66,13 @@
 //! ## Credential sources
 //!
 //! - [`StaticCredentialProvider`] uses credentials supplied by the caller.
-//! - [`UpxConfigCredentialProvider`] reads the active session from the Upyun
-//!   CLI (`upx`) configuration at `~/.upx.cfg`.
-//! - [`DefaultCredentialProvider`] uses the Upyun CLI configuration by default.
+//! - [`UpxConfigCredentialProvider`] reads a session from the Upyun CLI (`upx`)
+//!   configuration at `~/.upx.cfg`. The file is bucket-scoped; use
+//!   `UpxConfigCredentialProvider::with_bucket` to select the session for the
+//!   request's bucket.
+//! - [`DefaultCredentialProvider`] uses the current Upyun CLI session by
+//!   default. The facade `default_signer(ctx, bucket)` pins discovery to the
+//!   request's bucket.
 
 mod credential;
 pub use credential::Credential;

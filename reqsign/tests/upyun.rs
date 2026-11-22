@@ -22,6 +22,10 @@ use reqsign::crypto::CryptoProvider;
 use reqsign::default_context;
 use reqsign::upyun::{StaticCredentialProvider, default_signer};
 use reqsign::{Context, ErrorKind, Result};
+#[cfg(feature = "default-context")]
+use reqsign::{FileRead, StaticEnv};
+#[cfg(feature = "default-context")]
+use std::collections::HashMap;
 
 #[derive(Debug)]
 struct UnsupportedProvider;
@@ -45,9 +49,59 @@ impl CryptoProvider for UnsupportedProvider {
 }
 
 #[cfg(feature = "default-context")]
+#[derive(Debug)]
+struct TestFileRead {
+    files: HashMap<String, Vec<u8>>,
+}
+
+#[cfg(feature = "default-context")]
+impl FileRead for TestFileRead {
+    async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+        self.files
+            .get(path)
+            .cloned()
+            .ok_or_else(|| reqsign::Error::config_invalid(format!("unexpected file path: {path}")))
+    }
+}
+
+#[cfg(feature = "default-context")]
+#[tokio::test]
+async fn default_signer_selects_the_upx_session_for_the_bucket() {
+    let path = "/home/test/.upx.cfg";
+    let ctx = default_context()
+        .with_file_read(TestFileRead {
+            files: HashMap::from([(
+                path.to_string(),
+                include_bytes!("../../services/upyun/testdata/upx.cfg").to_vec(),
+            )]),
+        })
+        .with_env(StaticEnv {
+            home_dir: Some("/home/test".into()),
+            envs: HashMap::new(),
+        });
+    let signer = default_signer(ctx, "example-bucket");
+    let mut parts = http::Request::put("https://v0.api.upyun.com/example-bucket/object.txt")
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+    signer
+        .sign(&mut parts, None)
+        .await
+        .expect("the bucket session must sign");
+    assert!(
+        parts.headers[http::header::AUTHORIZATION]
+            .to_str()
+            .expect("authorization must be text")
+            .starts_with("UPYUN operator123:")
+    );
+}
+
+#[cfg(feature = "default-context")]
 #[tokio::test]
 async fn default_signer_signs_with_static_credentials() {
-    let signer = default_signer(default_context())
+    let signer = default_signer(default_context(), "bucket")
         .with_credential_provider(StaticCredentialProvider::new("operator", "password"));
     let mut parts = http::Request::put("https://v0.api.upyun.com/bucket/object.txt")
         .body(())
@@ -71,7 +125,7 @@ async fn default_signer_signs_with_static_credentials() {
 #[tokio::test]
 async fn default_signer_uses_an_explicitly_selected_context_provider() {
     let context = Context::new().with_crypto(UnsupportedProvider);
-    let signer = default_signer(context)
+    let signer = default_signer(context, "bucket")
         .with_credential_provider(StaticCredentialProvider::new("operator", "password"));
     let mut parts = http::Request::put("https://v0.api.upyun.com/bucket/object.txt")
         .body(())

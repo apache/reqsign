@@ -28,12 +28,13 @@ use crate::{Context, Signer};
 /// Default Upyun Signer type with commonly used components.
 pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default Upyun signer with the supplied runtime context.
+/// Create a default Upyun signer with the supplied runtime context and bucket.
 ///
-/// The default credential chain reads the active session from the Upyun CLI
-/// (`upx`) configuration at `~/.upx.cfg`. Use
-/// [`Signer::with_credential_provider`] to install explicit credentials or
-/// another source.
+/// The default credential chain reads the Upyun CLI (`upx`) session for
+/// `bucket` from `~/.upx.cfg`. A matching current session is preferred; if the
+/// current session belongs to another bucket, the first session for `bucket`
+/// is selected. Use [`Signer::with_credential_provider`] to install explicit
+/// credentials or another source.
 ///
 /// # Example
 ///
@@ -43,7 +44,7 @@ pub type DefaultSigner = Signer<Credential>;
 /// use reqsign::upyun::StaticCredentialProvider;
 ///
 /// let ctx = reqsign::default_context();
-/// let signer = reqsign::upyun::default_signer(ctx)
+/// let signer = reqsign::upyun::default_signer(ctx, "bucket")
 ///     .with_credential_provider(StaticCredentialProvider::new("operator", "password"));
 ///
 /// let mut req = http::Request::put("https://v0.api.upyun.com/bucket/object.txt")
@@ -56,8 +57,10 @@ pub type DefaultSigner = Signer<Credential>;
 /// # Ok(())
 /// # }
 /// ```
-pub fn default_signer(ctx: Context) -> DefaultSigner {
-    let provider = DefaultCredentialProvider::new();
+pub fn default_signer(ctx: Context, bucket: impl Into<String>) -> DefaultSigner {
+    let provider = DefaultCredentialProvider::builder()
+        .upx_config(UpxConfigCredentialProvider::new().with_bucket(bucket))
+        .build();
     let signer = RequestSigner::new();
     Signer::new(ctx, provider, signer)
 }

@@ -21,10 +21,11 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 
 /// Default credential provider for Upyun.
 ///
-/// The default chain reads the active session from the Upyun CLI (`upx`)
-/// configuration file at `~/.upx.cfg`. Use
-/// [`DefaultCredentialProvider::push_front`] to supply explicit credentials or
-/// another source.
+/// The default chain reads the current session from the Upyun CLI (`upx`)
+/// configuration file at `~/.upx.cfg`. The file is bucket-scoped; configure
+/// [`UpxConfigCredentialProvider::with_bucket`] when the request bucket must
+/// select its own session. Use [`DefaultCredentialProvider::push_front`] to
+/// supply explicit credentials or another source.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
