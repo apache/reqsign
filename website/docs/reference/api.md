@@ -47,6 +47,7 @@ rustdoc owns signatures.
 - [`reqsign-b2`](https://docs.rs/reqsign-b2)
 - [`reqsign-dropbox`](https://docs.rs/reqsign-dropbox)
 - [`reqsign-github`](https://docs.rs/reqsign-github)
+- [`reqsign-onedrive`](https://docs.rs/reqsign-onedrive)
 - [`reqsign-google`](https://docs.rs/reqsign-google)
 - [`reqsign-aliyun-oss`](https://docs.rs/reqsign-aliyun-oss)
 - [`reqsign-aliyun-drive`](https://docs.rs/reqsign-aliyun-drive)

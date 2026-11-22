@@ -194,6 +194,14 @@ for (const provider of catalog.providers) {
   } else if (provider.last_verified > today) {
     errors.push(`provider ${provider.id}: last_verified is in the future`);
   }
+  if (
+    provider.default_signer.available === false &&
+    !provider.default_signer.note
+  ) {
+    errors.push(
+      `provider ${provider.id}: default_signer.available is false without a note`
+    );
+  }
 }
 
 if (errors.length > 0) {

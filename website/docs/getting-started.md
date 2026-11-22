@@ -52,6 +52,7 @@ cargo add http anyhow
 | `huaweicloud` | Huawei Cloud OBS |
 | `http-message-signatures` | RFC 9421 request signatures |
 | `oauth2` | Shared OAuth 2.0 refresh-token grant |
+| `onedrive` | OneDrive |
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
 | `tencent` | Tencent COS |
