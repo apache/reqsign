@@ -48,6 +48,9 @@ pub mod google;
 #[cfg(feature = "huaweicloud")]
 pub mod huaweicloud;
 
+#[cfg(feature = "koofr")]
+pub mod koofr;
+
 #[cfg(feature = "openstack")]
 pub mod openstack;
 

@@ -25,17 +25,20 @@ description: Version tracks across the Reqsign crates, and the supported Rust an
 
 ## Versioning
 
-Reqsign publishes many crates on three tracks:
+Reqsign publishes many crates on four tracks:
 
 | Track | Crates | Scheme |
 | --- | --- | --- |
-| Core + services | `reqsign-core`, `reqsign-aws-core`, every `reqsign-<provider>` service crate, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | Lockstep major (currently `3.x`) |
+| Core + established services | `reqsign-core`, `reqsign-aws-core`, the established `reqsign-<provider>` service crates, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | Lockstep major (currently `3.x`) |
+| New provider crates | `reqsign-koofr` and future provider crates introduced for remaining integrations | Independent, starting at `1.0.0` |
 | Reqwest adapter | `reqsign-http-send-reqwest` | Independent major (currently `4.x`), so reqwest major bumps do not force a core major |
 | Facade | `reqsign` | Independent (currently `0.20.x`) |
 
-Lockstep means any `3.x` service crate composes with any `3.x` core; mixing
-majors fails to compile — the trait definitions are the compatibility
-boundary, and Cargo enforces it.
+Lockstep means any `3.x` established service crate composes with any `3.x`
+core; mixing majors fails to compile — the trait definitions are the
+compatibility boundary, and Cargo enforces it. New provider crates on
+independent tracks still depend on `reqsign-core` `3.x` for that same trait
+contract.
 
 Applications should depend on the facade and let it pin compatible
 components; libraries should depend on `reqsign-core` plus their service
@@ -70,7 +73,7 @@ do.
 
 **WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a
 defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS
-SigV4a, Azure Storage, Aliyun OSS, and Tencent COS providers. The
+SigV4a, Azure Storage, Aliyun OSS, Tencent COS, and Koofr providers. The
 [provider matrix](/docs/providers/) is the authoritative per-provider
 status; the [Custom runtimes & WASM guide](/docs/guides/custom-runtimes/)
 covers building and browser-backed contexts.

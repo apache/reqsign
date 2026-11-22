@@ -885,6 +885,64 @@
         }
       ],
       "credential_provider_crate": "reqsign-openstack-keystone"
+    },
+    {
+      "id": "koofr",
+      "display_name": "Koofr",
+      "family": "Koofr",
+      "blurb": "Token exchange and request signing for Koofr and Koofr-compatible storage.",
+      "service_scope": "Koofr API requests authenticated with a Koofr access token; mount selection, paths, and business requests remain caller-owned.",
+      "signing_schemes": [
+        "Koofr token authentication"
+      ],
+      "crates": [
+        "reqsign-koofr"
+      ],
+      "facade_features": [
+        {
+          "name": "koofr",
+          "capability": "Enables reqsign-koofr."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::koofr::default_signer(ctx, email, app_password)"
+      },
+      "credential_sources": [],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Adds a sensitive Authorization: Token token=<token> header; expires_in is ignored because the documented exchange returns no expiry."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI checks reqsign-koofr and the facade koofr feature for wasm32-unknown-unknown."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Credential exchange, signing, cache, and error-redaction tests use an in-process HTTP fake; no live Koofr calls.",
+        "refs": [
+          "services/koofr/tests"
+        ]
+      },
+      "source_refs": [
+        "services/koofr"
+      ],
+      "last_verified": "2026-11-22",
+      "explicit_sources": [
+        {
+          "id": "login",
+          "label": "Email and application-specific password exchange",
+          "provider": "LoginCredentialProvider"
+        },
+        {
+          "id": "static",
+          "label": "Static access token",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "credential_provider_crate": "reqsign-koofr"
     }
   ]
 }

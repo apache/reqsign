@@ -11,6 +11,7 @@ This crate provides a unified interface for signing HTTP requests across multipl
 - **Google**: Google Cloud services
 - **Aliyun**: Aliyun Object Storage Service (OSS)
 - **Huawei Cloud**: Object Storage Service (OBS)
+- **Koofr**: Koofr access-token exchange and request signing
 - **Tencent Cloud**: Cloud Object Storage (COS)
 - **Oracle**: Oracle Cloud services
 
