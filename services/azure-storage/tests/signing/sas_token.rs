@@ -97,7 +97,16 @@ async fn test_sas_token_signing() -> anyhow::Result<()> {
     }
 
     let url = required_env("REQSIGN_AZURE_STORAGE_PROBE_URL");
-    let sas_token = load_sas_token();
+    let configured_sas_token = load_sas_token();
+    // Ensure this single live request exercises the optional leading delimiter
+    // even when the fixture secret is stored without it. Other live cases keep
+    // the configured environment value unchanged.
+    let sas_token = if configured_sas_token.starts_with('?') {
+        configured_sas_token
+    } else {
+        format!("?{configured_sas_token}")
+    };
+    let expected_fragment = sas_token.strip_prefix('?').unwrap_or(&sas_token);
 
     let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
@@ -118,14 +127,16 @@ async fn test_sas_token_signing() -> anyhow::Result<()> {
     // With SAS token, no Authorization header should be added
     assert!(!parts.headers.contains_key("authorization"));
 
-    // Decide separator from the original URL. Checking the signed URI always
-    // sees '?', which incorrectly forces the '&' branch.
+    // Decide the separator from the original URL; the signed URI always has
+    // a '?', so inspecting it would force the '&' branch. Compare the fragment
+    // after removing the credential's single optional leading delimiter.
     let uri = parts.uri.to_string();
-    if url.contains('?') {
-        assert!(uri.contains(&format!("&{sas_token}")) || sas_token.is_empty());
-    } else {
-        assert!(uri.contains(&format!("?{sas_token}")) || sas_token.is_empty());
-    }
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let expected_query = format!("{separator}{expected_fragment}");
+    assert!(
+        uri.contains(&expected_query),
+        "signed URI must append the normalized SAS query fragment"
+    );
 
     let response = ctx
         .http_send(http::Request::from_parts(parts, body))
