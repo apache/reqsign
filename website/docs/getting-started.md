@@ -113,6 +113,7 @@ composes that provider's own credential chain — the
 | [Backblaze B2](/docs/providers/b2/) | `b2::default_signer(ctx)` |
 | [Dropbox](/docs/providers/dropbox/) | `dropbox::default_signer(ctx)` |
 | [GitHub](/docs/providers/github/) | `github::default_signer(ctx)` |
+| [OneDrive](/docs/providers/onedrive/) | `onedrive::default_signer(ctx)` |
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |
 | [Aliyun Drive](/docs/providers/aliyun-drive/) | `aliyun_drive::default_signer(ctx)` |
@@ -124,7 +125,8 @@ composes that provider's own credential chain — the
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
 
 Aliyun Drive has no documented ambient source; replace its default provider
-with a static access token or refresh-token provider.
+with a static access token or refresh-token provider. OneDrive's default chain
+is also empty; prepend a refresh-token or static provider explicitly.
 
 A default signer is an ordinary `Signer`: replace any component and keep the
 rest —

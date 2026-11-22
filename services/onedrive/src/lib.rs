@@ -26,10 +26,14 @@
 //!
 //! Microsoft documents no environment variable or shared configuration file
 //! that carries a Microsoft Graph user token, and MSAL token caches are
-//! library-specific. This crate therefore has no ambient credential chain: it
-//! does not run the Azure CLI or read MSAL caches. The caller obtains a token
-//! through the flow it chose and passes it in:
+//! library-specific. This crate therefore has no automatic source: it does not
+//! run the Azure CLI, read MSAL caches, or start a login flow. The caller
+//! obtains a token through the flow it chose and configures it explicitly:
 //!
+//! - [`DefaultCredentialProvider`] keeps the documented default-chain API with
+//!   an empty automatic chain. Prepend an explicit provider with
+//!   [`DefaultCredentialProvider::push_front`], or bypass assembly with
+//!   [`DefaultCredentialProvider::with_chain`].
 //! - [`StaticCredentialProvider`] for an existing access token. Tokens are
 //!   short lived; pass an expiration with
 //!   [`StaticCredentialProvider::with_expires_at`] when the caller knows it.
@@ -90,9 +94,9 @@
 //! Microsoft returns a new refresh token with a successful exchange and
 //! documents that the client must discard the previous one. A provider keeps
 //! only the latest refresh token in memory, clones share it, and exchanges are
-//! serialized through the shared grant. Reqsign never writes refresh tokens to disk, and a rotated token that
-//! is lost with the process must be obtained again through the authorization
-//! flow.
+//! serialized through the shared grant. Reqsign never writes refresh tokens to
+//! disk, and a rotated token that is lost with the process must be obtained
+//! again through the authorization flow.
 //!
 //! [`reqsign_core::Signer`] owns access-token caching and refreshes a cached
 //! token inside the shared proactive window. A token response carries
@@ -105,6 +109,11 @@
 //! rejects `expires_in`, because this crate implements header authentication
 //! only and not query authentication; signing never changes the URI or any
 //! other header.
+//!
+//! A prepended provider is tried before the empty default chain, so a
+//! caller-injected short-lived token and a configured refresh provider compose
+//! in the order the caller pushes them. Prepended providers fail closed: their
+//! errors are returned instead of being treated as "no credential".
 //!
 //! ## WASM
 //!
@@ -123,5 +132,6 @@ pub use sign_request::RequestSigner;
 
 mod provide_credential;
 pub use provide_credential::{
-    RefreshCredentialProvider, RefreshCredentialProviderBuilder, StaticCredentialProvider,
+    DefaultCredentialProvider, DefaultCredentialProviderBuilder, RefreshCredentialProvider,
+    RefreshCredentialProviderBuilder, StaticCredentialProvider,
 };

@@ -39,15 +39,13 @@ builds the Graph request, for example
 `GET https://graph.microsoft.com/v1.0/me/drive/root`.
 
 ```rust
-use reqsign::{default_context, Signer};
-use reqsign::onedrive::{RequestSigner, StaticCredentialProvider};
+use reqsign::{default_context, onedrive::default_signer};
+use reqsign::onedrive::{DefaultCredentialProvider, StaticCredentialProvider};
 
 let ctx = default_context();
-let signer = Signer::new(
-    ctx,
-    StaticCredentialProvider::new("graph-access-token"),
-    RequestSigner,
-);
+let provider = DefaultCredentialProvider::new()
+    .push_front(StaticCredentialProvider::new("graph-access-token"));
+let signer = default_signer(ctx).with_credential_provider(provider);
 
 let mut req = http::Request::builder()
     .method(http::Method::GET)
@@ -62,10 +60,18 @@ signer.sign(&mut req, None).await?;
 
 Microsoft documents no environment variable or shared configuration file that
 carries a Microsoft Graph user token, and MSAL token caches are
-library-specific. Reqsign therefore has no default chain for OneDrive: it does
-not run the Azure CLI or read MSAL caches, and it provides no `default_signer`.
-Obtain a token through your own OAuth 2.0 flow and pass it in with
-`StaticCredentialProvider` or `RefreshCredentialProvider`.
+library-specific. `default_signer(ctx)` therefore composes a default provider
+whose automatic chain is empty: it does not run the Azure CLI, read MSAL
+caches, or start a login flow. Configure one source before signing:
+
+- the documented refresh exchange, composed with
+  `DefaultCredentialProvider::new().push_front(RefreshCredentialProvider::new(..)?)`
+- a static access token or a custom provider, also composed with `push_front`;
+  the provider pushed last is tried first
+
+Supplying a provider directly to `Signer::new` or
+`Signer::with_credential_provider` is equivalent when you do not need the
+default chain.
 
 ## Refresh tokens
 
@@ -80,25 +86,27 @@ A **public client** — desktop, mobile, browserless, or client-side app — can
 store an application secret, so the exchange sends none:
 
 ```rust
-use reqsign::{default_context, Signer};
-use reqsign::onedrive::{RefreshCredentialProvider, RequestSigner};
+use reqsign::{default_context, onedrive::default_signer};
+use reqsign::onedrive::{DefaultCredentialProvider, RefreshCredentialProvider};
 
-let ctx = default_context();
-let provider = RefreshCredentialProvider::new("client-id", "refresh-token")?;
-let signer = Signer::new(ctx, provider, RequestSigner);
+let provider = DefaultCredentialProvider::new()
+    .push_front(RefreshCredentialProvider::new("client-id", "refresh-token")?);
+let signer = default_signer(default_context()).with_credential_provider(provider);
 ```
 
 A **confidential client** — web app, web API, or daemon that keeps the secret
 on the server side — adds it to the same form-body exchange:
 
 ```rust
-use reqsign::{default_context, Signer};
-use reqsign::onedrive::{RefreshCredentialProvider, RequestSigner};
+use reqsign::{default_context, onedrive::default_signer};
+use reqsign::onedrive::{DefaultCredentialProvider, RefreshCredentialProvider};
 
-let provider = RefreshCredentialProvider::builder("client-id", "refresh-token")
-    .client_secret("client-secret")
-    .build()?;
-let signer = Signer::new(default_context(), provider, RequestSigner);
+let provider = DefaultCredentialProvider::new().push_front(
+    RefreshCredentialProvider::builder("client-id", "refresh-token")
+        .client_secret("client-secret")
+        .build()?,
+);
+let signer = default_signer(default_context()).with_credential_provider(provider);
 ```
 
 Microsoft returns a new refresh token with every successful exchange and

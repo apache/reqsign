@@ -15,6 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
+mod default;
+pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
+
 mod refresh;
 pub use refresh::RefreshCredentialProvider;
 pub use refresh::RefreshCredentialProviderBuilder;

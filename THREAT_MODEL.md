@@ -250,10 +250,11 @@ OneDrive follows Microsoft's client types: a public-client exchange sends no
 client secret, while a confidential client sends its secret as an RFC 6749 form
 field. Microsoft documents no environment variable or shared configuration
 file for Microsoft Graph user tokens, and MSAL token caches are
-library-specific, so the OneDrive provider has no ambient chain: it does not
-read MSAL token caches, run the Azure CLI, or discover a token endpoint. The token endpoint is the documented Microsoft Entra
-v2.0 endpoint for an explicit tenant, or an explicitly configured HTTPS
-endpoint such as a national cloud, and the caller owns that trust decision.
+library-specific, so the OneDrive default provider's automatic chain is empty:
+it does not read MSAL token caches, run the Azure CLI, or discover a token
+endpoint. The token endpoint is the documented Microsoft Entra v2.0 endpoint
+for an explicit tenant, or an explicitly configured HTTPS endpoint such as a
+national cloud, and the caller owns that trust decision.
 
 ### 4.3 Credential redaction and observability
 

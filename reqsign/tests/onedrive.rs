@@ -19,8 +19,10 @@
 
 use bytes::Bytes;
 use reqsign::oauth2::RefreshTokenGrant;
-use reqsign::onedrive::{RefreshCredentialProvider, RequestSigner, StaticCredentialProvider};
-use reqsign::{Context, HttpSend, Result, Signer};
+use reqsign::onedrive::{
+    DefaultCredentialProvider, RefreshCredentialProvider, StaticCredentialProvider, default_signer,
+};
+use reqsign::{Context, ErrorKind, HttpSend, Result};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -84,33 +86,46 @@ fn request() -> http::request::Parts {
 }
 
 #[tokio::test]
-async fn facade_static_provider_signs_through_the_public_signer() -> Result<()> {
-    let signer = Signer::new(
-        Context::new(),
-        StaticCredentialProvider::new("facade-static-token"),
-        RequestSigner,
-    );
-    let mut parts = request();
+async fn facade_default_signer_requires_an_explicit_source() -> Result<()> {
+    let http = MockHttpSend::new([]);
+    let context = Context::new().with_http_send(http.clone());
 
+    let signer = default_signer(context.clone());
+    let mut parts = request();
+    let original = parts.clone();
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("the default chain has no automatic source");
+
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    assert_eq!(http.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+
+    let signer = default_signer(context)
+        .with_credential_provider(StaticCredentialProvider::new("facade-static-token"));
+    let mut parts = request();
     signer.sign(&mut parts, None).await?;
 
     let authorization = &parts.headers[http::header::AUTHORIZATION];
     assert_eq!(authorization, "Bearer facade-static-token");
     assert!(authorization.is_sensitive());
+    assert_eq!(http.calls.load(Ordering::SeqCst), 0);
+
     Ok(())
 }
 
 #[tokio::test]
-async fn facade_refresh_provider_uses_the_shared_grant_export() -> Result<()> {
+async fn facade_default_signer_composes_a_refresh_provider() -> Result<()> {
     let http = MockHttpSend::new([refresh_response()]);
-    let provider = RefreshCredentialProvider::builder("client-id", "refresh-token")
-        .scope("offline_access Files.ReadWrite")
-        .build()?;
-    let signer = Signer::new(
-        Context::new().with_http_send(http.clone()),
-        provider,
-        RequestSigner,
+    let provider = DefaultCredentialProvider::new().push_front(
+        RefreshCredentialProvider::builder("client-id", "refresh-token")
+            .scope("offline_access Files.ReadWrite")
+            .build()?,
     );
+    let signer = default_signer(Context::new().with_http_send(http.clone()))
+        .with_credential_provider(provider);
 
     for _ in 0..2 {
         let mut parts = request();

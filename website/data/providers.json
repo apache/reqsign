@@ -1231,9 +1231,8 @@
         }
       ],
       "default_signer": {
-        "available": false,
-        "entry": null,
-        "note": "Microsoft documents no environment variable or shared configuration file for Microsoft Graph user tokens, and MSAL token caches are library-specific. There is no default chain and no default signer: compose Signer::new(ctx, provider, RequestSigner) with an explicit provider."
+        "available": true,
+        "entry": "reqsign::onedrive::default_signer(ctx)"
       },
       "credential_sources": [],
       "request_auth": {
@@ -1248,13 +1247,14 @@
       },
       "integration_tests": {
         "level": "mock",
-        "notes": "Static tokens, public-client and confidential-client exchanges, tenant and endpoint selection, refresh rotation, expiration, redaction, and signing are asserted against an injected mock HttpSend. No live Microsoft Graph traffic is required.",
+        "notes": "Static tokens, public-client and confidential-client exchanges, tenant and endpoint selection, refresh rotation, expiration, redaction, and signing are asserted against an injected mock HttpSend. The empty automatic chain, prepended static and refresh providers, push-front precedence, and fail-closed configured errors are covered through the public providers. No live Microsoft Graph traffic is required.",
         "refs": [
           "services/onedrive/tests"
         ]
       },
       "source_refs": [
-        "services/onedrive"
+        "services/onedrive",
+        "services/oauth2"
       ],
       "last_verified": "2026-11-22",
       "explicit_sources": [

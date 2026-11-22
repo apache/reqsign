@@ -18,9 +18,12 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use bytes::Bytes;
+use reqsign_core::ProvideCredentialChain;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ErrorKind, HttpSend, ProvideCredential, Result, SignRequest, Signer};
-use reqsign_onedrive::{RefreshCredentialProvider, RequestSigner, StaticCredentialProvider};
+use reqsign_onedrive::{
+    DefaultCredentialProvider, RefreshCredentialProvider, RequestSigner, StaticCredentialProvider,
+};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -507,6 +510,15 @@ async fn debug_output_redacts_tokens_and_secrets() -> Result<()> {
         assert!(!debug.contains(CLIENT_SECRET));
     }
 
+    let default_provider = DefaultCredentialProvider::new().push_front(
+        RefreshCredentialProvider::builder(CLIENT_ID, REFRESH_TOKEN)
+            .client_secret(CLIENT_SECRET)
+            .build()?,
+    );
+    let default_debug = format!("{default_provider:?}");
+    assert!(!default_debug.contains(REFRESH_TOKEN));
+    assert!(!default_debug.contains(CLIENT_SECRET));
+
     let credential = StaticCredentialProvider::new(STATIC_TOKEN)
         .provide_credential(&Context::new())
         .await?
@@ -534,5 +546,148 @@ async fn short_lived_token_is_accepted_for_the_current_operation() -> Result<()>
         parts.headers[http::header::AUTHORIZATION],
         "Bearer graph-access-token-N2pd"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_provider_has_no_automatic_source() -> Result<()> {
+    let http = MockHttpSend::new([]);
+    let ctx = context(http.clone());
+    let provider = DefaultCredentialProvider::new();
+
+    assert!(provider.provide_credential(&ctx).await?.is_none());
+
+    let signer = Signer::new(ctx, provider, RequestSigner);
+    let mut parts = request();
+    let original = parts.clone();
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("an empty default chain must fail closed");
+
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    assert_eq!(http.calls(), 0);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_provider_composes_refresh_and_caches_the_access_token() -> Result<()> {
+    let http = MockHttpSend::new([Ok(token_response(
+        ACCESS_TOKEN,
+        Some(3600),
+        Some(ROTATED_REFRESH_TOKEN),
+    ))]);
+    let provider = DefaultCredentialProvider::new()
+        .push_front(RefreshCredentialProvider::new(CLIENT_ID, REFRESH_TOKEN)?);
+    let signer = Signer::new(context(http.clone()), provider, RequestSigner);
+
+    for _ in 0..2 {
+        let mut parts = request();
+        signer.sign(&mut parts, None).await?;
+        assert_eq!(
+            parts.headers[http::header::AUTHORIZATION],
+            format!("Bearer {ACCESS_TOKEN}")
+        );
+    }
+
+    assert_eq!(
+        http.calls(),
+        1,
+        "the access-token cache must reuse the result"
+    );
+    assert_eq!(http.requests()[0].uri, COMMON_TOKEN_ENDPOINT);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_provider_push_front_takes_precedence() -> Result<()> {
+    let http = MockHttpSend::new([]);
+    let provider = DefaultCredentialProvider::new()
+        .push_front(RefreshCredentialProvider::new(CLIENT_ID, REFRESH_TOKEN)?)
+        .push_front(StaticCredentialProvider::new(STATIC_TOKEN));
+    let signer = Signer::new(context(http.clone()), provider, RequestSigner);
+
+    let mut parts = request();
+    signer.sign(&mut parts, None).await?;
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        format!("Bearer {STATIC_TOKEN}")
+    );
+    assert_eq!(http.calls(), 0, "a prepended static token must win");
+
+    let provider = DefaultCredentialProvider::new()
+        .push_front(StaticCredentialProvider::new("earlier-token"))
+        .push_front(StaticCredentialProvider::new("later-token"));
+    let signer = Signer::new(context(http.clone()), provider, RequestSigner);
+    let mut parts = request();
+    signer.sign(&mut parts, None).await?;
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        "Bearer later-token"
+    );
+    assert_eq!(http.calls(), 0);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_provider_fails_closed_for_prepended_providers() -> Result<()> {
+    let http = MockHttpSend::new([]);
+    let provider = DefaultCredentialProvider::new()
+        .push_front(RefreshCredentialProvider::new(CLIENT_ID, REFRESH_TOKEN)?)
+        .push_front(StaticCredentialProvider::new("unusable access token"));
+    let error = provider
+        .provide_credential(&context(http.clone()))
+        .await
+        .expect_err("an invalid prepended credential must surface");
+    assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+    assert_eq!(
+        http.calls(),
+        0,
+        "a lower-priority provider must not mask the error"
+    );
+
+    let http = MockHttpSend::new([Ok(http::Response::builder()
+        .status(http::StatusCode::BAD_REQUEST)
+        .body(Bytes::from_static(
+            br#"{"error":"invalid_grant","error_description":"ignored"}"#,
+        ))
+        .expect("response must build"))]);
+    let provider = DefaultCredentialProvider::new()
+        .push_front(RefreshCredentialProvider::new(CLIENT_ID, REFRESH_TOKEN)?);
+    let error = provider
+        .provide_credential(&context(http.clone()))
+        .await
+        .expect_err("a prepended refresh failure must surface");
+
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    assert_eq!(http.calls(), 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_provider_with_chain_uses_the_chain_policy() -> Result<()> {
+    let http = MockHttpSend::new([]);
+    let chain = ProvideCredentialChain::new().push(StaticCredentialProvider::new(STATIC_TOKEN));
+    let signer = Signer::new(
+        context(http.clone()),
+        DefaultCredentialProvider::with_chain(chain),
+        RequestSigner,
+    );
+
+    let mut parts = request();
+    signer.sign(&mut parts, None).await?;
+
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        format!("Bearer {STATIC_TOKEN}")
+    );
+    assert_eq!(http.calls(), 0);
+
     Ok(())
 }
