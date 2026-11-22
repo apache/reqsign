@@ -918,7 +918,7 @@
       "request_auth": {
         "header": true,
         "query": false,
-        "notes": "Inserts a sensitive Authorization: Token header; Seafile has no query authentication, so expires_in is rejected."
+        "notes": "Inserts a sensitive Authorization: Token header. Configuration-discovered and account-exchange credentials are bound to the deployment scheme, host, effective port, and base path; static credentials remain caller-scoped. Seafile has no query authentication, so expires_in is rejected."
       },
       "credential_granting": [],
       "wasm": {
@@ -927,7 +927,7 @@
       },
       "integration_tests": {
         "level": "mock",
-        "notes": "Account-token exchange, configuration-file discovery, caching, and header redaction are asserted against an injected mock HttpSend and file reader; no live Seafile API is used.",
+        "notes": "Account-token exchange, configuration-file discovery, account selection, deployment-scope checks across cached signing, content-free errors, and header redaction are asserted against injected mock HTTP and file readers; no live Seafile API is used.",
         "refs": [
           "services/seafile/tests"
         ]
@@ -935,7 +935,7 @@
       "source_refs": [
         "services/seafile"
       ],
-      "last_verified": "2026-11-21",
+      "last_verified": "2026-11-22",
       "explicit_sources": [
         {
           "id": "static",

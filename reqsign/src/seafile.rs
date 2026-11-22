@@ -26,12 +26,15 @@ pub type DefaultSigner = Signer<Credential>;
 
 /// Create a default Seafile signer with the supplied runtime context.
 ///
-/// The default credential provider reads the `token` from the `[account]`
-/// section of `~/.seafile.conf`, the user configuration file read by Seafile's
-/// first-party `seaf-cli`. A context without a file reader yields no
-/// credential. Replace the provider with [`StaticCredentialProvider`] when the
-/// token is managed explicitly, or [`AccountTokenCredentialProvider`] when the
-/// caller wants to exchange a username and password with a configured server.
+/// The default credential provider reads `server` and `token` from the
+/// `[account]` section of `~/.seafile.conf`, the user configuration file read by
+/// Seafile's first-party `seaf-cli`, and binds the credential to that deployment.
+/// A context without a file reader yields no credential. Replace the provider
+/// with [`StaticCredentialProvider`] when the token is managed explicitly, or
+/// [`AccountTokenCredentialProvider`] when the caller wants to exchange a
+/// username and password with a configured server. Discovered and exchanged
+/// credentials only sign requests for the same scheme, host, effective port, and
+/// deployment base path; static credentials keep the explicit caller contract.
 pub fn default_signer(ctx: Context) -> DefaultSigner {
     Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner)
 }

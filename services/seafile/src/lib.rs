@@ -36,21 +36,57 @@
 //! Seafile documents repository API tokens as valid until they are deleted;
 //! account token lifetime is controlled by the server.
 //!
+//! The provider constructs only the initial request to the configured server.
+//! The configured [`reqsign_core::HttpSend`] adapter owns redirect policy; the
+//! default `ReqwestHttpSend` follows redirects. Use an adapter whose client
+//! disables redirects for this credential-bearing exchange:
+//!
+//! ```no_run
+//! use reqsign_core::{Context, Signer};
+//! use reqsign_http_send_reqwest::ReqwestHttpSend;
+//! use reqsign_seafile::{AccountTokenCredentialProvider, RequestSigner};
+//! use reqwest::redirect::Policy;
+//!
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = reqwest::Client::builder()
+//!     .redirect(Policy::none())
+//!     .build()?;
+//! let context = Context::new().with_http_send(ReqwestHttpSend::new(client));
+//! let signer = Signer::new(
+//!     context,
+//!     AccountTokenCredentialProvider::new(
+//!         "https://files.example.com/seafile",
+//!         "user@example.com",
+//!         "password",
+//!     ),
+//!     RequestSigner,
+//! );
+//! # let _ = signer;
+//! # Ok(())
+//! # }
+//! ```
+//!
 //! The exchange uses [`reqsign_core::Context::http_send`]. It never discovers a
 //! server, username, or password on its own. Because the request carries a
 //! login secret, use HTTPS in production. An explicit `http://` endpoint sends
 //! the username and password in cleartext; it is supported only because
 //! self-hosted deployments may run Seafile over HTTP on a private network, as
-//! OpenDAL already permits. The caller chooses and owns that endpoint.
+//! OpenDAL already permits. The caller chooses and owns that endpoint and the
+//! adapter redirect policy.
 //!
 //! ## Credential discovery
 //!
-//! The default provider reads the `token` value from the `[account]` section of
-//! `~/.seafile.conf`, the user configuration file read by the first-party
-//! `seaf-cli` tool. It does not read environment variables, run a login command,
-//! or parse the newer `~/.config/seafile` files used by Seafile's repository-token
-//! skill. Use [`StaticCredentialProvider`] when the caller already has a token,
-//! or [`AccountTokenCredentialProvider`] when the caller wants to perform the
+//! The default provider reads `server` and `token` from the `[account]` section
+//! of `~/.seafile.conf`, the user configuration file read by the first-party
+//! `seaf-cli` tool, and binds the credential to that deployment. The `server`
+//! value is required and may include an explicit HTTP endpoint or a reverse-proxy
+//! base path. If the caller selects an account with
+//! [`ConfigFileCredentialProvider::with_account_user`], the `[account] user`
+//! value must be present and match exactly. The provider does not read
+//! environment variables, run a login command, or parse the newer
+//! `~/.config/seafile` files used by Seafile's repository-token skill. Use
+//! [`StaticCredentialProvider`] when the caller already has a token, or
+//! [`AccountTokenCredentialProvider`] when the caller wants to perform the
 //! exchange with explicitly supplied credentials.
 //!
 //! ## Request signing
@@ -61,12 +97,20 @@
 //! crate keeps `Token` so the same credential works with older self-hosted
 //! servers and with existing OpenDAL behavior.
 //!
+//! Credentials discovered from `seaf-cli` configuration or obtained through the
+//! account exchange are bound to the server deployment that supplied them.
+//! Before writing the header, the signer checks the request scheme, host,
+//! effective port, and deployment base path on a segment boundary. For example,
+//! a `/seafile` deployment accepts `/seafile` and `/seafile/...` but not
+//! `/seafile-other`. A mismatch fails without changing the request. Static
+//! caller-supplied credentials carry no deployment scope and keep the explicit
+//! caller contract.
+//!
 //! The signer changes only the `Authorization` header. Repository discovery,
 //! repository-scoped upload and download links, and all business requests stay
 //! with the caller. Seafile tokens in this crate carry no protocol time and no
-//! expiration, so signing has no clock dependency. The signer does not restrict
-//! the request host; the caller must not forward a signed header to a different
-//! server.
+//! expiration, so signing has no clock dependency. Redirect policy after
+//! signing remains the caller's adapter responsibility.
 //!
 //! ## Quick Start
 //!
@@ -98,6 +142,8 @@ mod constants;
 
 mod credential;
 pub use credential::Credential;
+
+mod scope;
 
 mod provide_credential;
 pub use provide_credential::{

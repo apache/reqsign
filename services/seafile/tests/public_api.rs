@@ -28,6 +28,7 @@ use reqsign_seafile::{
 };
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 const TOKEN: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -94,6 +95,7 @@ impl HttpSend for MockHttpSend {
 #[derive(Clone, Default, Debug)]
 struct MockFileRead {
     files: Arc<StdMutex<HashMap<String, Vec<u8>>>>,
+    reads: Arc<AtomicUsize>,
 }
 
 impl MockFileRead {
@@ -103,12 +105,18 @@ impl MockFileRead {
                 path.into(),
                 content.into(),
             )]))),
+            reads: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    fn reads(&self) -> usize {
+        self.reads.load(Ordering::SeqCst)
     }
 }
 
 impl FileRead for MockFileRead {
     async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.files
             .lock()
             .expect("file lock")
@@ -136,14 +144,18 @@ fn json_response(status: StatusCode, body: impl Into<Bytes>) -> http::Response<B
         .expect("response must build")
 }
 
-fn request() -> http::request::Parts {
-    http::Request::get("https://files.example.com/company/seafile/api2/repos/?x=%2F")
+fn request_at(uri: &str) -> http::request::Parts {
+    http::Request::get(uri)
         .header(header::AUTHORIZATION, "Bearer stale")
         .header("x-caller", "value")
         .body(())
         .expect("request must build")
         .into_parts()
         .0
+}
+
+fn request() -> http::request::Parts {
+    request_at("https://files.example.com/company/seafile/api2/repos/?x=%2F")
 }
 
 #[tokio::test]
@@ -349,6 +361,29 @@ async fn missing_config_file_and_removed_slot_yield_no_credential() -> Result<()
 }
 
 #[tokio::test]
+async fn self_hosted_http_subpath_configuration_is_supported() -> Result<()> {
+    let files = MockFileRead::with_file(
+        "/home/seafile/.seafile.conf",
+        "[account]\nserver = http://127.0.0.1:8080/seafile\ntoken = self-hosted-token\n",
+    );
+    let signer = Signer::new(
+        context("/home/seafile", MockHttpSend::default(), files),
+        DefaultCredentialProvider::new(),
+        RequestSigner,
+    );
+    let mut parts = request_at("http://127.0.0.1:8080/seafile/api2/repos/");
+
+    signer.sign(&mut parts, None).await?;
+
+    assert_eq!(
+        parts.headers[header::AUTHORIZATION],
+        "Token self-hosted-token"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn malformed_config_file_is_a_configuration_error() {
     let files = MockFileRead::with_file(
         "/home/seafile/.seafile.conf",
@@ -399,8 +434,10 @@ async fn static_provider_rejects_unusable_tokens() {
 
 #[tokio::test]
 async fn config_file_provider_honors_an_explicit_path() -> Result<()> {
-    let files =
-        MockFileRead::with_file("/custom/seafile.conf", "[account]\ntoken = custom-token\n");
+    let files = MockFileRead::with_file(
+        "/custom/seafile.conf",
+        "[account]\nserver = https://files.example.com\ntoken = custom-token\n",
+    );
     let context = context("/home/seafile", MockHttpSend::default(), files);
     let provider = ConfigFileCredentialProvider::new().with_path("/custom/seafile.conf");
 
@@ -412,4 +449,186 @@ async fn config_file_provider_honors_an_explicit_path() -> Result<()> {
     assert_eq!(credential.token(), "custom-token");
 
     Ok(())
+}
+
+fn assert_request_unchanged(original: &http::request::Parts, parts: &http::request::Parts) {
+    assert_eq!(parts.method, original.method);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.version, original.version);
+    assert_eq!(parts.headers, original.headers);
+}
+
+#[tokio::test]
+async fn config_scope_is_checked_each_time_even_with_a_cached_credential() -> Result<()> {
+    let files = MockFileRead::with_file(
+        "/home/seafile/.seafile.conf",
+        "[account]\nserver = https://Files.Example.com:443/seafile/\ntoken = scoped-token\n",
+    );
+    let reads = files.clone();
+    let signer = Signer::new(
+        context("/home/seafile", MockHttpSend::default(), files),
+        DefaultCredentialProvider::new(),
+        RequestSigner,
+    );
+
+    let mut allowed = request_at("https://files.example.com/seafile/api2/repos/");
+    signer.sign(&mut allowed, None).await?;
+    assert_eq!(allowed.headers[header::AUTHORIZATION], "Token scoped-token");
+
+    for uri in [
+        "http://files.example.com/seafile/api2/repos/",
+        "https://other.example.com/seafile/api2/repos/",
+        "https://files.example.com:8443/seafile/api2/repos/",
+        "https://files.example.com/seafile-other/api2/repos/",
+        "https://files.example.com/other/api2/repos/",
+        "https://files.example.com/api2/repos/",
+    ] {
+        let original = request_at(uri);
+        let mut parts = original.clone();
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("out-of-scope request must not be signed");
+
+        assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+        assert_request_unchanged(&original, &parts);
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("scoped-token"));
+        assert!(!debug.contains("other.example.com"));
+    }
+
+    assert_eq!(reads.reads(), 1, "the cached credential must be reused");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_file_requires_a_usable_server_and_can_match_the_selected_account() -> Result<()> {
+    for content in [
+        "[account]\ntoken = token-without-server\n",
+        "[account]\nserver = ftp://files.example.com\ntoken = token-with-invalid-server\n",
+    ] {
+        let files = MockFileRead::with_file("/home/seafile/.seafile.conf", content);
+        let context = context("/home/seafile", MockHttpSend::default(), files);
+        let error = ConfigFileCredentialProvider::new()
+            .provide_credential(&context)
+            .await
+            .expect_err("an incomplete or invalid deployment must fail");
+
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+        assert!(!format!("{error:?}").contains("token-with"));
+    }
+
+    let files = MockFileRead::with_file(
+        "/home/seafile/.seafile.conf",
+        "[account]\nserver = https://files.example.com/seafile\nuser = user@example.com\ntoken = selected-account-token\n",
+    );
+    let ctx = context("/home/seafile", MockHttpSend::default(), files);
+    let provider = ConfigFileCredentialProvider::new().with_account_user("user@example.com");
+    assert!(!format!("{provider:?}").contains("user@example.com"));
+
+    let credential = provider
+        .provide_credential(&ctx)
+        .await?
+        .expect("the selected account must load");
+
+    assert_eq!(credential.token(), "selected-account-token");
+
+    for content in [
+        "[account]\nserver = https://files.example.com/seafile\nuser = other@example.com\ntoken = selected-account-token\n",
+        "[account]\nserver = https://files.example.com/seafile\ntoken = selected-account-token\n",
+    ] {
+        let files = MockFileRead::with_file("/home/seafile/.seafile.conf", content);
+        let ctx = context("/home/seafile", MockHttpSend::default(), files);
+        let error = ConfigFileCredentialProvider::new()
+            .with_account_user("user@example.com")
+            .provide_credential(&ctx)
+            .await
+            .expect_err("a different or missing account must fail");
+
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+        assert!(!format!("{error:?}").contains("user@example.com"));
+        assert!(!format!("{error:?}").contains("selected-account-token"));
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn account_exchange_scope_is_checked_each_time_even_with_a_cached_credential() -> Result<()> {
+    let http = MockHttpSend::default();
+    http.push_response(json_response(
+        StatusCode::OK,
+        format!(r#"{{"token":"{TOKEN}"}}"#),
+    ));
+    let signer = Signer::new(
+        Context::new().with_http_send(http.clone()),
+        AccountTokenCredentialProvider::new(
+            "https://files.example.com/seafile",
+            "user@example.com",
+            "password",
+        ),
+        RequestSigner,
+    );
+
+    let mut allowed = request_at("https://files.example.com/seafile/api2/repos/");
+    signer.sign(&mut allowed, None).await?;
+    assert_eq!(
+        allowed.headers[header::AUTHORIZATION],
+        format!("Token {TOKEN}")
+    );
+
+    for uri in [
+        "https://files.example.com/other/api2/repos/",
+        "https://other.example.com/seafile/api2/repos/",
+    ] {
+        let original = request_at(uri);
+        let mut parts = original.clone();
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("out-of-scope request must not be signed");
+
+        assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+        assert_request_unchanged(&original, &parts);
+    }
+
+    assert_eq!(http.requests().len(), 1, "the exchange must be cached");
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_success_response_is_content_free_on_the_public_error_path() {
+    const MARKER: &str = "synthetic-response-marker";
+    let http = MockHttpSend::default();
+    http.push_response(json_response(StatusCode::OK, format!(r#""{MARKER}""#)));
+    let signer = Signer::new(
+        Context::new().with_http_send(http),
+        AccountTokenCredentialProvider::new(
+            "https://files.example.com",
+            "user@example.com",
+            "password",
+        ),
+        RequestSigner,
+    );
+    let original = request_at("https://files.example.com/api2/repos/");
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("malformed success response must fail");
+
+    assert_eq!(error.kind(), ErrorKind::Unexpected);
+    assert!(!error.to_string().contains(MARKER));
+    assert!(!format!("{error:?}").contains(MARKER));
+    assert!(std::error::Error::source(&error).is_none());
+    let mut source = std::error::Error::source(&error);
+    while let Some(inner) = source {
+        assert!(!format!("{inner}").contains(MARKER));
+        assert!(!format!("{inner:?}").contains(MARKER));
+        source = inner.source();
+    }
+    assert_request_unchanged(&original, &parts);
 }

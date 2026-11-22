@@ -1,0 +1,250 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+use crate::constants::AUTH_TOKEN_PATH;
+use reqsign_core::{Error, Result};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Scheme {
+    Http,
+    Https,
+}
+
+impl Scheme {
+    fn parse(value: &str) -> Option<Self> {
+        if value.eq_ignore_ascii_case("http") {
+            Some(Self::Http)
+        } else if value.eq_ignore_ascii_case("https") {
+            Some(Self::Https)
+        } else {
+            None
+        }
+    }
+
+    fn default_port(self) -> u16 {
+        match self {
+            Self::Http => 80,
+            Self::Https => 443,
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Https => "https",
+        }
+    }
+}
+
+/// The deployment a discovered Seafile token belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DeploymentScope {
+    scheme: Scheme,
+    authority: String,
+    host: String,
+    port: u16,
+    base_path: String,
+}
+
+impl DeploymentScope {
+    /// Parse the `server` value from `seaf-cli` configuration or an explicit
+    /// account-exchange server.
+    pub(crate) fn from_server_url(server: &str) -> Result<Self> {
+        if server.is_empty() {
+            return Err(Error::config_invalid(
+                "Seafile server URL must not be empty",
+            ));
+        }
+
+        let uri: http::Uri = server
+            .parse()
+            .map_err(|_| Error::config_invalid("Seafile server URL is not a valid URI"))?;
+        let scheme = uri
+            .scheme_str()
+            .and_then(Scheme::parse)
+            .ok_or_else(|| Error::config_invalid("Seafile server URL must use http or https"))?;
+        let authority = uri
+            .authority()
+            .ok_or_else(|| Error::config_invalid("Seafile server URL must include a host"))?;
+        if authority.as_str().contains('@') {
+            return Err(Error::config_invalid(
+                "Seafile server URL must not contain user information",
+            ));
+        }
+        if uri.query().is_some() {
+            return Err(Error::config_invalid(
+                "Seafile server URL must not contain a query",
+            ));
+        }
+
+        let host = authority.host();
+        if host.is_empty() {
+            return Err(Error::config_invalid(
+                "Seafile server URL must include a host",
+            ));
+        }
+        let port = authority
+            .port_u16()
+            .unwrap_or_else(|| scheme.default_port());
+        let base_path = normalize_base_path(uri.path())?;
+
+        Ok(Self {
+            scheme,
+            authority: authority.as_str().to_string(),
+            host: host.to_ascii_lowercase(),
+            port,
+            base_path,
+        })
+    }
+
+    /// Build the account-token endpoint for this deployment.
+    pub(crate) fn auth_token_url(&self) -> Result<http::Uri> {
+        format!(
+            "{}://{}{}{}",
+            self.scheme.as_str(),
+            self.authority,
+            self.base_path,
+            AUTH_TOKEN_PATH
+        )
+        .parse()
+        .map_err(|_| Error::config_invalid("failed to build the Seafile account-token URL"))
+    }
+
+    /// Check that the request targets this deployment.
+    pub(crate) fn validate_request(&self, req: &http::request::Parts) -> Result<()> {
+        let uri = &req.uri;
+        let scheme = uri
+            .scheme_str()
+            .and_then(Scheme::parse)
+            .ok_or_else(scope_error)?;
+        if scheme != self.scheme {
+            return Err(scope_error());
+        }
+
+        let authority = uri.authority().ok_or_else(scope_error)?;
+        if authority.as_str().contains('@') || !authority.host().eq_ignore_ascii_case(&self.host) {
+            return Err(scope_error());
+        }
+
+        let port = authority
+            .port_u16()
+            .unwrap_or_else(|| scheme.default_port());
+        if port != self.port {
+            return Err(scope_error());
+        }
+
+        if !self.contains_path(uri.path()) {
+            return Err(scope_error());
+        }
+
+        Ok(())
+    }
+
+    fn contains_path(&self, path: &str) -> bool {
+        if self.base_path.is_empty() {
+            return true;
+        }
+        if path == self.base_path {
+            return true;
+        }
+
+        path.strip_prefix(&self.base_path)
+            .is_some_and(|rest| rest.starts_with('/'))
+    }
+}
+
+fn normalize_base_path(path: &str) -> Result<String> {
+    if path.is_empty() {
+        return Ok(String::new());
+    }
+    if !path.starts_with('/') {
+        return Err(Error::config_invalid(
+            "Seafile server URL path must be absolute",
+        ));
+    }
+
+    Ok(path.trim_end_matches('/').to_string())
+}
+
+fn scope_error() -> Error {
+    Error::credential_invalid(
+        "Seafile credential deployment scope does not match the request endpoint",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(uri: &str) -> http::request::Parts {
+        http::Request::get(uri)
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0
+    }
+
+    #[test]
+    fn scope_matches_only_the_configured_deployment() {
+        let scope = DeploymentScope::from_server_url("https://Files.Example.com:443/seafile/")
+            .expect("scope must parse");
+
+        for uri in [
+            "https://files.example.com/seafile",
+            "https://files.example.com/seafile/",
+            "https://files.example.com/seafile/api2/repos/?x=%2F",
+            "https://FILES.example.com:443/seafile/api2/repos/",
+        ] {
+            scope
+                .validate_request(&request(uri))
+                .expect("matching request must pass");
+        }
+
+        for uri in [
+            "http://files.example.com/seafile/api2/repos/",
+            "https://other.example.com/seafile/api2/repos/",
+            "https://files.example.com:8443/seafile/api2/repos/",
+            "https://files.example.com/seafile-other/api2/repos/",
+            "https://files.example.com/other/api2/repos/",
+            "https://files.example.com/api2/repos/",
+        ] {
+            let error = scope
+                .validate_request(&request(uri))
+                .expect_err("mismatched request must fail");
+            assert_eq!(reqsign_core::ErrorKind::CredentialInvalid, error.kind());
+            assert_eq!(
+                error.to_string(),
+                "Seafile credential deployment scope does not match the request endpoint"
+            );
+            assert!(!format!("{error:?}").contains("files.example.com"));
+            assert!(!format!("{error:?}").contains("other.example.com"));
+        }
+    }
+
+    #[test]
+    fn root_scope_accepts_every_path_on_the_same_origin() {
+        let scope =
+            DeploymentScope::from_server_url("http://127.0.0.1:8080").expect("scope must parse");
+
+        scope
+            .validate_request(&request("http://127.0.0.1:8080/api2/repos/"))
+            .expect("root path must match");
+        scope
+            .validate_request(&request("http://127.0.0.1:80/api2/repos/"))
+            .expect_err("a different effective port must fail");
+    }
+}

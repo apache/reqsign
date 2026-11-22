@@ -23,8 +23,9 @@ use reqsign_core::{
 
 /// Default credential provider for Seafile.
 ///
-/// The default chain reads the account token from `~/.seafile.conf`, the
-/// first-party `seaf-cli` user configuration file. This crate documents no
+/// The default chain reads `server` and `token` from `~/.seafile.conf`, the
+/// first-party `seaf-cli` user configuration file, and binds the credential to
+/// that deployment. The `server` value is required. This crate documents no
 /// environment-variable or login-command contract for Seafile, so those sources
 /// are not part of the default chain.
 ///

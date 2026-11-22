@@ -16,12 +16,11 @@
 // under the License.
 
 use crate::Credential;
-use crate::constants::AUTH_TOKEN_PATH;
+use crate::scope::DeploymentScope;
 use http::HeaderMap;
 use http::StatusCode;
 use http::header;
 use log::debug;
-use reqsign_core::utils::Redact;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use std::fmt::{self, Debug, Formatter};
 
@@ -30,21 +29,29 @@ use std::fmt::{self, Debug, Formatter};
 /// The provider sends `username` and `password` as an
 /// `application/x-www-form-urlencoded` body to
 /// `{server}/api2/auth-token/`, matching the documented endpoint used by
-/// `seaf-cli`, the official Python SDK, and OpenDAL. The `server` value is the
-/// deployment root and may include a reverse-proxy base path, such as
+/// `seaf-cli`, the official Python SDK, and OpenDAL. The current OpenAPI
+/// document describes a JSON request body, but Seafile's server-side example,
+/// `seaf-cli`, and the Python SDK post form fields; this crate follows those
+/// executable clients. The `server` value is the deployment root and may
+/// include a reverse-proxy base path, such as
 /// `https://files.example.com/seafile`; the path is preserved.
 ///
 /// The response must be HTTP 200 with a JSON object containing a non-empty
 /// `token`. The token is returned without an expiration because Seafile does
-/// not document one. The provider performs no repository lookup and does not
-/// cache the token; [`reqsign_core::Signer`] owns caching and single-flight
-/// refresh.
+/// not document one. The credential is bound to the configured deployment, so
+/// [`crate::RequestSigner`] only signs requests for the same scheme, host,
+/// effective port, and deployment base path. The provider performs no
+/// repository lookup and does not cache the token; [`reqsign_core::Signer`]
+/// owns caching and single-flight refresh.
 ///
 /// The request carries a login secret. Use HTTPS in production. An explicit
 /// `http://` server is accepted for self-hosted deployments, but sends the
-/// username and password in cleartext. Two-factor authentication is not
-/// supported by this exchange; callers that require it should obtain a token
-/// separately and use [`crate::StaticCredentialProvider`].
+/// username and password in cleartext. The provider constructs only the initial
+/// request; redirect policy belongs to the configured HTTP adapter. Use an
+/// adapter with redirects disabled for this credential-bearing exchange.
+/// Two-factor authentication is not supported by this exchange; callers that
+/// require it should obtain a token separately and use
+/// [`crate::StaticCredentialProvider`].
 #[derive(Clone)]
 pub struct AccountTokenCredentialProvider {
     server: String,
@@ -54,11 +61,11 @@ pub struct AccountTokenCredentialProvider {
 
 impl Debug for AccountTokenCredentialProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AccountTokenCredentialProvider")
-            .field("server", &self.server)
-            .field("username", &Redact::from(&self.username))
-            .field("password", &Redact::from(&self.password))
-            .finish()
+        let mut debug = f.debug_struct("AccountTokenCredentialProvider");
+        if let Ok(deployment) = DeploymentScope::from_server_url(&self.server) {
+            debug.field("deployment", &deployment);
+        }
+        debug.finish_non_exhaustive()
     }
 }
 
@@ -79,45 +86,6 @@ impl AccountTokenCredentialProvider {
         }
     }
 
-    fn auth_endpoint(&self) -> Result<http::Uri> {
-        if self.server.is_empty() {
-            return Err(Error::config_invalid(
-                "Seafile server URL must not be empty",
-            ));
-        }
-
-        let base: http::Uri = self
-            .server
-            .parse()
-            .map_err(|_| Error::config_invalid("Seafile server URL is not a valid URI"))?;
-        let scheme = base
-            .scheme_str()
-            .ok_or_else(|| Error::config_invalid("Seafile server URL must be absolute"))?;
-        if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
-            return Err(Error::config_invalid(
-                "Seafile server URL must use http or https",
-            ));
-        }
-        let authority = base
-            .authority()
-            .ok_or_else(|| Error::config_invalid("Seafile server URL must include a host"))?;
-        if authority.as_str().contains('@') {
-            return Err(Error::config_invalid(
-                "Seafile server URL must not contain user information",
-            ));
-        }
-        if base.query().is_some() {
-            return Err(Error::config_invalid(
-                "Seafile server URL must not contain a query",
-            ));
-        }
-
-        let path = base.path().trim_end_matches('/');
-        format!("{scheme}://{authority}{path}{AUTH_TOKEN_PATH}")
-            .parse()
-            .map_err(|_| Error::config_invalid("failed to build the Seafile account-token URL"))
-    }
-
     fn validate_configured_values(&self) -> Result<()> {
         if self.username.is_empty() {
             return Err(Error::config_invalid("Seafile username must not be empty"));
@@ -135,7 +103,8 @@ impl ProvideCredential for AccountTokenCredentialProvider {
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
         self.validate_configured_values()?;
-        let endpoint = self.auth_endpoint()?;
+        let deployment = DeploymentScope::from_server_url(&self.server)?;
+        let endpoint = deployment.auth_token_url()?;
 
         let body = form_urlencoded::Serializer::new(String::new())
             .append_pair("username", &self.username)
@@ -154,14 +123,14 @@ impl ProvideCredential for AccountTokenCredentialProvider {
         }
 
         let response: AuthTokenResponse = serde_json::from_slice(response.body().as_ref())
-            .map_err(|e| {
-                Error::unexpected("failed to parse the Seafile account-token response")
-                    .with_source(e)
-            })?;
+            .map_err(|_| Error::unexpected("failed to parse the Seafile account-token response"))?;
 
-        Credential::new(response.token).map(Some).map_err(|_| {
-            Error::unexpected("Seafile account-token response contains an unusable token")
-        })
+        Credential::new(response.token)
+            .map(|credential| credential.with_deployment_scope(deployment))
+            .map(Some)
+            .map_err(|_| {
+                Error::unexpected("Seafile account-token response contains an unusable token")
+            })
     }
 }
 
@@ -192,15 +161,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn debug_redacts_the_username_and_password() {
+    fn debug_does_not_panic_or_expose_login_inputs() {
         let provider = AccountTokenCredentialProvider::new(
             "https://files.example.com",
+            "用户-示例-登录",
+            "密码-示例-秘密",
+        );
+        let debug = format!("{provider:?}");
+
+        assert!(!debug.contains("用户-示例-登录"));
+        assert!(!debug.contains("密码-示例-秘密"));
+        assert!(debug.contains("files.example.com"));
+    }
+
+    #[test]
+    fn debug_does_not_echo_an_invalid_server() {
+        let provider = AccountTokenCredentialProvider::new(
+            "https://user:secret@files.example.com",
             "user@example.com",
             "password-secret",
         );
         let debug = format!("{provider:?}");
 
-        assert!(debug.contains("https://files.example.com"));
+        assert!(!debug.contains("user:secret"));
+        assert!(!debug.contains("files.example.com"));
         assert!(!debug.contains("user@example.com"));
         assert!(!debug.contains("password-secret"));
     }

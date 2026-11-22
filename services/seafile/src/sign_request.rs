@@ -24,8 +24,12 @@ use std::time::Duration;
 ///
 /// Header authentication only. It inserts a sensitive
 /// `Authorization: Token <token>` header and does not modify the URI or any
-/// other header. Seafile has no query authentication, so `expires_in` is
-/// rejected rather than silently ignored.
+/// other header. Credentials discovered from `seaf-cli` configuration or
+/// obtained through the configured account exchange are bound to the deployment
+/// that supplied them; the signer verifies the request scheme, host, effective
+/// port, and deployment base path before adding the header. Static caller-supplied
+/// credentials do not carry that deployment restriction. Seafile has no query
+/// authentication, so `expires_in` is rejected rather than silently ignored.
 #[derive(Debug, Default)]
 pub struct RequestSigner;
 
@@ -63,6 +67,9 @@ impl SignRequest for RequestSigner {
             return Err(Error::credential_invalid(
                 "Seafile credential is not valid for the requested signing operation",
             ));
+        }
+        if let Some(deployment) = credential.deployment_scope() {
+            deployment.validate_request(req)?;
         }
 
         req.headers.insert(

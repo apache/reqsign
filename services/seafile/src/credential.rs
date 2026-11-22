@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::scope::DeploymentScope;
 use reqsign_core::utils::Redact;
 use reqsign_core::{Error, Result, SigningCredential};
 use std::fmt::{self, Debug, Formatter};
@@ -25,17 +26,24 @@ use std::fmt::{self, Debug, Formatter};
 /// [`Credential::authorization_header_value`] is the supported way to obtain
 /// request authentication material. Seafile currently issues 40-character
 /// tokens, but this type only requires a non-empty visible-ASCII value so it
-/// does not assume that the token format stays fixed.
+/// does not assume that the token format stays fixed. Credentials discovered
+/// from `seaf-cli` configuration or obtained through the account exchange also
+/// carry the deployment they belong to; [`Credential::new`] creates an explicit
+/// caller-supplied credential without that restriction.
 #[derive(Clone)]
 pub struct Credential {
     token: String,
+    deployment: Option<DeploymentScope>,
 }
 
 impl Debug for Credential {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Credential")
-            .field("token", &Redact::from(&self.token))
-            .finish()
+        let mut debug = f.debug_struct("Credential");
+        debug.field("token", &Redact::from(&self.token));
+        if let Some(deployment) = &self.deployment {
+            debug.field("deployment", deployment);
+        }
+        debug.finish()
     }
 }
 
@@ -58,7 +66,19 @@ impl Credential {
             ));
         }
 
-        Ok(Self { token })
+        Ok(Self {
+            token,
+            deployment: None,
+        })
+    }
+
+    pub(crate) fn with_deployment_scope(mut self, deployment: DeploymentScope) -> Self {
+        self.deployment = Some(deployment);
+        self
+    }
+
+    pub(crate) fn deployment_scope(&self) -> Option<&DeploymentScope> {
+        self.deployment.as_ref()
     }
 
     /// Return the token value.

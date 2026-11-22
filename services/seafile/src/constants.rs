@@ -26,3 +26,9 @@ pub(crate) const CLI_CONFIG_SECTION: &str = "account";
 
 /// The configuration key that holds the account token.
 pub(crate) const CLI_CONFIG_TOKEN_KEY: &str = "token";
+
+/// The configuration key that holds the deployment server URL.
+pub(crate) const CLI_CONFIG_SERVER_KEY: &str = "server";
+
+/// The configuration key that holds the account login name.
+pub(crate) const CLI_CONFIG_USER_KEY: &str = "user";
