@@ -28,11 +28,12 @@ use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 use reqsign_openstack_keystone::{
     Credential, DefaultCredentialProvider, EnvCredentialProvider, KeystoneCredentialProvider,
-    RequestSigner,
+    RequestSigner, StaticCredentialProvider,
 };
 
 const AUTH_URL: &str = "https://keystone.example.com/v3";
 const SUBJECT_TOKEN: &str = "subject-token-value";
+const PREAUTH_TOKEN: &str = "preauth-token-value";
 const SWIFT_PUBLIC_URL: &str = "https://swift.example.com/v1/AUTH_test";
 const SWIFT_INTERNAL_URL: &str = "http://swift-internal:8080/v1/AUTH_test";
 
@@ -528,6 +529,160 @@ async fn signer_signs_with_the_token_and_reuses_it() {
         1,
         mock.request_count(),
         "the second sign must reuse the cached token"
+    );
+}
+
+#[tokio::test]
+async fn env_provider_uses_auth_token_without_keystone_http() {
+    // Context::new() has no HTTP adapter, so success proves that neither
+    // OS_AUTH_TOKEN nor OS_STORAGE_URL triggered a Keystone request.
+    let ctx = Context::new().with_env(StaticEnv {
+        home_dir: None,
+        envs: envs([
+            ("OS_AUTH_URL", AUTH_URL),
+            ("OS_USERNAME", "testuser"),
+            ("OS_PASSWORD", "testpass"),
+            ("OS_AUTH_TOKEN", PREAUTH_TOKEN),
+            ("OS_STORAGE_URL", SWIFT_PUBLIC_URL),
+        ]),
+    });
+
+    let credential = DefaultCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await
+        .expect("credential loading must succeed")
+        .expect("credential must be present");
+
+    assert_eq!(PREAUTH_TOKEN, credential.token);
+    assert!(credential.is_valid(), "a pre-issued token stays valid");
+    assert_eq!(
+        credential.endpoint("object-store", "public"),
+        Some(SWIFT_PUBLIC_URL),
+        "OS_STORAGE_URL must be available through catalog lookup"
+    );
+}
+
+#[tokio::test]
+async fn env_provider_uses_auth_token_without_a_storage_url() {
+    let ctx = Context::new().with_env(StaticEnv {
+        home_dir: None,
+        envs: envs([("OS_AUTH_TOKEN", PREAUTH_TOKEN)]),
+    });
+
+    let credential = EnvCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await
+        .expect("credential loading must succeed")
+        .expect("credential must be present");
+
+    assert_eq!(PREAUTH_TOKEN, credential.token);
+    assert!(
+        credential.service_catalog.is_empty(),
+        "a token without OS_STORAGE_URL has no catalog metadata"
+    );
+}
+
+#[tokio::test]
+async fn env_provider_falls_back_when_auth_token_is_empty() {
+    let mock = MockKeystone::scoped();
+    let ctx = Context::new()
+        .with_http_send(mock.clone())
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: envs([
+                ("OS_AUTH_URL", AUTH_URL),
+                ("OS_USERNAME", "testuser"),
+                ("OS_PASSWORD", "testpass"),
+                ("OS_AUTH_TOKEN", ""),
+            ]),
+        });
+
+    let credential = DefaultCredentialProvider::new()
+        .provide_credential(&ctx)
+        .await
+        .expect("credential loading must succeed")
+        .expect("credential must be present");
+
+    assert_eq!(SUBJECT_TOKEN, credential.token);
+    assert_eq!(1, mock.request_count(), "empty token must not shadow login");
+}
+
+#[tokio::test]
+async fn push_front_static_provider_takes_priority_over_environment() {
+    let ctx = Context::new().with_env(StaticEnv {
+        home_dir: None,
+        envs: envs([("OS_AUTH_TOKEN", "environment-token")]),
+    });
+
+    let credential = DefaultCredentialProvider::new()
+        .push_front(StaticCredentialProvider::new(PREAUTH_TOKEN))
+        .provide_credential(&ctx)
+        .await
+        .expect("credential loading must succeed")
+        .expect("credential must be present");
+
+    assert_eq!(PREAUTH_TOKEN, credential.token);
+}
+
+#[tokio::test]
+async fn static_provider_signs_without_keystone_http() {
+    // There is no HTTP adapter and no environment: the token must be used
+    // exactly as provided.
+    let signer = Signer::new(
+        Context::new(),
+        StaticCredentialProvider::new(PREAUTH_TOKEN),
+        RequestSigner,
+    );
+
+    let mut req = http::Request::builder()
+        .method("GET")
+        .uri(format!("{SWIFT_PUBLIC_URL}/container/object"))
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0;
+
+    signer
+        .sign(&mut req, None)
+        .await
+        .expect("signing must succeed");
+
+    assert_eq!(PREAUTH_TOKEN, req.headers["x-auth-token"]);
+    assert!(
+        req.headers["x-auth-token"].is_sensitive(),
+        "the token header must be marked sensitive"
+    );
+}
+
+#[tokio::test]
+async fn static_provider_reports_an_unusable_token_without_changing_the_request() {
+    let signer = Signer::new(
+        Context::new(),
+        StaticCredentialProvider::new("invalid\ntoken"),
+        RequestSigner,
+    );
+
+    let mut req = http::Request::builder()
+        .method("GET")
+        .uri(format!("{SWIFT_PUBLIC_URL}/container/object"))
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0;
+    let original_headers = req.headers.clone();
+
+    let err = signer
+        .sign(&mut req, None)
+        .await
+        .expect_err("a token with a control character must fail");
+
+    assert!(
+        err.to_string().contains("header value"),
+        "error must identify the invalid header value, got: {err}"
+    );
+    assert_eq!(
+        original_headers, req.headers,
+        "failed signing must not mutate"
     );
 }
 

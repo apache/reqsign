@@ -190,10 +190,12 @@ let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
   - AWS services (SigV4): `reqsign-aws-v4`
   - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
+  - Dropbox: `reqsign-dropbox`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
+  - OAuth 2.0 refresh-token support: `reqsign-oauth2`
   - Tencent COS: `reqsign-tencent-cos`
   - Volcengine TOS: `reqsign-volcengine-tos`
   - Yandex Disk: `reqsign-yandex-disk`

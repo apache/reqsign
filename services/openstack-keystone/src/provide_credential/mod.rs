@@ -23,3 +23,6 @@ pub use env::EnvCredentialProvider;
 
 mod keystone;
 pub use keystone::KeystoneCredentialProvider;
+
+mod static_provider;
+pub use static_provider::StaticCredentialProvider;

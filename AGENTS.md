@@ -3,7 +3,7 @@
 ## Project Overview
 
 Apache Reqsign — a Rust library for signing HTTP API requests across
-cloud providers (AWS, Azure, Google, Aliyun, Huawei, Tencent, Oracle,
+cloud providers (AWS, Azure, Dropbox, Google, Aliyun, Huawei, Tencent, Oracle,
 Volcengine, Yandex Disk).
 
 ## Architecture
@@ -80,14 +80,16 @@ servers checked into `services/aws-v4/tests/mocks/`.
 ## WASM Compatibility
 
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
-`aliyun`, `tencent`, `yandex-disk`) must compile for `wasm32-unknown-unknown`.
-CI verifies this supported subset. Yandex Disk static credentials without an
-expiry and header signing need no JavaScript clock.
+`aliyun`, `tencent`, `oauth2`, `dropbox`, `yandex-disk`) must compile for
+`wasm32-unknown-unknown`. CI verifies this supported subset. Yandex Disk static
+credentials without an expiry and header signing need no JavaScript clock; the
+shared OAuth 2.0 and Dropbox paths need a JavaScript host clock.
 
 ## Versioning
 
-- Service crates and core share a lockstep major version (`3.0.0`).
-- `reqsign-yandex-disk` starts an independent `1.0.0` version line.
+- Existing service crates and core share a lockstep major version (`3.0.0`).
+- `reqsign-oauth2`, `reqsign-dropbox`, and `reqsign-yandex-disk` each start an
+  independent `1.0.0` version line.
 - `reqsign-http-send-reqwest` has its own major (`4.0.0`).
 - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
   version lines, starting at `1.0.0`.

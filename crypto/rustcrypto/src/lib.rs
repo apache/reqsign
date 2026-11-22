@@ -17,20 +17,21 @@
 
 //! Pure Rust [`CryptoProvider`] for reqsign based on the RustCrypto crates.
 //!
-//! The provider supports SHA-1, SHA-256, HMAC-SHA-1, HMAC-SHA-256 and
-//! ECDSA P-256 on every target. RSA PKCS#1 v1.5, AES-GCM and secure random
-//! generation are available on native targets. On `wasm32` those operations
-//! inherit the trait's unsupported-operation error.
+//! The provider supports MD5, SHA-1, SHA-256, HMAC-SHA-1, HMAC-SHA-256,
+//! HMAC-SHA-512, and ECDSA P-256 on every target. RSA PKCS#1 v1.5, AES-GCM and
+//! secure random generation are available on native targets. On `wasm32` those
+//! operations inherit the trait's unsupported-operation error.
 
 use std::sync::Arc;
 
 use hmac::{Hmac, KeyInit, Mac};
+use md5::Md5;
 use p256::ecdsa::signature::Signer;
 use p256::ecdsa::{DerSignature, SigningKey};
 use reqsign_core::crypto::{self, CryptoProvider};
 use reqsign_core::{Error, Result};
 use sha1::Sha1;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 /// RustCrypto implementation of [`CryptoProvider`].
 #[derive(Debug, Default)]
@@ -60,6 +61,10 @@ impl CryptoProvider for RustCryptoProvider {
         Ok(Sha256::digest(input).into())
     }
 
+    fn md5(&self, input: &[u8]) -> Result<[u8; 16]> {
+        Ok(Md5::digest(input).into())
+    }
+
     fn hmac_sha1(&self, key: &[u8], input: &[u8]) -> Result<[u8; 20]> {
         let mut mac = Hmac::<Sha1>::new_from_slice(key)
             .map_err(|e| Error::unexpected("failed to initialize HMAC-SHA1").with_source(e))?;
@@ -70,6 +75,13 @@ impl CryptoProvider for RustCryptoProvider {
     fn hmac_sha256(&self, key: &[u8], input: &[u8]) -> Result<[u8; 32]> {
         let mut mac = Hmac::<Sha256>::new_from_slice(key)
             .map_err(|e| Error::unexpected("failed to initialize HMAC-SHA256").with_source(e))?;
+        mac.update(input);
+        Ok(mac.finalize().into_bytes().into())
+    }
+
+    fn hmac_sha512(&self, key: &[u8], input: &[u8]) -> Result<[u8; 64]> {
+        let mut mac = Hmac::<Sha512>::new_from_slice(key)
+            .map_err(|e| Error::unexpected("failed to initialize HMAC-SHA512").with_source(e))?;
         mac.update(input);
         Ok(mac.finalize().into_bytes().into())
     }

@@ -219,6 +219,20 @@ after a process restart, the disk registration and refresh token must still be
 usable. Legacy inline SSO configurations do not refresh, and Reqsign never
 starts interactive login.
 
+OAuth 2.0 refresh grants for Dropbox and later service crates follow the same
+in-memory model. Each `RefreshTokenGrant` retains only its latest refresh token;
+clones share that state and serialize the complete exchange from reading the
+old token through committing a replacement. Independently constructed grants
+and processes do not coordinate, and Reqsign never writes refresh tokens to
+disk. Refreshed access tokens are cached only by `Signer`, not by the shared
+grant. If a provider rotates a refresh token but its response is lost, Reqsign
+cannot recover the server-side token; the caller must supply a new one. The
+shared grant sends only the RFC 6749 form fields to its configured HTTPS token
+endpoint, does not send HTTP Basic authentication at the same time, and does
+not retry or discover another endpoint. The service crate rejects a refreshed
+credential whose required expiration is missing or already past instead of
+treating it as permanent.
+
 ### 4.3 Credential redaction and observability
 
 Reqsign must avoid exposing credentials through `Debug` output, error chains,

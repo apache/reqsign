@@ -1,0 +1,84 @@
+---
+title: Dropbox
+description: OAuth 2.0 access tokens and refresh-token exchange for the Dropbox API.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="dropbox" />
+
+## Get started
+
+```bash
+cargo add reqsign --features dropbox
+```
+
+```rust
+use reqsign::{default_context, dropbox};
+
+// The default chain reads DBXCLI_ACCESS_TOKEN through the context environment.
+let ctx = default_context();
+let signer = dropbox::default_signer(ctx);
+
+let mut req = http::Request::builder()
+    .method(http::Method::POST)
+    .uri("https://api.dropboxapi.com/2/users/get_current_account")
+    .body(())?
+    .into_parts()
+    .0;
+
+// Sign in place, then send with the HTTP client you already use.
+signer.sign(&mut req, None).await?;
+```
+
+The default source is the `DBXCLI_ACCESS_TOKEN` variable documented by the
+official `dbxcli` tool. Reqsign does not read `dbxcli` account or team files.
+For an explicit access token, use `StaticCredentialProvider`; for long-lived
+access, replace the provider with `RefreshCredentialProvider`:
+
+```rust
+use reqsign::dropbox::{RefreshCredentialProvider, default_signer};
+
+let ctx = reqsign::default_context();
+let provider =
+    RefreshCredentialProvider::new("client-id", "client-secret", "refresh-token")?;
+let signer = default_signer(ctx).with_credential_provider(provider);
+```
+
+The refresh provider sends the client ID and secret in the RFC 6749 form body
+and uses Dropbox's fixed token endpoint unless the caller explicitly replaces
+it with another trusted HTTPS endpoint. It rejects a successful token response
+that omits `expires_in`, because Dropbox access tokens are expected to expire
+and an unknown lifetime must not be cached as permanent.
+
+Dropbox uses header authentication only. Signing adds a sensitive
+`Authorization: Bearer` header and rejects `expires_in`; it never modifies the
+URI or other headers. Refresh-token rotation is serialized per shared provider,
+and the access-token cache belongs to `Signer`.
+
+On `wasm32-unknown-unknown`, this provider enables Jiff's JavaScript clock.
+Runtime signing requires a wasm-bindgen JavaScript host such as a browser or
+Node; a bare WASM runtime without a JavaScript clock is not supported. CI
+exercises the public default signer path under `wasm-bindgen-test` in Node.
+
+<ProviderDetails id="dropbox" />

@@ -3,7 +3,9 @@
 The suite runs without any external service. Provider behaviour comes from a
 mock `HttpSend` injected into the `Context`, which records the authentication
 request reqsign sends and replies with a scripted Keystone response. This keeps
-the tests deterministic and lets them assert on the exact wire payload.
+the tests deterministic and lets them assert on the exact wire payload. Static
+token and `OS_AUTH_TOKEN` tests use a `Context` without an HTTP adapter so a
+Keystone request would fail the test; the password fallback still uses the mock.
 
 ## Test Structure
 
