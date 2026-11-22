@@ -25,11 +25,12 @@ description: Version tracks across the Reqsign crates, and the supported Rust an
 
 ## Versioning
 
-Reqsign publishes many crates on three tracks:
+Reqsign publishes many crates on five tracks:
 
 | Track | Crates | Scheme |
 | --- | --- | --- |
-| Core + established services | `reqsign-core`, `reqsign-aws-core`, the established `reqsign-<provider>` service crates, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | Lockstep major (currently `3.x`) |
+| Core + existing services | `reqsign-core`, `reqsign-aws-core`, every existing `reqsign-<provider>` service crate, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | Lockstep major (currently `3.x`) |
+| Shared OAuth 2.0 + Dropbox | `reqsign-oauth2`, `reqsign-dropbox` | Independent major, starting at `1.x` |
 | New provider crates | `reqsign-seafile` | Independent major (currently `1.x`); new provider crates start at `1.0.0` |
 | Reqwest adapter | `reqsign-http-send-reqwest` | Independent major (currently `4.x`), so reqwest major bumps do not force a core major |
 | Facade | `reqsign` | Independent (currently `0.20.x`) |
@@ -73,10 +74,13 @@ do.
 
 **WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a
 defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS
-SigV4a, Azure Storage, Aliyun OSS, Tencent COS, and Seafile providers. The
+SigV4a, Azure Storage, Aliyun OSS, Tencent COS, Dropbox, and Seafile providers.
+The shared `reqsign-oauth2` crate and the `oauth2` facade feature are checked in
+the same subset. Dropbox and OAuth2 runtime signing or refresh additionally
+requires a wasm-bindgen JavaScript host for the clock; see the
+[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The
 [provider matrix](/docs/providers/) is the authoritative per-provider
-status; the [Custom runtimes & WASM guide](/docs/guides/custom-runtimes/)
-covers building and browser-backed contexts.
+status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core
 assumes Tokio. Runtime coupling lives only in the optional context crates;

@@ -32,8 +32,10 @@ and service lockstep line and from each other.
 pub trait CryptoProvider: Debug + Send + Sync + 'static {
     fn sha1(&self, input: &[u8]) -> Result<[u8; 20]>;
     fn sha256(&self, input: &[u8]) -> Result<[u8; 32]>;
+    fn md5(&self, input: &[u8]) -> Result<[u8; 16]>;
     fn hmac_sha1(&self, key: &[u8], input: &[u8]) -> Result<[u8; 20]>;
     fn hmac_sha256(&self, key: &[u8], input: &[u8]) -> Result<[u8; 32]>;
+    fn hmac_sha512(&self, key: &[u8], input: &[u8]) -> Result<[u8; 64]>;
 
     fn rsa_pkcs1v15_sha256_sign(
         &self,
@@ -59,15 +61,21 @@ pub trait CryptoProvider: Debug + Send + Sync + 'static {
 }
 ```
 
-The four hash/MAC methods are mandatory. The remaining four have default
-implementations that return `ConfigInvalid`, so a minimal provider remains
-useful for services that only need hashing.
+`sha1`, `sha256`, `hmac_sha1`, and `hmac_sha256` are mandatory. `md5`,
+`hmac_sha512`, and the remaining four operations have default implementations
+that return `ConfigInvalid`, so a minimal provider remains useful for services
+that only need the mandatory hashing and MAC operations. Adding an optional
+method does not require changes to existing providers.
 
 ### Operation Semantics
 
 - `sha1` and `sha256` return the digest as a fixed-width byte array.
-- `hmac_sha1` and `hmac_sha256` return the MAC as a fixed-width byte array.
-  HMAC accepts keys of any length, including empty and longer-than-block keys.
+- `md5` returns a 16-byte digest. MD5 is not collision resistant and exists
+  only for legacy protocols such as Upyun's request signature. A provider that
+  cannot offer MD5 for policy reasons returns `ConfigInvalid`.
+- `hmac_sha1`, `hmac_sha256`, and `hmac_sha512` return the MAC as a fixed-width
+  byte array. HMAC accepts keys of any length, including empty and
+  longer-than-block keys.
 - `rsa_pkcs1v15_sha256_sign` implements RSASSA-PKCS1-v1_5 with SHA-256. The key
   is an unencrypted PKCS#8 (`PRIVATE KEY`) or PKCS#1 (`RSA PRIVATE KEY`) PEM
   document. The result is the big-endian signature with the modulus width.
@@ -153,6 +161,7 @@ application's choice and can race with the application's own initialization.
 | --- | --- | --- |
 | No provider resolvable through the context | `ConfigInvalid` | no |
 | Installed provider does not support the operation | `ConfigInvalid` | no |
+| Provider policy excludes the operation, such as MD5 in a FIPS build | `ConfigInvalid` | no |
 | Unencrypted-key material is malformed, not RSA, out of range, or has an invalid AES key length | `CredentialInvalid` | no |
 | Backend, FFI, allocator, or random-source failure | `Unexpected` | no |
 
@@ -217,7 +226,7 @@ version line, starting at `1.0.0`.
 
 | Operation | Native | `wasm32-unknown-unknown` |
 | --- | --- | --- |
-| SHA-1, SHA-256, HMAC-SHA-1/256 | yes | yes |
+| MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512 | yes | yes |
 | ECDSA P-256 with SHA-256 | yes | yes |
 | RSA PKCS#1 v1.5 with SHA-256 | yes | unsupported (`ConfigInvalid`) |
 | AES-128/256-GCM | yes | unsupported (`ConfigInvalid`) |
@@ -235,9 +244,13 @@ planning never require CMake or a C/C++ toolchain.
 
 `BoringCryptoProvider::new()`, `Default`, and
 `BoringCryptoProvider::install_default()` are the public entry points. The
-provider implements all eight operations through safe, stateless BoringSSL
-calls and contains no `unsafe` code. The optional `fips` feature forwards to
+provider implements all ten operations through safe, stateless BoringSSL calls
+and contains no `unsafe` code. The optional `fips` feature forwards to
 `boring/fips`.
+
+When BoringSSL runs in FIPS mode, `md5` returns `ConfigInvalid` because FIPS
+does not approve MD5. The provider does not fall back to a non-FIPS MD5
+implementation. SHA-512 and HMAC-SHA-512 remain available.
 
 The crate has an independent version cadence (`1.0.0` initially), is verified by
 `.github/workflows/crypto_boring.yml`, and is not published by
@@ -317,7 +330,8 @@ loading is what makes the missing-provider `ConfigInvalid` visible.
 
 No crate outside `crypto/*` may declare a direct dependency on a raw
 cryptographic implementation crate such as `sha1`, `sha2`, `hmac`, `rsa`,
-`p256`, `aes-gcm`, `getrandom`, `boring`, `openssl`, `ring`, or `aws-lc-rs`.
+`p256`, `aes-gcm`, `md-5`, `getrandom`, `boring`, `openssl`, `ring`, or
+`aws-lc-rs`.
 This applies to `[dependencies]`, `[dev-dependencies]`, and
 `[build-dependencies]`, including target-specific tables, renamed packages, and
 `[workspace.dependencies]` entries in any repo-local workspace. Provider crates
@@ -375,14 +389,15 @@ The repository verifies this contract with:
   and after context construction, OnceLock non-occupation, a default signer
   using its bound provider, and a signer whose explicitly selected provider is
   used.
-- RustCrypto provider tests for published hash/HMAC vectors, block-size key
-  boundaries, both RSA PEM formats, AES-128/256-GCM with and without AAD,
-  ECDSA verification, invalid scalars, invalid AES key lengths, random output,
-  and unsupported-operation defaults.
+- RustCrypto provider tests for published MD5, SHA-1, SHA-256, and
+  HMAC-SHA-1/256/512 vectors, block-size key boundaries, both RSA PEM formats,
+  AES-128/256-GCM with and without AAD, ECDSA verification, invalid scalars,
+  invalid AES key lengths, random output, and unsupported-operation defaults.
 - BoringSSL parity tests against `reqsign-crypto-rustcrypto` for byte-identical
   hashes, HMACs, RSA signatures, and AES-GCM output; cross-backend ECDSA
-  verification; error-kind checks; and an AWS SigV4 end-to-end signing test with
-  an explicit BoringSSL context.
+  verification; MD5 availability outside FIPS and `ConfigInvalid` in FIPS mode;
+  error-kind checks; and an AWS SigV4 end-to-end signing test with an explicit
+  BoringSSL context.
 - A per-root `cargo tree --all-features --target all --edges normal` check
   confirms that no core or service production graph contains a cryptographic
   implementation crate, without workspace feature unification hiding optional

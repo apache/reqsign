@@ -42,10 +42,11 @@ use crate::{Error, Result};
 /// all of these operations; callers do not compose individual algorithms from
 /// different providers at runtime.
 ///
-/// The first four methods are mandatory. A provider implements the remaining
-/// methods when it supports the corresponding operation; the default
-/// implementations return [`crate::ErrorKind::ConfigInvalid`] so that a minimal
-/// provider can serve services that only need hashing and MACs.
+/// `sha1`, `sha256`, `hmac_sha1`, and `hmac_sha256` are mandatory. A provider
+/// implements the remaining methods when it supports the corresponding
+/// operation; the default implementations return
+/// [`crate::ErrorKind::ConfigInvalid`] so that a minimal provider can serve
+/// services that only need the basic hashing and MAC operations.
 ///
 /// Implementations must be safe to call concurrently and must not retain mutable
 /// per-call state between invocations.
@@ -56,11 +57,36 @@ pub trait CryptoProvider: Debug + Send + Sync + 'static {
     /// Compute the SHA-256 digest of `input`.
     fn sha256(&self, input: &[u8]) -> Result<[u8; 32]>;
 
+    /// Compute the MD5 digest of `input`.
+    ///
+    /// MD5 is not collision resistant. Use it only for legacy protocols that
+    /// require MD5, not for new security-sensitive designs. A provider that
+    /// cannot offer MD5, such as a FIPS-restricted backend, returns
+    /// [`crate::ErrorKind::ConfigInvalid`].
+    fn md5(&self, input: &[u8]) -> Result<[u8; 16]> {
+        let _ = input;
+        Err(Error::config_invalid(
+            "configured CryptoProvider does not support MD5 hashing",
+        ))
+    }
+
     /// Compute HMAC-SHA-1 over `input` with `key`.
     fn hmac_sha1(&self, key: &[u8], input: &[u8]) -> Result<[u8; 20]>;
 
     /// Compute HMAC-SHA-256 over `input` with `key`.
     fn hmac_sha256(&self, key: &[u8], input: &[u8]) -> Result<[u8; 32]>;
+
+    /// Compute HMAC-SHA-512 over `input` with `key`.
+    ///
+    /// HMAC accepts keys of any length, including empty and longer-than-block
+    /// keys. The default implementation returns
+    /// [`crate::ErrorKind::ConfigInvalid`].
+    fn hmac_sha512(&self, key: &[u8], input: &[u8]) -> Result<[u8; 64]> {
+        let _ = (key, input);
+        Err(Error::config_invalid(
+            "configured CryptoProvider does not support HMAC-SHA512",
+        ))
+    }
 
     /// RSASSA-PKCS1-v1_5 with SHA-256 over `message`.
     ///
