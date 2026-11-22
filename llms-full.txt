@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-17signing providers
+18signing providers
 
 5granting operations
 
-12WASM-ready providers
+13WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 17 providers. Explicit schemes.
+## 18 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[UpyunUPYUN header signature (MD5-derived HMAC-SHA1)](/docs/providers/upyun/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -805,6 +805,7 @@ cargo add http anyhow
 | openstack                                     | OpenStack Keystone                           |
 | oracle                                        | Oracle Cloud                                 |
 | tencent                                       | Tencent COS                                  |
+| upyun                                         | Upyun                                        |
 | volcengine                                    | Volcengine TOS                               |
 | full                                          | Everything above                             |
 
@@ -911,6 +912,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | openstack::default\_signer(ctx)                                  |
 | [Oracle Cloud](/docs/providers/oracle/)                                        | oracle::default\_signer(ctx)                                     |
 | [Tencent COS](/docs/providers/tencent-cos/)                                    | tencent::default\_signer(ctx)                                    |
+| [Upyun](/docs/providers/upyun/)                                                | upyun::default\_signer(ctx, bucket)                              |
 | [Volcengine TOS](/docs/providers/volcengine-tos/)                              | volcengine::default\_signer(ctx, region)                         |
 
 Aliyun Drive has no documented ambient source; replace its default provider with a static access token or refresh-token provider. OneDrive's default chain is also empty; prepend a refresh-token or static provider explicitly.
@@ -993,6 +995,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)                           | OBS signature                                             | ✓      | ✓               | —        | —    |
 | [Oracle Cloud](/docs/providers/oracle/)                                        | OCI request signature                                     | ✓      | —               | —        | —    |
 | [Tencent COS](/docs/providers/tencent-cos/)                                    | COS signature                                             | ✓      | ✓               | —        | ✓    |
+| [Upyun](/docs/providers/upyun/)                                                | UPYUN header signature (MD5-derived HMAC-SHA1)            | ✓      | —               | —        | ✓    |
 | [Volcengine TOS](/docs/providers/volcengine-tos/)                              | TOS signature                                             | ✓      | ✓               | —        | —    |
 | [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | RFC 9421 HMAC-SHA256, RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256 | ✓      | —               | —        | ✓    |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | X-Auth-Token header, Swift TempURL (HMAC-SHA1/256/512)    | ✓      | ✓               | —        | —    |
@@ -1389,7 +1392,7 @@ Slots you do not provide stay as no-op stubs that error when used — a credenti
 Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
 
 * `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Tencent COS, Dropbox, OneDrive**(facade features `aws`, `aws-v4a`, `azure`, `github`, `aliyun`,`aliyun-drive`, `b2`, `cloudflare`, `tencent`, `dropbox`, `onedrive`,`oauth2`)
+* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Tencent COS, Dropbox, OneDrive, Upyun** (facade features `aws`, `aws-v4a`, `azure`, `github`, `aliyun`,`aliyun-drive`, `b2`, `cloudflare`, `tencent`, `dropbox`, `onedrive`,`oauth2`, `upyun`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock. GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in bare WASM runtimes.
 
@@ -3499,6 +3502,79 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 ---
 
 ---
+url: https://reqsign.apache.org/docs/providers/upyun/
+---
+# Upyun | Apache Reqsign™
+
+# Upyun
+
+Upyun Storage REST API requests signed with the UPYUN header scheme.
+
+UPYUN header signature (MD5-derived HMAC-SHA1)✓ header signing— query / presign✓ WASM[docs.rs/reqsign-upyun ↗](https://docs.rs/reqsign-upyun)
+
+Signs the method, wire path, Date, and an optional Content-MD5 header; expires\_in is not interpreted. Discovered CLI credentials require the first segment of the request's wire path to exactly equal the CLI session bucket on every signature, including cache hits. This is a local request-target check, not a server-side path-rewrite claim.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features upyun
+
+
+```
+
+```
+
+use reqsign::upyun::StaticCredentialProvider;
+
+use reqsign::{default_context, upyun};
+
+
+let ctx = default_context();
+
+let signer = upyun::default_signer(ctx, "bucket")
+
+    .with_credential_provider(StaticCredentialProvider::new("operator", "password"));
+
+
+// Build the request and choose the bucket endpoint in the caller.
+
+let mut req = http::Request::put("https://v0.api.upyun.com/bucket/object.txt")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+The default chain selects the session for `bucket` from the Upyun CLI (`upx`) configuration at `~/.upx.cfg`. A matching current session is preferred, then the first session for that bucket. The discovered credential is scoped to that bucket: every signature requires the first segment of the request's wire path to exactly equal it, including when a cached credential is reused. This is a local check of the request target and does not assume server-side path rewriting. The file has no account or endpoint scope beyond the bucket. Install`StaticCredentialProvider` directly, or push it in front of the default chain, when credentials come from application configuration; explicit static credentials are unscoped unless the caller sets a bucket.
+
+The signer adds `Date` and `Authorization`. Set `Content-MD5` before signing when the request body should participate in the signature. The signed URI is the request's wire path exactly as supplied; the signer does not decode, normalize, or rebuild it. It does not create presigned URLs or token credentials, and it does not send the request.
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Upyun CLI (upx) configuration (\~/.upx.cfg, bucket-scoped)
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [UpxConfigCredentialProvider](https://docs.rs/reqsign-upyun/latest/reqsign%5Fupyun/struct.UpxConfigCredentialProvider.html) — Upyun CLI (upx) configuration (\~/.upx.cfg, bucket-scoped)
+* [StaticCredentialProvider](https://docs.rs/reqsign-upyun/latest/reqsign%5Fupyun/struct.StaticCredentialProvider.html) — Static operator and password
+
+---
+
+---
 url: https://reqsign.apache.org/docs/providers/volcengine-tos/
 ---
 # Volcengine TOS | Apache Reqsign™
@@ -3605,6 +3681,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-openstack-keystone](https://docs.rs/reqsign-openstack-keystone)
 * [reqsign-oracle](https://docs.rs/reqsign-oracle)
 * [reqsign-tencent-cos](https://docs.rs/reqsign-tencent-cos)
+* [reqsign-upyun](https://docs.rs/reqsign-upyun)
 * [reqsign-volcengine-tos](https://docs.rs/reqsign-volcengine-tos)
 
 ## Shared token support[​](#shared-token-support "Direct link to Shared token support")
@@ -3685,6 +3762,7 @@ The two validity checks have different jobs — `is_valid()` answers the_caching
 | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
 | Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs), Huawei Cloud OBS |
 | Bounds credential validity; header signing regardless  | Oracle Cloud                                                                                                       |
+| Ignored; header signing always uses the current Date   | Upyun                                                                                                              |
 | Rejected; header authentication only                   | Aliyun Drive, Cloudflare                                                                                           |
 | Requests a granted credential's validity window        | Granting operations (subject to the operation's own maximum)                                                       |
 
@@ -3772,7 +3850,7 @@ Every release ships as an ASF source release plus crates.io packages — see[Dow
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
 
-**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Tencent COS, Dropbox, and OneDrive providers. The shared`reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Cloudflare environment and static credentials plus header signing work without a JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute`adapter and is unavailable in bare WASM runtimes. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Tencent COS, Dropbox, OneDrive, and Upyun providers. The shared`reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Cloudflare environment and static credentials plus header signing work without a JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a`CommandExecute` adapter and is unavailable in bare WASM runtimes. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
 
