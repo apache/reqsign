@@ -1,6 +1,6 @@
 # Apache Reqsign™: Build. Sign. Send.
 
-> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, Volcengine, and Vercel services without pulling in full vendor SDKs.
+> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, Vercel, Volcengine, and Yandex Disk services without pulling in full vendor SDKs.
 
 Reqsign keeps explicit per-provider signing protocols while sharing one composition pattern: build the request, load or grant credentials, sign, then send with your own HTTP client.
 
@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-20signing providers
+21signing providers
 
 5granting operations
 
-15WASM-ready providers
+16WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 20 providers. Explicit schemes.
+## 21 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Vercel BlobBearer token](/docs/providers/vercel-blob/)[Vercel ArtifactsBearer token](/docs/providers/vercel-artifacts/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[UpyunUPYUN header signature (MD5-derived HMAC-SHA1)](/docs/providers/upyun/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Vercel BlobBearer token](/docs/providers/vercel-blob/)[Vercel ArtifactsBearer token](/docs/providers/vercel-artifacts/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[UpyunUPYUN header signature (MD5-derived HMAC-SHA1)](/docs/providers/upyun/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)[Yandex DiskOAuth access token](/docs/providers/yandex-disk/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -808,6 +808,7 @@ cargo add http anyhow
 | upyun                                         | Upyun                                        |
 | vercel                                        | Vercel Blob and Artifacts                    |
 | volcengine                                    | Volcengine TOS                               |
+| yandex-disk                                   | Yandex Disk                                  |
 | full                                          | Everything above                             |
 
 The default features include `default-context`, which wires a ready-to-use runtime (Tokio file reading, reqwest HTTP, Tokio command execution), and`default-crypto`, which lets `default_context()` bind RustCrypto when no process-wide provider is installed. Keep `default-context` unless you are[bringing your own runtime](/docs/guides/custom-runtimes/); a custom context must bind a `CryptoProvider` explicitly. Requires Rust 1.87.0+.
@@ -917,6 +918,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [Tencent COS](/docs/providers/tencent-cos/)                                    | tencent::default\_signer(ctx)                                    |
 | [Upyun](/docs/providers/upyun/)                                                | upyun::default\_signer(ctx, bucket)                              |
 | [Volcengine TOS](/docs/providers/volcengine-tos/)                              | volcengine::default\_signer(ctx, region)                         |
+| [Yandex Disk](/docs/providers/yandex-disk/)                                    | yandex\_disk::default\_signer(ctx, access\_token)                |
 
 Aliyun Drive has no documented ambient source; replace its default provider with a static access token or refresh-token provider. OneDrive's default chain is also empty; prepend a refresh-token or static provider explicitly.
 
@@ -1007,6 +1009,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | [GitHub](/docs/providers/github/)                                              | Bearer token                                              | ✓      | —               | —        | ✓    |
 | [Dropbox](/docs/providers/dropbox/)                                            | OAuth 2.0 bearer token                                    | ✓      | —               | —        | ✓    |
 | [OneDrive](/docs/providers/onedrive/)                                          | OAuth 2.0 bearer token                                    | ✓      | —               | —        | ✓    |
+| [Yandex Disk](/docs/providers/yandex-disk/)                                    | OAuth access token                                        | ✓      | —               | —        | ✓    |
 
 CI checks crate, feature, page, and source-path consistency; capability semantics are reviewed by maintainers. Found a mismatch? [Open an issue.](https://github.com/apache/reqsign/issues)
 
@@ -1397,11 +1400,13 @@ Slots you do not provide stay as no-op stubs that error when used — a credenti
 Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
 
 * `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, OneDrive, Upyun** (facade features `aws`, `aws-v4a`,`azure`, `github`, `aliyun`, `aliyun-drive`, `b2`, `cloudflare`, `vercel`,`tencent`, `dropbox`, `onedrive`, `oauth2`, `upyun`)
+* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, OneDrive, Upyun, Yandex Disk** (facade features `aws`,`aws-v4a`, `azure`, `github`, `aliyun`, `aliyun-drive`, `b2`, `cloudflare`,`vercel`, `tencent`, `dropbox`, `onedrive`, `oauth2`, `upyun`, `yandex-disk`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock. GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in bare WASM runtimes.
 
 Cloudflare and Vercel environment, static, and header signing need no JavaScript clock.
+
+Yandex Disk static credentials without an expiry and header signing need no JavaScript clock.
 
 The [provider matrix](/docs/providers/) marks WASM status per provider; treat providers outside this set as unsupported there until the catalog says otherwise.
 
@@ -1701,6 +1706,7 @@ Passing `Some(duration)` does **not** universally mean "presign" — the configu
 * Oracle Cloud bounds credential validity but produces **no** query authentication — header signing is its only mode.
 * Cloudflare has no query authentication at all, so it rejects `expires_in`instead of ignoring it.
 * Vercel Blob and Vercel Artifacts reject `expires_in`; header signing is their only mode.
+* Yandex Disk rejects `expires_in`; header signing is its only mode.
 
 The [provider matrix](/docs/providers/) carries the authoritative header/query flags, and the[expiration contract](/docs/reference/signing-contracts/#expiration-semantics)states the exact semantics.
 
@@ -3857,6 +3863,100 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 ---
 
 ---
+url: https://reqsign.apache.org/docs/providers/yandex-disk/
+---
+# Yandex Disk | Apache Reqsign™
+
+# Yandex Disk
+
+Yandex Disk REST API requests to cloud-api.yandex.net authenticated with an OAuth access token. The API version, resource path, query parameters, upload or download URLs, and storage parameters stay with the caller.
+
+OAuth access token✓ header signing— query / presign✓ WASM[docs.rs/reqsign-yandex-disk ↗](https://docs.rs/reqsign-yandex-disk)
+
+Inserts a sensitive Authorization: OAuth header and leaves the URI and every other header unchanged; expires\_in is rejected because Yandex Disk has no query authentication.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features yandex-disk
+
+
+```
+
+```
+
+use reqsign::{default_context, yandex_disk};
+
+
+// Yandex Disk has no documented automatic token source.
+
+let ctx = default_context();
+
+let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
+
+
+let mut req = http::Request::get(
+
+    "https://cloud-api.yandex.net/v1/disk/resources?path=disk%3A%2Ffolder%2Ffile",
+
+)
+
+.body(())
+
+.unwrap()
+
+.into_parts()
+
+.0;
+
+
+// Adds Authorization: OAuth <token> and leaves the URI unchanged.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+The [Yandex Disk REST API](https://yandex.ru/dev/yandex-360/disk/rest/en/concepts/quickstart)authenticates requests with `Authorization: OAuth <access token>`. The token is issued by Yandex OAuth to an app for a specific user's Disk.
+
+Yandex documents no environment variable, CLI token store, or well-known credential file for these tokens, so Reqsign does not infer one.`default_signer` therefore takes the token explicitly, and`DefaultCredentialProvider::new()` has an empty automatic chain. Compose`StaticCredentialProvider` with `push_front`, or supply a dynamic`ProvideCredential` when the token rotates:
+
+```
+
+use reqsign::{Context, Signer};
+
+use reqsign::yandex_disk::{RequestSigner, StaticCredentialProvider};
+
+
+let provider = StaticCredentialProvider::new("yandex-disk-oauth-token");
+
+let signer = Signer::new(ctx, provider, RequestSigner);
+
+
+```
+
+Token issuance, refresh, revocation, and the permissions attached to the OAuth app stay with the caller. Reqsign does not implement authorization-code, device, or interactive flows. A static token without an expiry is cached for the signer's lifetime; use `StaticCredentialProvider::with_expires_at` when the token has a known fixed lifetime, or a dynamic `ProvideCredential` that returns a fresh credential with an expiry when the token rotates.
+
+## Request ownership[​](#request-ownership "Direct link to Request ownership")
+
+The caller owns the API host, API version, resource path, query parameters,`Accept` and `Content-Type` headers, and any upload or download URL returned by Yandex Disk. The signer inserts a sensitive `Authorization` header and preserves the URI and every other header. There is no query authentication, so signing rejects `expires_in`.
+
+## Credentials
+
+### Default credential chain
+
+This provider has no ambient default source. Supply an explicit credential provider as described on this page.
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [StaticCredentialProvider](https://docs.rs/reqsign-yandex-disk/latest/reqsign%5Fyandex%5Fdisk/struct.StaticCredentialProvider.html) — Static Yandex Disk OAuth access token
+
+---
+
+---
 url: https://reqsign.apache.org/docs/reference/api/
 ---
 # API Reference | Apache Reqsign™
@@ -3895,6 +3995,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-upyun](https://docs.rs/reqsign-upyun)
 * [reqsign-vercel](https://docs.rs/reqsign-vercel)
 * [reqsign-volcengine-tos](https://docs.rs/reqsign-volcengine-tos)
+* [reqsign-yandex-disk](https://docs.rs/reqsign-yandex-disk)
 
 ## Shared token support[​](#shared-token-support "Direct link to Shared token support")
 
@@ -3975,7 +4076,7 @@ The two validity checks have different jobs — `is_valid()` answers the_caching
 | Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs), Huawei Cloud OBS |
 | Bounds credential validity; header signing regardless  | Oracle Cloud                                                                                                       |
 | Ignored; header signing always uses the current Date   | Upyun                                                                                                              |
-| Rejected; header authentication only                   | Aliyun Drive, Cloudflare                                                                                           |
+| Rejected; header authentication only                   | Aliyun Drive, Cloudflare, Yandex Disk                                                                              |
 | Rejected; header signing only                          | Vercel Blob, Vercel Artifacts                                                                                      |
 | Requests a granted credential's validity window        | Granting operations (subject to the operation's own maximum)                                                       |
 
@@ -4028,12 +4129,12 @@ url: https://reqsign.apache.org/docs/reference/versioning-and-targets/
 
 Reqsign publishes many crates on four tracks:
 
-| Track                          | Crates                                                                                                                                                                                       | Scheme                                                                              |
-| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                                                      | Lockstep major (currently 3.x)                                                      |
-| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, reqsign-aliyun-drive, reqsign-github, reqsign-cloudflare, reqsign-onedrive, reqsign-vercel, and later crates introduced after the lockstep line | Independent major, starting at 1.0.0                                                |
-| Reqwest adapter                | reqsign-http-send-reqwest                                                                                                                                                                    | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
-| Facade                         | reqsign                                                                                                                                                                                      | Independent (currently 0.20.x)                                                      |
+| Track                          | Crates                                                                                                                                                                                                            | Scheme                                                                              |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                                                                           | Lockstep major (currently 3.x)                                                      |
+| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, reqsign-aliyun-drive, reqsign-github, reqsign-cloudflare, reqsign-onedrive, reqsign-vercel, reqsign-yandex-disk, and later crates introduced after the lockstep line | Independent major, starting at 1.0.0                                                |
+| Reqwest adapter                | reqsign-http-send-reqwest                                                                                                                                                                                         | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
+| Facade                         | reqsign                                                                                                                                                                                                           | Independent (currently 0.20.x)                                                      |
 
 Lockstep means any `3.x` established service crate composes with any `3.x`core. New provider and shared crates start at `1.0.0` and depend on the current core major, so a `1.x` crate composes with `3.x` core. Mixing core majors fails to compile — the trait definitions are the compatibility boundary, and Cargo enforces it.
 
@@ -4063,7 +4164,7 @@ Every release ships as an ASF source release plus crates.io packages — see[Dow
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
 
-**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, OneDrive, and Upyun providers. The shared`reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Cloudflare and Vercel environment, static, and header signing work without a JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a`CommandExecute` adapter and is unavailable in bare WASM runtimes. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, OneDrive, Upyun, and Yandex Disk providers. The shared `reqsign-oauth2` crate and the`oauth2` facade feature are checked in the same subset. Cloudflare and Vercel environment, static, and header signing work without a JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute` adapter and is unavailable in bare WASM runtimes. Yandex Disk static credentials without an expiry and header signing work without a JavaScript clock. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
 
