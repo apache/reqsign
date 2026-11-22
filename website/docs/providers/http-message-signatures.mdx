@@ -1,0 +1,100 @@
+---
+title: HTTP Message Signatures (RFC 9421)
+description: RFC 9421 request signatures with caller-selected covered components.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="http-message-signatures" />
+
+## Get started
+
+```bash
+cargo add reqsign --features http-message-signatures
+```
+
+RFC 9421 leaves the signature label and covered components to the
+application, so there is no default signer. Assemble the policy explicitly:
+
+```rust
+use http::header::HeaderName;
+use reqsign::http_message_signatures::{
+    Component, Credential, RequestSigner, StaticCredentialProvider,
+};
+use reqsign::{Signer, default_context};
+
+let ctx = default_context();
+let request_signer = RequestSigner::new(
+    "sig1",
+    [
+        Component::Method,
+        Component::Authority,
+        Component::Path,
+        Component::Header(HeaderName::from_static("content-digest")),
+    ],
+)?;
+let signer = Signer::new(
+    ctx,
+    StaticCredentialProvider::new(Credential::hmac_sha256("my-key", b"shared secret")?),
+    request_signer,
+);
+
+let mut parts = http::Request::builder()
+    .method("POST")
+    .uri("https://example.com/upload?part=1")
+    .header("content-digest", "sha-256=:...:")
+    .body(())?
+    .into_parts()
+    .0;
+
+signer.sign(&mut parts, None).await?;
+```
+
+## Scope
+
+This first version signs request heads with HMAC-SHA256 or
+RSASSA-PKCS1-v1_5 SHA-256. It supports ordinary request fields and the
+`@method`, `@target-uri`, `@authority`, `@scheme`, `@path`, and `@query`
+derived components. Percent escapes, query order, and repeated query
+parameters are preserved.
+
+The signer requires an absolute HTTP or HTTPS URI. `@target-uri` is rebuilt from
+the scheme, the authority exactly as written, and the origin-form path/query,
+with an empty path normalized to `/`. A present `Host` header must be unique and
+byte-identical to the URI authority; case-only or explicit/default-port
+differences are rejected because an HTTP/1.1 origin-form receiver could
+reconstruct a different target URI. Origin-form request targets without an
+absolute URI are not supported.
+
+Verification, response signing, multiple signatures in one call, component
+parameters, `@request-target`, and body I/O are out of scope. To cover a body,
+compute a `Content-Digest` before signing and include it in the component list.
+
+HMAC uses raw shared-key bytes. RSA accepts unencrypted PKCS#1 or PKCS#8 PEM
+and uses the context's `CryptoProvider`. The RustCrypto provider supports RSA on
+native targets but returns `ConfigInvalid` for it on `wasm32-unknown-unknown`.
+The HMAC path runs on `wasm32-unknown-unknown` when hosted by a JavaScript
+runtime through wasm-bindgen, such as a browser or Node. Jiff reads the clock
+from that host; a bare WASM runtime without a JavaScript clock is unsupported.
+
+<ProviderDetails id="http-message-signatures" />

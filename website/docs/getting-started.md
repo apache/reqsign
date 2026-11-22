@@ -49,6 +49,7 @@ cargo add http anyhow
 | `aliyun` | Aliyun OSS |
 | `aliyun-drive` | Aliyun Drive Open Platform |
 | `huaweicloud` | Huawei Cloud OBS |
+| `http-message-signatures` | RFC 9421 request signatures |
 | `oauth2` | Shared OAuth 2.0 refresh-token grant |
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
@@ -113,6 +114,7 @@ composes that provider's own credential chain — the
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |
 | [Aliyun Drive](/docs/providers/aliyun-drive/) | `aliyun_drive::default_signer(ctx)` |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | `huaweicloud::default_signer(ctx, bucket)` |
+| [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | `http_message_signatures::RequestSigner::new(label, components)` |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer(ctx)` |
 | [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer(ctx)` |
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |

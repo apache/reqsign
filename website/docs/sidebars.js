@@ -44,6 +44,7 @@ module.exports = {
         "providers/aliyun-oss",
         "providers/aliyun-drive",
         "providers/huaweicloud-obs",
+        "providers/http-message-signatures",
         "providers/oracle",
         "providers/tencent-cos",
         "providers/volcengine-tos",

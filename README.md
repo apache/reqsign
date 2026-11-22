@@ -196,6 +196,7 @@ let signer = aliyun_drive::default_signer(ctx)
   - Dropbox: `reqsign-dropbox`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
+  - HTTP Message Signatures (RFC 9421): `reqsign-http-message-signatures`
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
   - OAuth 2.0 refresh-token support: `reqsign-oauth2`
