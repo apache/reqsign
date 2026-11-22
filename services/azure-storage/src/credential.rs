@@ -34,7 +34,7 @@ pub enum Credential {
     },
     /// SAS (Shared Access Signature) token authentication
     SasToken {
-        /// SAS token.
+        /// SAS query string without the leading `?`.
         token: String,
         /// Optional absolute expiration time for this SAS token.
         expires_at: Option<Timestamp>,
@@ -104,17 +104,23 @@ impl Credential {
     }
 
     /// Create a new credential with SAS token authentication.
+    ///
+    /// `sas_token` is the raw SAS query string. A single leading `?`, as
+    /// commonly present when copying a SAS URL, is accepted and removed.
     pub fn with_sas_token(sas_token: &str) -> Self {
         Self::SasToken {
-            token: sas_token.to_string(),
+            token: normalize_sas_token(sas_token).to_string(),
             expires_at: None,
         }
     }
 
     /// Create a new credential with an expiring SAS token.
+    ///
+    /// Like [`Credential::with_sas_token`], the token may start with a single
+    /// `?`.
     pub fn with_sas_token_expires_at(sas_token: &str, expires_at: Timestamp) -> Self {
         Self::SasToken {
-            token: sas_token.to_string(),
+            token: normalize_sas_token(sas_token).to_string(),
             expires_at: Some(expires_at),
         }
     }
@@ -126,6 +132,10 @@ impl Credential {
             expires_in,
         }
     }
+}
+
+fn normalize_sas_token(sas_token: &str) -> &str {
+    sas_token.strip_prefix('?').unwrap_or(sas_token)
 }
 
 #[cfg(test)]
@@ -154,6 +164,45 @@ mod tests {
         assert!(!credential.is_valid());
         assert!(credential.is_valid_at(now + Duration::from_secs(5)));
         assert!(!credential.is_valid_at(now + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn sas_token_constructors_accept_one_leading_question_mark() {
+        let token = concat!(
+            "sv=test",
+            "&ss=b&srt=c&sp=r",
+            "&se=2030-01-01T00%3A00%3A00Z",
+            "&st=2020-01-01T00%3A00%3A00Z",
+            "&spr=https",
+            "&sig=test%2Bsignature",
+        );
+        let prefixed = format!("?{token}");
+        let expires_at = Timestamp::now() + Duration::from_secs(60);
+        let cases = [
+            (Credential::with_sas_token(token), None),
+            (Credential::with_sas_token(&prefixed), None),
+            (
+                Credential::with_sas_token_expires_at(token, expires_at),
+                Some(expires_at),
+            ),
+            (
+                Credential::with_sas_token_expires_at(&prefixed, expires_at),
+                Some(expires_at),
+            ),
+        ];
+
+        for (credential, expected_expires_at) in cases {
+            match credential {
+                Credential::SasToken {
+                    token: actual,
+                    expires_at,
+                } => {
+                    assert_eq!(actual, token);
+                    assert_eq!(expires_at, expected_expires_at);
+                }
+                other => panic!("expected SAS token, got {other:?}"),
+            }
+        }
     }
 
     #[test]

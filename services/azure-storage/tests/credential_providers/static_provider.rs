@@ -49,7 +49,7 @@ async fn test_static_provider_sas_token() -> anyhow::Result<()> {
     }
 
     let token = required_env("REQSIGN_AZURE_STORAGE_SAS_TOKEN");
-    let provider = StaticCredentialProvider::new_sas_token(token.trim_start_matches('?'));
+    let provider = StaticCredentialProvider::new_sas_token(&token);
     assert_provider_reads_probe(provider, live_context()).await
 }
 

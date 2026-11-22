@@ -17,6 +17,7 @@
 
 use bytes::Bytes;
 use reqsign_azure_storage::{RequestSigner, StaticCredentialProvider};
+use reqsign_core::time::Timestamp;
 use reqsign_core::{OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
 use reqsign_http_send_reqwest::ReqwestHttpSend;
@@ -31,8 +32,61 @@ fn required_env(name: &str) -> String {
 
 fn load_sas_token() -> String {
     required_env("REQSIGN_AZURE_STORAGE_SAS_TOKEN")
-        .trim_start_matches('?')
-        .to_string()
+}
+
+#[tokio::test]
+async fn test_sas_token_accepts_optional_leading_question_mark() -> anyhow::Result<()> {
+    // Synthetic SAS text with percent-encoded values; no real account or signature.
+    const SAS: &str = concat!(
+        "sv=test",
+        "&ss=b&srt=c&sp=r",
+        "&se=2030-01-01T00%3A00%3A00Z",
+        "&st=2020-01-01T00%3A00%3A00Z",
+        "&spr=https",
+        "&sig=test%2Bsignature",
+    );
+    const BASE_URL: &str = "https://account.blob.core.windows.net/container/blob.txt";
+    const QUERY: &str = "comp=list&maxresults=10";
+
+    let urls = [
+        (BASE_URL.to_string(), '?'),
+        (format!("{BASE_URL}?{QUERY}"), '&'),
+    ];
+    for (url, separator) in urls {
+        for token in [SAS.to_string(), format!("?{SAS}")] {
+            let signer = Signer::new(
+                crate::common::test_context(),
+                StaticCredentialProvider::new_sas_token(&token),
+                RequestSigner::new(),
+            );
+            let mut parts = http::Request::get(&url).body(()).unwrap().into_parts().0;
+
+            signer.sign(&mut parts, None).await?;
+
+            assert_eq!(parts.uri.to_string(), format!("{url}{separator}{SAS}"));
+            assert!(!parts.headers.contains_key("authorization"));
+        }
+    }
+
+    // The expiring SAS constructor shares the same normalization.
+    let signer = Signer::new(
+        crate::common::test_context(),
+        StaticCredentialProvider::new_sas_token_expires_at(
+            &format!("?{SAS}"),
+            Timestamp::now() + std::time::Duration::from_secs(3600),
+        ),
+        RequestSigner::new(),
+    );
+    let mut parts = http::Request::get(format!("{BASE_URL}?{QUERY}"))
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0;
+
+    signer.sign(&mut parts, None).await?;
+
+    assert_eq!(parts.uri.to_string(), format!("{BASE_URL}?{QUERY}&{SAS}"));
+    Ok(())
 }
 
 #[tokio::test]
@@ -43,7 +97,16 @@ async fn test_sas_token_signing() -> anyhow::Result<()> {
     }
 
     let url = required_env("REQSIGN_AZURE_STORAGE_PROBE_URL");
-    let sas_token = load_sas_token();
+    let configured_sas_token = load_sas_token();
+    // Ensure this single live request exercises the optional leading delimiter
+    // even when the fixture secret is stored without it. Other live cases keep
+    // the configured environment value unchanged.
+    let sas_token = if configured_sas_token.starts_with('?') {
+        configured_sas_token
+    } else {
+        format!("?{configured_sas_token}")
+    };
+    let expected_fragment = sas_token.strip_prefix('?').unwrap_or(&sas_token);
 
     let ctx = crate::common::test_context()
         .with_file_read(TokioFileRead)
@@ -64,14 +127,16 @@ async fn test_sas_token_signing() -> anyhow::Result<()> {
     // With SAS token, no Authorization header should be added
     assert!(!parts.headers.contains_key("authorization"));
 
-    // Decide separator from the original URL. Checking the signed URI always
-    // sees '?', which incorrectly forces the '&' branch.
+    // Decide the separator from the original URL; the signed URI always has
+    // a '?', so inspecting it would force the '&' branch. Compare the fragment
+    // after removing the credential's single optional leading delimiter.
     let uri = parts.uri.to_string();
-    if url.contains('?') {
-        assert!(uri.contains(&format!("&{sas_token}")) || sas_token.is_empty());
-    } else {
-        assert!(uri.contains(&format!("?{sas_token}")) || sas_token.is_empty());
-    }
+    let separator = if url.contains('?') { '&' } else { '?' };
+    let expected_query = format!("{separator}{expected_fragment}");
+    assert!(
+        uri.contains(&expected_query),
+        "signed URI must append the normalized SAS query fragment"
+    );
 
     let response = ctx
         .http_send(http::Request::from_parts(parts, body))
