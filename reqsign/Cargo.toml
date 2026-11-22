@@ -39,10 +39,12 @@ reqsign-core = { workspace = true }
 reqsign-crypto-rustcrypto = { workspace = true, optional = true }
 
 # Service implementations (optional)
+reqsign-aliyun-drive = { workspace = true, optional = true }
 reqsign-aliyun-oss = { workspace = true, optional = true }
 reqsign-aws-v4 = { workspace = true, optional = true }
 reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
+reqsign-b2 = { workspace = true, optional = true }
 reqsign-dropbox = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
@@ -69,10 +71,12 @@ default-context = [
 
 # Service features
 aliyun = ["dep:reqsign-aliyun-oss"]
+aliyun-drive = ["dep:reqsign-aliyun-drive"]
 aws = ["aws-v4"]
 aws-v4 = ["dep:reqsign-aws-v4"]
 aws-v4a = ["dep:reqsign-aws-v4a"]
 azure = ["dep:reqsign-azure-storage"]
+b2 = ["dep:reqsign-b2"]
 dropbox = ["dep:reqsign-dropbox", "oauth2"]
 google = ["dep:reqsign-google"]
 google-credential-access-boundary-client-side = [
@@ -90,9 +94,11 @@ volcengine = ["dep:reqsign-volcengine-tos"]
 # Full feature set
 full = [
   "aliyun",
+  "aliyun-drive",
   "aws",
   "aws-v4a",
   "azure",
+  "b2",
   "dropbox",
   "google",
   "google-credential-access-boundary-client-side",
@@ -110,6 +116,7 @@ anyhow = "1"
 bytes = "1"
 env_logger = "0.11"
 http = "1"
+serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 
 [[example]]
