@@ -1,6 +1,6 @@
 # Apache Reqsign™: Build. Sign. Send.
 
-> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.
+> Reqsign signs HTTP requests and loads cloud credentials for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine services without pulling in full vendor SDKs.
 
 Reqsign keeps explicit per-provider signing protocols while sharing one composition pattern: build the request, load or grant credentials, sign, then send with your own HTTP client.
 
@@ -8,7 +8,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 
 ### Docs
 
-- [Build. Sign. Send. | Apache Reqsign™](https://reqsign.apache.org/): Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine — without pulling in full vendor SDKs.
+- [Build. Sign. Send. | Apache Reqsign™](https://reqsign.apache.org/): Apache Reqsign™ signs HTTP requests, loads cloud credentials, and grants scoped access for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Aliyun, Huawei Cloud, Oracle, Tencent, and Volcengine — without pulling in full vendor SDKs.
 - [Community | Apache Reqsign™](https://reqsign.apache.org/community/): How Apache Reqsign is governed and where to ask questions, report issues, and contribute.
 - [Download | Apache Reqsign™](https://reqsign.apache.org/download/): Official Apache source releases, signatures, checksums, and crates.io convenience packages for Apache Reqsign.
 - [Architecture | Apache Reqsign™](https://reqsign.apache.org/docs/architecture/): How Reqsign is put together — Context, ProvideCredential, SignRequest, Signer, and Granter — and the three levels at which you can plug in.
@@ -27,6 +27,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 - [AWS SigV4a | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aws-sigv4a/): Asymmetric multi-region signing for AWS, sharing the SigV4 credential chain.
 - [Azure Storage | Apache Reqsign™](https://reqsign.apache.org/docs/providers/azure-storage/): Shared Key, SAS, and Microsoft Entra ID auth for Azure Storage.
 - [Backblaze B2 | Apache Reqsign™](https://reqsign.apache.org/docs/providers/b2/): Native API account authorization and Authorization header signing for Backblaze B2.
+- [Cloudflare | Apache Reqsign™](https://reqsign.apache.org/docs/providers/cloudflare/): Cloudflare API tokens for the KV and D1 request paths, discovered from the environment.
 - [Dropbox | Apache Reqsign™](https://reqsign.apache.org/docs/providers/dropbox/): OAuth 2.0 access tokens and refresh-token exchange for the Dropbox API.
 - [GitHub | Apache Reqsign™](https://reqsign.apache.org/docs/providers/github/): GitHub.com bearer tokens discovered from the environment or the GitHub CLI, with anonymous public fallback.
 - [Google Cloud | Apache Reqsign™](https://reqsign.apache.org/docs/providers/google/): OAuth 2.0 tokens and V4 signed URLs for Google Cloud services.
