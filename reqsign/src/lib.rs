@@ -84,6 +84,9 @@ pub mod tencent;
 #[cfg(feature = "upyun")]
 pub mod upyun;
 
+#[cfg(feature = "vercel")]
+pub mod vercel;
+
 #[cfg(feature = "volcengine")]
 pub mod volcengine;
 

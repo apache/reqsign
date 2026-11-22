@@ -84,17 +84,17 @@ sandboxes. CI verifies this exact set on every commit:
 
 - `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
 - Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS,
-  Aliyun Drive, Backblaze B2, Cloudflare, Tencent COS, Dropbox, OneDrive,
-  Upyun, Yandex Disk** (facade features `aws`, `aws-v4a`, `azure`, `github`,
-  `aliyun`, `aliyun-drive`, `b2`, `cloudflare`, `tencent`, `dropbox`,
-  `onedrive`, `oauth2`, `upyun`, `yandex-disk`)
+  Aliyun Drive, Backblaze B2, Cloudflare, Vercel Blob, Vercel Artifacts,
+  Tencent COS, Dropbox, OneDrive, Upyun, Yandex Disk** (facade features `aws`,
+  `aws-v4a`, `azure`, `github`, `aliyun`, `aliyun-drive`, `b2`, `cloudflare`,
+  `vercel`, `tencent`, `dropbox`, `onedrive`, `oauth2`, `upyun`, `yandex-disk`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock.
 GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in
 bare WASM runtimes.
 
-Cloudflare environment and static credentials plus header signing need no
-JavaScript clock.
+Cloudflare and Vercel environment, static, and header signing need no JavaScript
+clock.
 
 Yandex Disk static credentials without an expiry and header signing need no
 JavaScript clock.

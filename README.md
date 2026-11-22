@@ -203,6 +203,20 @@ let signer = aliyun_drive::default_signer(ctx)
     .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
 ```
 
+#### Vercel Blob and Artifacts
+
+```rust
+use reqsign::{default_context, vercel};
+
+let ctx = default_context();
+
+// Reads BLOB_READ_WRITE_TOKEN.
+let blob_signer = vercel::default_blob_signer(ctx.clone());
+
+// Reads TURBO_TOKEN, then VERCEL_ARTIFACTS_TOKEN.
+let artifacts_signer = vercel::default_artifacts_signer(ctx);
+```
+
 #### Yandex Disk
 
 ```rust
@@ -237,6 +251,7 @@ let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
   - OneDrive: `reqsign-onedrive`
   - Tencent COS: `reqsign-tencent-cos`
   - Upyun: `reqsign-upyun`
+  - Vercel Blob and Artifacts: `reqsign-vercel`
   - Volcengine TOS: `reqsign-volcengine-tos`
   - Yandex Disk: `reqsign-yandex-disk`
 

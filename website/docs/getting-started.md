@@ -58,6 +58,7 @@ cargo add http anyhow
 | `oracle` | Oracle Cloud |
 | `tencent` | Tencent COS |
 | `upyun` | Upyun |
+| `vercel` | Vercel Blob and Artifacts |
 | `volcengine` | Volcengine TOS |
 | `yandex-disk` | Yandex Disk |
 | `full` | Everything above |
@@ -116,6 +117,8 @@ composes that provider's own credential chain — the
 | [Backblaze B2](/docs/providers/b2/) | `b2::default_signer(ctx)` |
 | [Cloudflare](/docs/providers/cloudflare/) | `cloudflare::default_signer(ctx)` |
 | [Dropbox](/docs/providers/dropbox/) | `dropbox::default_signer(ctx)` |
+| [Vercel Blob](/docs/providers/vercel-blob/) | `vercel::default_blob_signer(ctx)` |
+| [Vercel Artifacts](/docs/providers/vercel-artifacts/) | `vercel::default_artifacts_signer(ctx)` |
 | [GitHub](/docs/providers/github/) | `github::default_signer(ctx)` |
 | [OneDrive](/docs/providers/onedrive/) | `onedrive::default_signer(ctx)` |
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |

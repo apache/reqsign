@@ -58,6 +58,7 @@ rustdoc owns signatures.
 - [`reqsign-oracle`](https://docs.rs/reqsign-oracle)
 - [`reqsign-tencent-cos`](https://docs.rs/reqsign-tencent-cos)
 - [`reqsign-upyun`](https://docs.rs/reqsign-upyun)
+- [`reqsign-vercel`](https://docs.rs/reqsign-vercel)
 - [`reqsign-volcengine-tos`](https://docs.rs/reqsign-volcengine-tos)
 - [`reqsign-yandex-disk`](https://docs.rs/reqsign-yandex-disk)
 
