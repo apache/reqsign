@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-11signing providers
+12signing providers
 
 5granting operations
 
-6WASM-ready providers
+7WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 11 providers. Explicit schemes.
+## 12 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[OpenStack KeystoneX-Auth-Token header](/docs/providers/openstack-keystone/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -790,6 +790,7 @@ cargo add http anyhow
 | aws                                           | AWS SigV4 (alias of aws-v4)                  |
 | aws-v4a                                       | AWS SigV4a multi-region signing              |
 | azure                                         | Azure Storage                                |
+| b2                                            | Backblaze B2 Native API                      |
 | dropbox                                       | Dropbox                                      |
 | google                                        | Google Cloud                                 |
 | google-credential-access-boundary-client-side | Client-side CAB downscoping (implies google) |
@@ -892,6 +893,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [AWS SigV4](/docs/providers/aws-sigv4/)                   | aws::default\_signer(ctx, service, region)           |
 | [AWS SigV4a](/docs/providers/aws-sigv4a/)                 | aws::v4a::default\_signer(ctx, service, region\_set) |
 | [Azure Storage](/docs/providers/azure-storage/)           | azure::default\_signer(ctx)                          |
+| [Backblaze B2](/docs/providers/b2/)                       | b2::default\_signer(ctx)                             |
 | [Dropbox](/docs/providers/dropbox/)                       | dropbox::default\_signer(ctx)                        |
 | [Google Cloud](/docs/providers/google/)                   | google::default\_signer(ctx, service)                |
 | [Aliyun OSS](/docs/providers/aliyun-oss/)                 | aliyun::default\_signer(ctx, bucket)                 |
@@ -971,6 +973,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | [AWS SigV4](/docs/providers/aws-sigv4/)                   | AWS Signature Version 4                              | ✓      | ✓               | ✓ 2      | ✓    |
 | [AWS SigV4a](/docs/providers/aws-sigv4a/)                 | AWS Signature Version 4A                             | ✓      | ✓               | —        | ✓    |
 | [Azure Storage](/docs/providers/azure-storage/)           | Shared Key, SAS token, Entra ID bearer token         | ✓      | ✓               | ✓ 1      | ✓    |
+| [Backblaze B2](/docs/providers/b2/)                       | B2 Native API account authorization token            | ✓      | —               | —        | ✓    |
 | [Google Cloud](/docs/providers/google/)                   | OAuth 2.0 bearer token, V4 signed URLs               | ✓      | ✓               | ✓ 2      | —    |
 | [Aliyun OSS](/docs/providers/aliyun-oss/)                 | OSS signature V1, OSS signature V2, OSS signature V4 | ✓      | ✓               | —        | ✓    |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)      | OBS signature                                        | ✓      | ✓               | —        | —    |
@@ -2143,6 +2146,84 @@ This provider can exchange credentials for downscoped ones before any request is
 ---
 
 ---
+url: https://reqsign.apache.org/docs/providers/b2/
+---
+# Backblaze B2 | Apache Reqsign™
+
+# Backblaze B2
+
+Backblaze B2 Native API requests authorized by an account authorization token. S3-compatible requests, bucket and file upload URL creation, download authorization, and storage operations remain the caller's responsibility.
+
+B2 Native API account authorization token✓ header signing— query / presign✓ WASM[docs.rs/reqsign-b2 ↗](https://docs.rs/reqsign-b2)
+
+Inserts the native account authorization token as a sensitive Authorization header. expires\_in raises the required credential validity but does not presign URLs; upload URL and download authorization calls stay with the caller.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --features b2
+
+
+```
+
+```
+
+use reqsign::{b2, default_context};
+
+
+// B2_APPLICATION_KEY_ID and B2_APPLICATION_KEY — resolved by the default chain.
+
+let ctx = default_context();
+
+let signer = b2::default_signer(ctx);
+
+
+let mut req = http::Request::builder()
+
+    .method(http::Method::GET)
+
+    .uri("https://api001.backblazeb2.com/b2api/v4/b2_list_buckets?accountId=account-id")
+
+    .body(())?
+
+    .into_parts()
+
+    .0;
+
+
+// Sign in place, then send with the HTTP client you already use.
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+The default chain exchanges `B2_APPLICATION_KEY_ID` and `B2_APPLICATION_KEY`for a Native API authorization token with the documented v4`b2_authorize_account` endpoint. The credential carries the authorization token, the Native API and download base URLs, and the earlier of the 24-hour token limit and the application key expiration timestamp. `Signer` caches and refreshes it.
+
+Use `AccountAuthorizationCredentialProvider` for an explicit application key, or`StaticCredentialProvider` when the caller already obtained the token and base URLs. Key capabilities and bucket or prefix restrictions are enforced by B2 and remain server-side.
+
+The signer covers Native API requests authorized by the account token. Creating upload URLs, requesting download authorization, and using the S3-compatible API remain the caller's responsibility.
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. B2\_APPLICATION\_KEY\_ID and B2\_APPLICATION\_KEY
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-b2/latest/reqsign%5Fb2/struct.EnvCredentialProvider.html) — B2\_APPLICATION\_KEY\_ID and B2\_APPLICATION\_KEY
+* [StaticCredentialProvider](https://docs.rs/reqsign-b2/latest/reqsign%5Fb2/struct.StaticCredentialProvider.html) — Static authorization token and Native API endpoints
+* [AccountAuthorizationCredentialProvider](https://docs.rs/reqsign-b2/latest/reqsign%5Fb2/struct.AccountAuthorizationCredentialProvider.html) — Explicit application key
+
+---
+
+---
 url: https://reqsign.apache.org/docs/providers/dropbox/
 ---
 # Dropbox | Apache Reqsign™
@@ -2730,6 +2811,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 * [reqsign-aws-v4a](https://docs.rs/reqsign-aws-v4a)
 * [reqsign-aws-core](https://docs.rs/reqsign-aws-core) — shared AWS credential chain and canonicalization
 * [reqsign-azure-storage](https://docs.rs/reqsign-azure-storage)
+* [reqsign-b2](https://docs.rs/reqsign-b2)
 * [reqsign-dropbox](https://docs.rs/reqsign-dropbox)
 * [reqsign-google](https://docs.rs/reqsign-google)
 * [reqsign-aliyun-oss](https://docs.rs/reqsign-aliyun-oss)
@@ -2866,14 +2948,14 @@ url: https://reqsign.apache.org/docs/reference/versioning-and-targets/
 
 Reqsign publishes many crates on four tracks:
 
-| Track                      | Crates                                                                                                                                  | Scheme                                                                              |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Core + existing services   | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio | Lockstep major (currently 3.x)                                                      |
-| Shared OAuth 2.0 + Dropbox | reqsign-oauth2, reqsign-dropbox                                                                                                         | Independent major, starting at 1.x                                                  |
-| Reqwest adapter            | reqsign-http-send-reqwest                                                                                                               | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
-| Facade                     | reqsign                                                                                                                                 | Independent (currently 0.20.x)                                                      |
+| Track                          | Crates                                                                                                                                  | Scheme                                                                              |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Core + existing services       | reqsign-core, reqsign-aws-core, every existing reqsign-<provider> service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio | Lockstep major (currently 3.x)                                                      |
+| New provider and shared crates | reqsign-b2, reqsign-oauth2, reqsign-dropbox, and later crates introduced after the lockstep line                                        | Independent major, starting at 1.0.0                                                |
+| Reqwest adapter                | reqsign-http-send-reqwest                                                                                                               | Independent major (currently 4.x), so reqwest major bumps do not force a core major |
+| Facade                         | reqsign                                                                                                                                 | Independent (currently 0.20.x)                                                      |
 
-Lockstep means any `3.x` service crate composes with any `3.x` core; mixing majors fails to compile — the trait definitions are the compatibility boundary, and Cargo enforces it.
+Lockstep means any `3.x` established service crate composes with any `3.x`core. New provider and shared crates start at `1.0.0` and depend on the current core major, so a `1.x` crate composes with `3.x` core. Mixing core majors fails to compile — the trait definitions are the compatibility boundary, and Cargo enforces it.
 
 Applications should depend on the facade and let it pin compatible components; libraries should depend on `reqsign-core` plus their service crates with major-only bounds, leaving context implementations to the application:
 
@@ -2901,7 +2983,7 @@ Every release ships as an ASF source release plus crates.io packages — see[Dow
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
 
-**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Tencent COS, and Dropbox providers. The shared `reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Dropbox and OAuth2 runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, Aliyun OSS, Backblaze B2, Tencent COS, and Dropbox providers. The shared `reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Dropbox and OAuth2 runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
 
