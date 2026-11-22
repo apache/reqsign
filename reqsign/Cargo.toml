@@ -20,7 +20,7 @@ name = "reqsign"
 version = "0.20.9"
 
 categories = ["authentication", "web-programming::http-client"]
-description = "Signing HTTP requests for AWS, Azure, Dropbox, Google, Huawei, Aliyun, Tencent, Oracle and Vercel services"
+description = "Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Oracle and Vercel services"
 documentation = "https://docs.rs/reqsign"
 keywords = ["http", "requests", "signing", "aws", "azure"]
 
@@ -39,17 +39,24 @@ reqsign-core = { workspace = true }
 reqsign-crypto-rustcrypto = { workspace = true, optional = true }
 
 # Service implementations (optional)
+reqsign-aliyun-drive = { workspace = true, optional = true }
 reqsign-aliyun-oss = { workspace = true, optional = true }
 reqsign-aws-v4 = { workspace = true, optional = true }
 reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
+reqsign-b2 = { workspace = true, optional = true }
+reqsign-cloudflare = { workspace = true, optional = true }
 reqsign-dropbox = { workspace = true, optional = true }
+reqsign-github = { workspace = true, optional = true }
 reqsign-google = { workspace = true, optional = true }
 reqsign-huaweicloud-obs = { workspace = true, optional = true }
+reqsign-http-message-signatures = { workspace = true, optional = true }
 reqsign-oauth2 = { workspace = true, optional = true }
+reqsign-onedrive = { workspace = true, optional = true }
 reqsign-openstack-keystone = { workspace = true, optional = true }
 reqsign-oracle = { workspace = true, optional = true }
 reqsign-tencent-cos = { workspace = true, optional = true }
+reqsign-upyun = { workspace = true, optional = true }
 reqsign-vercel = { workspace = true, optional = true }
 reqsign-volcengine-tos = { workspace = true, optional = true }
 
@@ -69,38 +76,52 @@ default-context = [
 
 # Service features
 aliyun = ["dep:reqsign-aliyun-oss"]
+aliyun-drive = ["dep:reqsign-aliyun-drive"]
 aws = ["aws-v4"]
 aws-v4 = ["dep:reqsign-aws-v4"]
 aws-v4a = ["dep:reqsign-aws-v4a"]
 azure = ["dep:reqsign-azure-storage"]
+b2 = ["dep:reqsign-b2"]
+cloudflare = ["dep:reqsign-cloudflare"]
 dropbox = ["dep:reqsign-dropbox", "oauth2"]
+github = ["dep:reqsign-github"]
 google = ["dep:reqsign-google"]
 google-credential-access-boundary-client-side = [
   "google",
   "reqsign-google/credential-access-boundary-client-side",
 ]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
+http-message-signatures = ["dep:reqsign-http-message-signatures"]
 oauth2 = ["dep:reqsign-oauth2"]
+onedrive = ["dep:reqsign-onedrive", "oauth2"]
 openstack = ["dep:reqsign-openstack-keystone"]
 oracle = ["dep:reqsign-oracle"]
 tencent = ["dep:reqsign-tencent-cos"]
+upyun = ["dep:reqsign-upyun"]
 vercel = ["dep:reqsign-vercel"]
 volcengine = ["dep:reqsign-volcengine-tos"]
 
 # Full feature set
 full = [
   "aliyun",
+  "aliyun-drive",
   "aws",
   "aws-v4a",
   "azure",
+  "b2",
+  "cloudflare",
   "dropbox",
+  "github",
   "google",
   "google-credential-access-boundary-client-side",
+  "http-message-signatures",
   "huaweicloud",
   "oauth2",
+  "onedrive",
   "openstack",
   "oracle",
   "tencent",
+  "upyun",
   "vercel",
   "volcengine",
 ]
@@ -110,6 +131,7 @@ anyhow = "1"
 bytes = "1"
 env_logger = "0.11"
 http = "1"
+serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 
 [[example]]

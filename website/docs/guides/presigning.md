@@ -53,6 +53,12 @@ For AWS this produces `X-Amz-Algorithm`, `X-Amz-Credential`,
 Other providers use their own parameter sets; the shape of the call is
 identical.
 
+OpenStack Swift TempURL is the exception: it signs with a separate account or
+container key rather than the Keystone credential. Use
+`reqsign::openstack::TempUrlSigner` instead of the default signer; see the
+[OpenStack provider](/docs/providers/openstack-keystone/#swift-tempurl) for the
+key, algorithm, and canonical-path contract.
+
 ## `expires_in` is service-specific
 
 Passing `Some(duration)` does **not** universally mean "presign" — the
@@ -66,8 +72,10 @@ interpreted:
   nature; shared keys and bearer tokens sign headers.
 - Oracle Cloud bounds credential validity but produces **no** query
   authentication — header signing is its only mode.
-- Vercel Blob and Vercel Artifacts reject `expires_in`; header signing is
-  their only mode.
+- Cloudflare has no query authentication at all, so it rejects `expires_in`
+  instead of ignoring it.
+- Vercel Blob and Vercel Artifacts reject `expires_in`; header signing is their
+  only mode.
 
 The [provider matrix](/docs/providers/) carries the authoritative
 header/query flags, and the
@@ -85,8 +93,8 @@ states the exact semantics.
   [Credential freshness](/docs/reference/signing-contracts/#credential-freshness).
 - **Anyone with the URL is authorized.** Treat presigned URLs as secrets
   with a TTL: transmit over TLS, scope tightly, keep windows short.
-- **Never re-encode a presigned URI.** The signature covers the encoded
-  bytes; a second encoding pass breaks it. See
+- **Never re-encode a presigned URI.** The signature covers the provider-defined
+  wire representation; a second encoding pass breaks it. See
   [Wire-ready URIs](/docs/reference/signing-contracts/#wire-ready-uris).
 - **Tighter blast radius:** [grant a downscoped
   credential](/docs/guides/granting/) first and presign with that.

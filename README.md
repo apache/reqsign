@@ -150,18 +150,26 @@ let signer = azure::default_signer(ctx)
     ));
 ```
 
-#### Vercel Blob and Artifacts
+#### Cloudflare
 
 ```rust
-use reqsign::{default_context, vercel};
+use reqsign::{cloudflare, default_context};
 
+// Reads CLOUDFLARE_API_TOKEN. The account, database, and namespace IDs stay
+// in the request URL that you build.
 let ctx = default_context();
+let signer = cloudflare::default_signer(ctx);
+```
 
-// Reads BLOB_READ_WRITE_TOKEN.
-let blob_signer = vercel::default_blob_signer(ctx.clone());
+#### GitHub
 
-// Reads TURBO_TOKEN, then VERCEL_ARTIFACTS_TOKEN.
-let artifacts_signer = vercel::default_artifacts_signer(ctx);
+```rust
+use reqsign::{default_context, github};
+
+// Reads GH_TOKEN/GITHUB_TOKEN, then the GitHub CLI, then falls back to
+// anonymous access for public resources.
+let ctx = default_context();
+let signer = github::default_signer(ctx);
 ```
 
 #### Google Cloud
@@ -184,23 +192,55 @@ let ctx = default_context();
 let signer = aliyun::default_signer(ctx, "mybucket");
 ```
 
+#### Aliyun Drive
+
+```rust
+use reqsign::{aliyun_drive, default_context};
+
+// Aliyun Drive has no ambient credential contract. Supply an explicit provider.
+let ctx = default_context();
+let signer = aliyun_drive::default_signer(ctx)
+    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+```
+
+#### Vercel Blob and Artifacts
+
+```rust
+use reqsign::{default_context, vercel};
+
+let ctx = default_context();
+
+// Reads BLOB_READ_WRITE_TOKEN.
+let blob_signer = vercel::default_blob_signer(ctx.clone());
+
+// Reads TURBO_TOKEN, then VERCEL_ARTIFACTS_TOKEN.
+let artifacts_signer = vercel::default_artifacts_signer(ctx);
+```
+
 ## Features
 
 - Pure Rust with minimal dependencies.
 - Tested against official SDKs and services.
 - Supported services
   - Aliyun OSS: `reqsign-aliyun-oss`
+  - Aliyun Drive: `reqsign-aliyun-drive`
   - AWS shared credentials and canonicalization: `reqsign-aws-core`
   - AWS services (SigV4): `reqsign-aws-v4`
   - AWS multi-region services (SigV4a): `reqsign-aws-v4a`
   - Azure Storage services: `reqsign-azure-storage`
+  - Backblaze B2 Native API: `reqsign-b2`
+  - Cloudflare API (KV, D1): `reqsign-cloudflare`
   - Dropbox: `reqsign-dropbox`
+  - GitHub.com: `reqsign-github`
   - Google services: `reqsign-google`
   - Huawei Cloud OBS: `reqsign-huaweicloud-obs`
+  - HTTP Message Signatures (RFC 9421): `reqsign-http-message-signatures`
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
   - OAuth 2.0 refresh-token support: `reqsign-oauth2`
+  - OneDrive: `reqsign-onedrive`
   - Tencent COS: `reqsign-tencent-cos`
+  - Upyun: `reqsign-upyun`
   - Vercel Blob and Artifacts: `reqsign-vercel`
   - Volcengine TOS: `reqsign-volcengine-tos`
 
