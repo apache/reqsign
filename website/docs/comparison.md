@@ -32,7 +32,7 @@ cloud's full SDK, or use a dedicated signing layer.
 | **HTTP client** | Yours — Reqsign mutates a plain `http::request::Parts` and hands it back | Bundled; requests flow through the SDK's own stack |
 | **Retries, pooling, middleware** | Yours | The SDK's |
 | **Dependency footprint** | One signing crate per provider, plus the runtime pieces you opt into | Per-cloud SDK trees, each with its own HTTP and TLS choices |
-| **Multi-cloud** | One composition pattern (`Context` + `ProvideCredential` + `SignRequest`) across nine providers, protocols kept explicit | One SDK per cloud, each with its own idioms |
+| **Multi-cloud** | One composition pattern (`Context` + `ProvideCredential` + `SignRequest`) across providers, protocols kept explicit | One SDK per cloud, each with its own idioms |
 | **Custom runtimes / WASM** | Pluggable I/O via [`Context`](/docs/architecture/#context), `wasm32-unknown-unknown` for a [verified subset](/docs/reference/versioning-and-targets/#targets) | Generally assumes the SDK's supported runtimes |
 | **Beyond signing** | Out of scope by design | Pagination, waiters, service helpers, management APIs |
 

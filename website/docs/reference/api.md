@@ -56,6 +56,7 @@ rustdoc owns signatures.
 - [`reqsign-http-message-signatures`](https://docs.rs/reqsign-http-message-signatures)
 - [`reqsign-openstack-keystone`](https://docs.rs/reqsign-openstack-keystone)
 - [`reqsign-oracle`](https://docs.rs/reqsign-oracle)
+- [`reqsign-seafile`](https://docs.rs/reqsign-seafile)
 - [`reqsign-tencent-cos`](https://docs.rs/reqsign-tencent-cos)
 - [`reqsign-upyun`](https://docs.rs/reqsign-upyun)
 - [`reqsign-vercel`](https://docs.rs/reqsign-vercel)

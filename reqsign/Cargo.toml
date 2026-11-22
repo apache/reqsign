@@ -20,7 +20,7 @@ name = "reqsign"
 version = "0.20.9"
 
 categories = ["authentication", "web-programming::http-client"]
-description = "Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Oracle and Vercel services"
+description = "Signing HTTP requests for AWS, Azure, Cloudflare, Dropbox, GitHub, Google, Huawei, Aliyun, Tencent, Oracle, Vercel and Seafile services"
 documentation = "https://docs.rs/reqsign"
 keywords = ["http", "requests", "signing", "aws", "azure"]
 
@@ -55,6 +55,7 @@ reqsign-oauth2 = { workspace = true, optional = true }
 reqsign-onedrive = { workspace = true, optional = true }
 reqsign-openstack-keystone = { workspace = true, optional = true }
 reqsign-oracle = { workspace = true, optional = true }
+reqsign-seafile = { workspace = true, optional = true }
 reqsign-tencent-cos = { workspace = true, optional = true }
 reqsign-upyun = { workspace = true, optional = true }
 reqsign-vercel = { workspace = true, optional = true }
@@ -97,6 +98,7 @@ oauth2 = ["dep:reqsign-oauth2"]
 onedrive = ["dep:reqsign-onedrive", "oauth2"]
 openstack = ["dep:reqsign-openstack-keystone"]
 oracle = ["dep:reqsign-oracle"]
+seafile = ["dep:reqsign-seafile"]
 tencent = ["dep:reqsign-tencent-cos"]
 upyun = ["dep:reqsign-upyun"]
 vercel = ["dep:reqsign-vercel"]
@@ -122,6 +124,7 @@ full = [
   "onedrive",
   "openstack",
   "oracle",
+  "seafile",
   "tencent",
   "upyun",
   "vercel",

@@ -57,6 +57,7 @@ module.exports = {
         "providers/dropbox",
         "providers/onedrive",
         "providers/yandex-disk",
+        "providers/seafile",
       ],
     },
     {

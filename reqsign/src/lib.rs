@@ -78,6 +78,9 @@ pub mod openstack;
 #[cfg(feature = "oracle")]
 pub mod oracle;
 
+#[cfg(feature = "seafile")]
+pub mod seafile;
+
 #[cfg(feature = "tencent")]
 pub mod tencent;
 

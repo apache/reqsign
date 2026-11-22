@@ -249,6 +249,7 @@ let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
   - Oracle Cloud: `reqsign-oracle`
   - OAuth 2.0 refresh-token support: `reqsign-oauth2`
   - OneDrive: `reqsign-onedrive`
+  - Seafile: `reqsign-seafile`
   - Tencent COS: `reqsign-tencent-cos`
   - Upyun: `reqsign-upyun`
   - Vercel Blob and Artifacts: `reqsign-vercel`

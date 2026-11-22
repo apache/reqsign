@@ -56,6 +56,7 @@ cargo add http anyhow
 | `onedrive` | OneDrive |
 | `openstack` | OpenStack Keystone |
 | `oracle` | Oracle Cloud |
+| `seafile` | Seafile |
 | `tencent` | Tencent COS |
 | `upyun` | Upyun |
 | `vercel` | Vercel Blob and Artifacts |
@@ -128,6 +129,7 @@ composes that provider's own credential chain — the
 | [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | `http_message_signatures::RequestSigner::new(label, components)` |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer(ctx)` |
 | [Oracle Cloud](/docs/providers/oracle/) | `oracle::default_signer(ctx)` |
+| [Seafile](/docs/providers/seafile/) | `seafile::default_signer(ctx)` |
 | [Tencent COS](/docs/providers/tencent-cos/) | `tencent::default_signer(ctx)` |
 | [Upyun](/docs/providers/upyun/) | `upyun::default_signer(ctx, bucket)` |
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
