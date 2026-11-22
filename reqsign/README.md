@@ -185,6 +185,10 @@ let signer = openstack::default_signer(ctx.clone());
 use reqsign::tencent;
 let signer = tencent::default_signer(ctx.clone());
 
+// Upyun
+use reqsign::upyun;
+let signer = upyun::default_signer(ctx.clone());
+
 // Oracle Cloud
 use reqsign::oracle;
 let signer = oracle::default_signer(ctx);
@@ -204,6 +208,7 @@ let signer = oracle::default_signer(ctx);
 - `openstack`: Enable OpenStack Keystone support
 - `oracle`: Enable Oracle Cloud support
 - `tencent`: Enable Tencent COS support
+- `upyun`: Enable Upyun support
 
 ## WASM Support
 

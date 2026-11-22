@@ -185,6 +185,7 @@ let signer = aliyun::default_signer(ctx, "mybucket");
   - OpenStack Keystone: `reqsign-openstack-keystone`
   - Oracle Cloud: `reqsign-oracle`
   - Tencent COS: `reqsign-tencent-cos`
+  - Upyun: `reqsign-upyun`
   - Volcengine TOS: `reqsign-volcengine-tos`
 
 ## Contributing

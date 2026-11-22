@@ -44,6 +44,7 @@ module.exports = {
         "providers/huaweicloud-obs",
         "providers/oracle",
         "providers/tencent-cos",
+        "providers/upyun",
         "providers/volcengine-tos",
         "providers/openstack-keystone",
       ],

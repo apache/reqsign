@@ -1,0 +1,62 @@
+---
+title: Upyun
+description: UPYUN header signatures for Upyun Storage REST API requests.
+---
+
+{/*
+ Licensed to the Apache Software Foundation (ASF) under one
+ or more contributor license agreements.  See the NOTICE file
+ distributed with this work for additional information
+ regarding copyright ownership.  The ASF licenses this file
+ to you under the Apache License, Version 2.0 (the
+ "License"); you may not use this file except in compliance
+ with the License.  You may obtain a copy of the License at
+
+   http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing,
+ software distributed under the License is distributed on an
+ "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ KIND, either express or implied.  See the License for the
+ specific language governing permissions and limitations
+ under the License.
+*/}
+
+import ProviderFacts from "@site/src/components/providers/ProviderFacts";
+import ProviderDetails from "@site/src/components/providers/ProviderDetails";
+
+<ProviderFacts id="upyun" />
+
+## Get started
+
+```bash
+cargo add reqsign --features upyun
+```
+
+```rust
+use reqsign::upyun::StaticCredentialProvider;
+use reqsign::{default_context, upyun};
+
+let ctx = default_context();
+let signer = upyun::default_signer(ctx)
+    .with_credential_provider(StaticCredentialProvider::new("operator", "password"));
+
+// Build the request and choose the bucket endpoint in the caller.
+let mut req = http::Request::put("https://v0.api.upyun.com/bucket/object.txt")
+    .body(())?
+    .into_parts()
+    .0;
+
+signer.sign(&mut req, None).await?;
+```
+
+The default chain reads the active session from the Upyun CLI (`upx`)
+configuration at `~/.upx.cfg`. Install `StaticCredentialProvider` directly, or
+push it in front of the default chain, when credentials come from application
+configuration.
+
+The signer adds `Date` and `Authorization`. Set `Content-MD5` before signing
+when the request body should participate in the signature. It does not create
+presigned URLs or token credentials, and it does not send the request.
+
+<ProviderDetails id="upyun" />
