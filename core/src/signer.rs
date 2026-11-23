@@ -105,6 +105,11 @@ impl<K: SigningCredential> Signer<K> {
     /// select query authentication. The configured service signer and credential type
     /// determine how it is interpreted.
     ///
+    /// Use [`Signer::credential_for`] and [`Signer::sign_with_credential`] when the
+    /// credential supplies routing metadata for the request URI. This method may refresh
+    /// the cached credential, which can differ from the credential that determined the
+    /// URI.
+    ///
     /// Cached credentials must be fresh according to [`SigningCredential::is_valid`]
     /// and usable through [`SignRequest::required_valid_until`]. A refreshed credential
     /// only needs to satisfy the exact operation deadline. Credential refresh is
@@ -117,19 +122,22 @@ impl<K: SigningCredential> Signer<K> {
         req: &mut http::request::Parts,
         expires_in: Option<Duration>,
     ) -> Result<()> {
-        let credential = self.credential(expires_in).await?;
-
-        let mut candidate = req.clone();
-        self.builder
-            .sign_request_dyn(&self.ctx, &mut candidate, Some(&credential), expires_in)
-            .await?;
-
-        req.uri = candidate.uri;
-        req.headers = candidate.headers;
-        Ok(())
+        let credential = self.credential_for(expires_in).await?;
+        self.sign_candidate(req, &credential, expires_in).await
     }
 
-    async fn credential(&self, expires_in: Option<Duration>) -> Result<K> {
+    /// Load or reuse the credential for a requested signing operation.
+    ///
+    /// This uses the same serialized credential cache and validity checks as
+    /// [`Signer::sign`]. It may load a new credential or refresh a stale cached one,
+    /// and installs a successful result in the shared cache. The returned credential
+    /// is usable through [`SigningCredential::is_valid_at`] for the timestamp returned
+    /// by [`SignRequest::required_valid_until`] with `expires_in`.
+    ///
+    /// Call this before building a request URI when the service credential carries
+    /// routing metadata, then pass the same credential to
+    /// [`Signer::sign_with_credential`] so the URI and its authentication agree.
+    pub async fn credential_for(&self, expires_in: Option<Duration>) -> Result<K> {
         let mut cached = self.credential.lock().await;
         if let Some(credential) = cached.as_ref() {
             if credential.is_valid()
@@ -155,6 +163,61 @@ impl<K: SigningCredential> Signer<K> {
         drop(cached);
 
         self.validate_refreshed_credential(credential, expires_in)
+    }
+
+    /// Sign a wire-ready request head with a caller-supplied credential.
+    ///
+    /// Use this with a credential obtained from [`Signer::credential_for`] when that
+    /// credential determined the request URI. Normal [`Signer::sign`] may refresh the
+    /// cached credential in between, so the supplied credential must be the one used to
+    /// build the URI. This method never loads, refreshes, or stores a credential, and it
+    /// does not modify the signer's credential cache.
+    ///
+    /// Only exact usability at the operation deadline from
+    /// [`SignRequest::required_valid_until`] is required; the credential's proactive
+    /// cache freshness does not matter. If [`SigningCredential::is_valid_at`] rejects
+    /// that deadline, this method returns `CredentialInvalid` and leaves `req`
+    /// unchanged. Call [`Signer::credential_for`] again and rebuild the URI if the
+    /// credential must be replaced.
+    ///
+    /// The request URI and `expires_in` follow the same contracts as [`Signer::sign`].
+    /// If signing returns an error, `req` is unchanged. On success, only `req.uri` and
+    /// `req.headers` may change; the method, version, and extensions retain their input
+    /// values.
+    pub async fn sign_with_credential(
+        &self,
+        req: &mut http::request::Parts,
+        credential: &K,
+        expires_in: Option<Duration>,
+    ) -> Result<()> {
+        let required_until = self
+            .builder
+            .required_valid_until_dyn(credential, expires_in);
+        if !credential.is_valid_at(required_until) {
+            return Err(Error::credential_invalid(
+                "supplied signing credential expires before the requested operation deadline",
+            )
+            .with_context(format!("credential_type: {}", type_name::<K>()))
+            .with_context(format!("required_valid_until: {required_until}")));
+        }
+
+        self.sign_candidate(req, credential, expires_in).await
+    }
+
+    async fn sign_candidate(
+        &self,
+        req: &mut http::request::Parts,
+        credential: &K,
+        expires_in: Option<Duration>,
+    ) -> Result<()> {
+        let mut candidate = req.clone();
+        self.builder
+            .sign_request_dyn(&self.ctx, &mut candidate, Some(credential), expires_in)
+            .await?;
+
+        req.uri = candidate.uri;
+        req.headers = candidate.headers;
+        Ok(())
     }
 
     fn validate_refreshed_credential(
@@ -1000,7 +1063,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn sign_future_remains_send_on_native_targets() {
+    fn signer_futures_remain_send_on_native_targets() {
         fn assert_send<T: Send>(_future: T) {}
 
         let signer = Signer::new(
@@ -1009,6 +1072,9 @@ mod tests {
             MutatingSigner { fail: false },
         );
         let mut request = request_parts();
+        let credential = TestCredential;
+        assert_send(signer.credential_for(None));
+        assert_send(signer.sign_with_credential(&mut request, &credential, None));
         assert_send(signer.sign(&mut request, None));
     }
 
@@ -1062,6 +1128,137 @@ mod tests {
         }
 
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn explicit_signing_uses_supplied_credential_without_loading_or_caching() {
+        let base = Timestamp::from_second(1_100).expect("timestamp must be valid");
+        let credential = ExpiringCredential {
+            generation: 1,
+            fresh: true,
+            expires_at: base + Duration::from_secs(30),
+            required_until: base + Duration::from_secs(10),
+        };
+        let (provider, calls) =
+            SequenceProvider::new(std::iter::empty::<Result<Option<ExpiringCredential>>>());
+        let signer = Signer::new(Context::new(), provider, OperationSigner);
+        let mut parts = request_parts();
+        let original_uri = parts.uri.clone();
+
+        futures::executor::block_on(signer.sign_with_credential(&mut parts, &credential, None))
+            .expect("supplied credential must sign without loading");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            parts.headers.get("x-credential-generation"),
+            Some(&HeaderValue::from_static("1"))
+        );
+        assert_eq!(parts.uri, original_uri);
+        assert!(
+            signer
+                .credential
+                .try_lock()
+                .expect("credential cache must be unlocked")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn explicit_signing_after_refresh_uses_original_routing_credential() {
+        let base = Timestamp::from_second(1_200).expect("timestamp must be valid");
+        let original = ExpiringCredential {
+            generation: 1,
+            fresh: false,
+            expires_at: base + Duration::from_secs(30),
+            required_until: base + Duration::from_secs(10),
+        };
+        let refreshed = ExpiringCredential {
+            generation: 2,
+            fresh: true,
+            expires_at: base + Duration::from_secs(30),
+            required_until: base + Duration::from_secs(10),
+        };
+        let (provider, calls) =
+            SequenceProvider::new([Ok(Some(original.clone())), Ok(Some(refreshed))]);
+        let signer = Signer::new(Context::new(), provider, OperationSigner);
+
+        let routing_credential = futures::executor::block_on(signer.credential_for(None))
+            .expect("initial usable credential must load");
+        assert_eq!(routing_credential.generation, 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let signing_credential = futures::executor::block_on(signer.credential_for(None))
+            .expect("non-fresh cached credential must refresh");
+        assert_eq!(signing_credential.generation, 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        let routing_uri: http::Uri = format!(
+            "https://example.com/generation/{}",
+            routing_credential.generation
+        )
+        .parse()
+        .expect("routing URI must parse");
+        let mut parts = request_parts();
+        parts.uri = routing_uri.clone();
+
+        futures::executor::block_on(signer.sign_with_credential(
+            &mut parts,
+            &routing_credential,
+            None,
+        ))
+        .expect("original credential must remain usable for its routing URI");
+
+        assert_eq!(
+            parts.headers.get("x-credential-generation"),
+            Some(&HeaderValue::from_static("1"))
+        );
+        assert_eq!(parts.uri, routing_uri);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        let mut later = request_parts();
+        futures::executor::block_on(signer.sign(&mut later, None))
+            .expect("refreshed credential must remain installed in the cache");
+        assert_eq!(
+            later.headers.get("x-credential-generation"),
+            Some(&HeaderValue::from_static("2"))
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn explicit_signing_rejects_credential_without_operation_validity() {
+        let base = Timestamp::from_second(1_300).expect("timestamp must be valid");
+        let credential = ExpiringCredential {
+            generation: 1,
+            fresh: true,
+            expires_at: base + Duration::from_secs(10),
+            required_until: base + Duration::from_secs(10),
+        };
+        let (provider, calls) =
+            SequenceProvider::new(std::iter::empty::<Result<Option<ExpiringCredential>>>());
+        let signer = Signer::new(Context::new(), provider, OperationSigner);
+        let mut parts = request_parts();
+        let original = parts.clone();
+
+        let error =
+            futures::executor::block_on(signer.sign_with_credential(&mut parts, &credential, None))
+                .expect_err("credential at the exact deadline must be rejected");
+
+        assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+        assert!(
+            error
+                .to_string()
+                .contains("expires before the requested operation deadline")
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(parts.method, original.method);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.version, original.version);
+        assert_eq!(parts.headers, original.headers);
+        assert_eq!(
+            parts.extensions.get::<Extension>(),
+            original.extensions.get::<Extension>()
+        );
     }
 
     #[test]
