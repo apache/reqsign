@@ -152,8 +152,18 @@ The helper:
   `trustpub_only` enabled.
 
 The protected job authenticates ownership and audits the complete publish plan
-before any write. A Trusted Publisher cannot be configured for a name that does
-not exist on crates.io yet, so every missing name is resolved by the bootstrap
+before any write. The plan job records the reviewed missing and placeholder
+names for the dispatch commit and uploads that plan as an artifact. The
+protected job only reconciles crates in the reviewed writable set, and only
+first-publishes names in the reviewed missing subset. It stops before any write
+if another planned crate became missing after the preview; rerun the helper for
+a new preview. The preview's `trustpub_only` column is public metadata and
+cannot show the configured publisher; the protected job performs authenticated
+publisher verification or creation and any required configuration after
+approval.
+
+A Trusted Publisher cannot be configured for a name that does not exist on
+crates.io yet, so every missing name is resolved by the bootstrap
 first: the `0.0.0` reservation is what makes the publisher configuration
 possible. Existing crates must already have exactly one Trusted Publisher with:
 

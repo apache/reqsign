@@ -39,24 +39,44 @@ Trusted Publishing cannot create the first version of a crate.
 `bootstrap.py` reserves new names and audits the complete publish plan:
 
 - `discover` reports missing names, existing `0.0.0` placeholders, and
-  established crates without credentials, and writes a Markdown plan to
+  established crates with their public `trustpub_only` status. With
+  `--plan-output`, it also writes the reviewed plan for the dispatch commit,
+  including the exact publish plan, the missing-name set, and the writable set
+  of missing and placeholder crates. It writes a Markdown summary to
   `GITHUB_STEP_SUMMARY` when running in GitHub Actions.
-- `apply` authenticates every existing crate before any write, publishes a
-  dependency-free `0.0.0` namespace reservation for each missing name,
-  configures the exact `apache/reqsign`, `release.yml`, `release`
-  Trusted Publisher, enables `trustpub_only`, performs a final authenticated
-  audit, and writes the applied result to `GITHUB_STEP_SUMMARY`.
+- `apply --plan-file` requires that reviewed plan for the same dispatch commit.
+  It authenticates every existing crate before any write, rejects names that
+  became missing after the review, publishes a dependency-free `0.0.0` namespace
+  reservation only for reviewed missing names, verifies or creates the exact
+  `apache/reqsign`, `release.yml`, `release` Trusted Publisher, enables
+  `trustpub_only`, performs a final authenticated audit, and writes the applied
+  result to `GITHUB_STEP_SUMMARY`. Reviewed missing names that already became
+  valid placeholders are reconciled without another publish. Established crates
+  are never modified.
 - `verify` checks public crate metadata and `trustpub_only`. It cannot verify
   ownership or the exact Trusted Publisher because those APIs require
   authentication.
 
+Crate classification uses the complete version history, including yanked
+versions: a crate with any non-`0.0.0` version is established even when its
+public `max_version` is `0.0.0`.
+
 `bootstrap_rust_crates.yml` runs `discover` in an unprivileged `plan` job first
-so reviewers can inspect the exact crate list in the workflow summary before
-approving the protected `rust-bootstrap` job. The protected `rust-bootstrap` job
-still re-reads the checked-out commit and audits the complete plan before any
-write, including when no names are missing. It never changes an established
-crate. Existing crates must be migrated independently before the workflow can
-succeed.
+so reviewers can inspect the exact crate list and missing-name set in the
+workflow summary before approving the protected `rust-bootstrap` job. The plan
+job uploads that reviewed plan as an artifact. The protected job downloads it,
+checks that it belongs to the same dispatch commit and publish plan, and audits
+the complete plan before any write, including when no names are missing. It only
+reconciles crates in the reviewed writable set, and first-publishes only the
+reviewed missing names. If a planned crate that was not reviewed as missing
+disappears after the preview, the job stops before any write and requires a new
+preview. It never changes an established crate. Existing crates must be
+migrated independently before the workflow can succeed.
+
+The preview's `trustpub_only` value is public crates.io metadata. It does not
+prove which Trusted Publisher is configured. The protected job performs the
+authenticated publisher verification or creation and any required configuration
+only after approval.
 
 Published crate metadata may still reference the former repository URL or the
 former project name in a `0.0.0` placeholder description. The audit accepts that
