@@ -183,10 +183,69 @@ Passing one shared context lets several signers and granters reuse the same
 HTTP client and credential adapters instead of building a new runtime per
 call.
 
-`Signer::with_context` also changed: replacing the context now creates an
-isolated, empty credential cache, because a different context can resolve a
-different identity. To replace only the signing operation and keep the cached
-credential, use `with_request_signer` or `with_credential_granter`.
+## Replacing a signer's `Context` starts an empty credential cache
+
+:::warning A silent cache miss, not a compile error
+`Signer::with_context` now gives the returned signer a new, empty credential
+cache. In 0.20 it kept the previous cache; in 0.21 the next `sign` has to load
+a credential again. Code that replaces the context per request still compiles,
+but each request's signer starts empty and repeats the provider's work, such
+as IMDS or STS calls, OAuth 2.0 or Entra ID token requests, or reads of local
+credential files.
+:::
+
+This isolation is intentional. A `Context` carries `Env`, `FileRead`,
+`CommandExecute`, and `HttpSend`, so replacing it can change which identity or
+endpoint a provider resolves. Reusing the previous cache could sign with a
+credential that belongs to a different identity. Each signer owns its cache,
+and replacing the context replaces that cache as well.
+
+The common regression is replacing the context inside the request path, often
+to inject a per-operation HTTP transport:
+
+```rust
+// Compiles, but each request starts with an empty cache and reloads.
+let signer = self
+    .signer
+    .clone()
+    .with_context(self.ctx.clone().with_http_send(transport.clone()));
+signer.sign(&mut parts, expires_in).await?;
+```
+
+Bind the context and build the signer once, when the client or connection
+scope is created:
+
+```rust
+let signer = Signer::new(
+    ctx.with_http_send(transport),
+    provider,
+    request_signer,
+);
+
+// Then reuse that signer for every request in the same scope. Clones share
+// its context and credential cache.
+signer.sign(&mut parts, expires_in).await?;
+```
+
+If the application has several stable transports or credential scopes, keep
+one signer for each and reuse it, for example in a map keyed by transport or
+scope. Replace the context when the identity or transport genuinely changes,
+not on every request just to inject the current transport.
+
+The other builders follow the same cache boundary:
+
+- `with_request_signer` replaces only the signing operation and keeps the
+  context, provider, and cached credential.
+- `with_credential_provider` and `with_context` both start an empty cache,
+  because either can change the credential or the identity that resolves it.
+- `Signer::new` and `default_signer` also start with an empty cache. Construct
+  them once per stable credential scope instead of once per request.
+- For `Granter`, `with_credential_granter` keeps the cached source credential,
+  while `with_context` and `with_credential_provider` start an empty cache.
+
+When the provider returns static credentials or caches them itself, the
+repeated load can be cheap. That is a provider property, not a guarantee from
+`Signer`.
 
 ## Minimum supported Rust version is 1.87
 
