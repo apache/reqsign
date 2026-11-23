@@ -143,15 +143,31 @@ The helper:
 
 - Requires a clean checkout at the current `apache/reqsign` `main`.
 - Verifies that the `rust-bootstrap` environment has required reviewers.
-- Dispatches the input-free `bootstrap_rust_crates.yml` workflow.
+- Dispatches the input-free `bootstrap_rust_crates.yml` workflow, which first
+  previews the crate bootstrap plan in the workflow run summary before the
+  protected `rust-bootstrap` job requests PMC approval.
 - Resolves the exact run, verifies its `headSha`, and waits for completion.
 - Blocks while the protected environment awaits PMC approval.
 - Verifies publicly that every crate in the checked publish plan exists and has
   `trustpub_only` enabled.
 
 The protected job authenticates ownership and audits the complete publish plan
-before any write. A Trusted Publisher cannot be configured for a name that does
-not exist on crates.io yet, so every missing name is resolved by the bootstrap
+before any write. The plan job records the reviewed missing and placeholder
+names for the dispatch commit, uploads them as an attempt-scoped artifact, and
+records the artifact ID in the plan summary. The protected job downloads exactly
+that ID, not an artifact by name. Re-running only the protected job reuses the
+successful plan job's output; re-running the plan creates a separate artifact
+and summary. A missing, invalid, expired, or unavailable artifact stops before
+`apply`. The protected job only reconciles crates in the reviewed writable set,
+and only first-publishes names in the reviewed missing subset. It stops before
+any write if another planned crate became missing after the preview; rerun the
+helper for a new preview. The preview's `trustpub_only` column is public
+metadata and cannot show the configured publisher; the protected job performs
+authenticated publisher verification or creation and any required configuration
+after approval.
+
+A Trusted Publisher cannot be configured for a name that does not exist on
+crates.io yet, so every missing name is resolved by the bootstrap
 first: the `0.0.0` reservation is what makes the publisher configuration
 possible. Existing crates must already have exactly one Trusted Publisher with:
 

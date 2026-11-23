@@ -29,7 +29,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Preview Bootstrap Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      # Bind the protected job to this exact upload, not an artifact name.
+      artifact-id: ${{ steps.upload-plan.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Validate main dispatch
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - name: Discover crates.io bootstrap plan
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: >-
+          python3 .github/scripts/release_rust/bootstrap.py discover
+          --plan-output bootstrap-plan.json
+      - name: Upload approved bootstrap plan
+        id: upload-plan
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bootstrap-plan-${{ github.run_attempt }}
+          path: bootstrap-plan.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record approved plan artifact
+        env:
+          ARTIFACT_ID: ${{ steps.upload-plan.outputs.artifact-id }}
+        run: |
+          test -n "${ARTIFACT_ID}"
+          printf '\nApproved plan artifact ID: `%s` (bound to the protected job).\n' \
+            "${ARTIFACT_ID}" >> "${GITHUB_STEP_SUMMARY}"
+
   bootstrap:
+    name: Bootstrap Crates
+    needs: plan
     runs-on: ubuntu-24.04
     environment: rust-bootstrap
     steps:
@@ -44,7 +86,28 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
+      - name: Validate approved plan artifact ID
+        env:
+          ARTIFACT_ID: ${{ needs.plan.outputs.artifact-id }}
+        run: |
+          # An empty artifact-ids input makes the download action fetch every artifact.
+          case "${ARTIFACT_ID}" in
+            "" | *[!0-9]*)
+              echo "approved plan artifact ID is missing or invalid: '${ARTIFACT_ID}'" >&2
+              exit 1
+              ;;
+          esac
+      - name: Download approved bootstrap plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.artifact-id }}
+          path: bootstrap-plan
+      - name: Verify approved plan download
+        run: test -s bootstrap-plan/bootstrap-plan.json
       - name: Audit and bootstrap crates.io packages
         env:
           CARGO_REGISTRY_BOOTSTRAP_TOKEN: ${{ secrets.CARGO_REGISTRY_BOOTSTRAP_TOKEN }}
-        run: python3 .github/scripts/release_rust/bootstrap.py apply
+          GITHUB_SHA: ${{ github.sha }}
+        run: >-
+          python3 .github/scripts/release_rust/bootstrap.py apply
+          --plan-file bootstrap-plan/bootstrap-plan.json
