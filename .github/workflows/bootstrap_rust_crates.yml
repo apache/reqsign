@@ -29,7 +29,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  plan:
+    name: Preview Bootstrap Plan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Validate main dispatch
+        run: |
+          test "${GITHUB_REF}" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - name: Discover crates.io bootstrap plan
+        run: python3 .github/scripts/release_rust/bootstrap.py discover
+
   bootstrap:
+    name: Bootstrap Crates
+    needs: plan
     runs-on: ubuntu-24.04
     environment: rust-bootstrap
     steps:

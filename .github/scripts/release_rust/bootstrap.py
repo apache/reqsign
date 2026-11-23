@@ -24,6 +24,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 from plan import PROJECT_DIR, plan
@@ -252,11 +253,193 @@ def wait_for_crate(client, name, *, ready=False):
         time.sleep(2)
 
 
-def reconcile(name, client):
+@dataclass(frozen=True)
+class CrateStatus:
+    name: str
+    planned_version: str
+    current_version: str | None
+    trustpub_only: bool | None
+
+    @property
+    def kind(self) -> str:
+        if self.current_version is None:
+            return "missing"
+        if self.current_version == PLACEHOLDER_VERSION:
+            return "placeholder"
+        return "established"
+
+
+def discover(packages, client) -> list[CrateStatus]:
+    statuses = []
+    for package in packages:
+        metadata = client.get_crate(package.name)
+        if metadata is not None:
+            validate_crate(package.name, metadata)
+        statuses.append(
+            CrateStatus(
+                name=package.name,
+                planned_version=package.version,
+                current_version=metadata["max_version"] if metadata else None,
+                trustpub_only=metadata["trustpub_only"] if metadata else None,
+            )
+        )
+    return statuses
+
+
+def format_discover_report(statuses: list[CrateStatus]) -> str:
+    missing = [status for status in statuses if status.kind == "missing"]
+    placeholders = [status for status in statuses if status.kind == "placeholder"]
+    established = [status for status in statuses if status.kind == "established"]
+
+    lines = [
+        f"New crates to publish ({PLACEHOLDER_VERSION} placeholder): {len(missing)}"
+    ]
+    for status in missing:
+        lines.append(f"  - {status.name} (planned {status.planned_version})")
+
+    lines.append(f"Existing {PLACEHOLDER_VERSION} placeholders: {len(placeholders)}")
+    for status in placeholders:
+        flag = "true" if status.trustpub_only else "false"
+        lines.append(
+            f"  - {status.name} (planned {status.planned_version}, trustpub_only={flag})"
+        )
+
+    lines.append(f"Established crates (audited only): {len(established)}")
+    for status in established:
+        flag = "true" if status.trustpub_only else "false"
+        lines.append(
+            f"  - {status.name} (crates.io {status.current_version}, "
+            f"planned {status.planned_version}, trustpub_only={flag})"
+        )
+
+    return "\n".join(lines) + "\n"
+
+
+def format_discover_summary(statuses: list[CrateStatus]) -> str:
+    missing = [status for status in statuses if status.kind == "missing"]
+    placeholders = [status for status in statuses if status.kind == "placeholder"]
+    established = [status for status in statuses if status.kind == "established"]
+    unrestricted_established = [
+        status for status in established if status.trustpub_only is not True
+    ]
+
+    lines = [
+        "## Bootstrap Plan",
+        "",
+        f"- Workspace publish plan: **{len(statuses)}** crates",
+        f"- New crates to publish (`{PLACEHOLDER_VERSION}` placeholder, irreversible): **{len(missing)}**",
+        f"- Existing `{PLACEHOLDER_VERSION}` placeholders to reconcile/verify: **{len(placeholders)}**",
+        f"- Established crates (audited only, never modified): **{len(established)}**",
+    ]
+
+    if unrestricted_established:
+        names = ", ".join(f"`{status.name}`" for status in unrestricted_established)
+        lines.extend(
+            [
+                "",
+                "> [!WARNING]",
+                f"> Established crates without `trustpub_only` enabled will fail the authenticated audit: {names}",
+            ]
+        )
+
+    lines.extend(
+        ["", f"### New crates to publish (`{PLACEHOLDER_VERSION}` placeholder)", ""]
+    )
+    if missing:
+        lines.extend(
+            [
+                "| Crate | Planned version | Action |",
+                "| --- | --- | --- |",
+            ]
+        )
+        for status in missing:
+            lines.append(
+                f"| `{status.name}` | `{status.planned_version}` | "
+                f"Publish `{PLACEHOLDER_VERSION}` placeholder, configure Trusted Publisher, enable `trustpub_only` |"
+            )
+    else:
+        lines.append(
+            "None. No new crate names will be published; the protected job will "
+            "only reconcile placeholders and run the authenticated audit."
+        )
+
+    if placeholders:
+        lines.extend(["", f"### Existing `{PLACEHOLDER_VERSION}` placeholders", ""])
+        lines.extend(
+            [
+                "| Crate | Planned version | `trustpub_only` | Action |",
+                "| --- | --- | --- | --- |",
+            ]
+        )
+        for status in placeholders:
+            flag = "true" if status.trustpub_only else "false"
+            action = (
+                "Verify Trusted Publisher"
+                if status.trustpub_only
+                else "Configure Trusted Publisher, enable `trustpub_only`"
+            )
+            lines.append(
+                f"| `{status.name}` | `{status.planned_version}` | `{flag}` | {action} |"
+            )
+
+    if established:
+        lines.extend(
+            [
+                "",
+                "<details>",
+                f"<summary>Established crates ({len(established)}, audited only)</summary>",
+                "",
+                "| Crate | Crates.io version | Planned version | `trustpub_only` |",
+                "| --- | --- | --- | --- |",
+            ]
+        )
+        for status in established:
+            flag = "true" if status.trustpub_only else "false"
+            lines.append(
+                f"| `{status.name}` | `{status.current_version}` | "
+                f"`{status.planned_version}` | `{flag}` |"
+            )
+        lines.extend(["", "</details>"])
+
+    return "\n".join(lines) + "\n"
+
+
+def format_apply_summary(total: int, results: list[tuple[str, list[str]]]) -> str:
+    lines = [
+        "## Bootstrap Result",
+        "",
+        f"Verified all **{total}** crates on crates.io.",
+    ]
+    if results:
+        lines.extend(
+            [
+                "",
+                "| Crate | Result |",
+                "| --- | --- |",
+            ]
+        )
+        for name, actions in results:
+            result = ", ".join(actions) if actions else "already ready"
+            lines.append(f"| `{name}` | {result} |")
+    else:
+        lines.extend(["", "No missing crates or placeholders required changes."])
+    return "\n".join(lines) + "\n"
+
+
+def write_step_summary(markdown: str) -> None:
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with Path(summary_path).open("a", encoding="utf-8") as handle:
+            handle.write(markdown)
+
+
+def reconcile(name, client) -> list[str]:
+    actions = []
     metadata = client.get_crate(name)
     if metadata is None:
         publish_placeholder(name, client.token)
         metadata = wait_for_crate(client, name)
+        actions.append(f"published `{PLACEHOLDER_VERSION}`")
     validate_crate(name, metadata)
     assert metadata["max_version"] == PLACEHOLDER_VERSION, (
         f"{name} is an established crate; bootstrap must not modify it"
@@ -264,43 +447,53 @@ def reconcile(name, client):
     configs = client.list_github_configs(name)
     if not configs:
         configs = [client.create_github_config(name)]
+        actions.append("configured Trusted Publisher")
     validate_publisher(name, configs)
     if metadata["trustpub_only"] is not True:
         updated = client.set_trustpub_only(name)
         assert updated["trustpub_only"] is True, f"failed to restrict {name}"
+        actions.append("enabled `trustpub_only`")
     wait_for_crate(client, name, ready=True)
     print(f"{name}: bootstrapped", flush=True)
+    return actions
 
 
-def apply(names, client):
+def apply(names, client) -> list[tuple[str, list[str]]]:
     candidates = audit(names, client)
     print(f"Authenticated audit passed; bootstrap candidates: {candidates}", flush=True)
-    for name in candidates:
-        reconcile(name, client)
+    results = [(name, reconcile(name, client)) for name in candidates]
     audit(names, client, ready=True)
     print(f"Verified all {len(names)} crates", flush=True)
+    return results
 
 
 def main():
     parser = argparse.ArgumentParser(description="Bootstrap reqsign crates.io names.")
     parser.add_argument("command", choices=("discover", "apply", "verify"))
     command = parser.parse_args().command
-    names = [package.name for package in plan()]
+    packages = plan()
     if command == "apply":
-        apply(names, CratesIoClient(os.environ["CARGO_REGISTRY_BOOTSTRAP_TOKEN"]))
+        names = [package.name for package in packages]
+        results = apply(
+            names, CratesIoClient(os.environ["CARGO_REGISTRY_BOOTSTRAP_TOKEN"])
+        )
+        write_step_summary(format_apply_summary(len(names), results))
         return
     client = CratesIoClient()
-    for name in names:
-        metadata = client.get_crate(name)
+    if command == "discover":
+        statuses = discover(packages, client)
+        print(format_discover_report(statuses), end="", flush=True)
+        write_step_summary(format_discover_summary(statuses))
+        return
+    for package in packages:
+        metadata = client.get_crate(package.name)
         if metadata is not None:
-            validate_crate(name, metadata)
-        if command == "verify":
-            assert metadata is not None, f"{name} does not exist on crates.io"
-            assert metadata["trustpub_only"] is True, (
-                f"{name} does not require Trusted Publishing"
-            )
-        version = metadata["max_version"] if metadata else "missing"
-        print(f"{name}: {version}")
+            validate_crate(package.name, metadata)
+        assert metadata is not None, f"{package.name} does not exist on crates.io"
+        assert metadata["trustpub_only"] is True, (
+            f"{package.name} does not require Trusted Publishing"
+        )
+        print(f"{package.name}: {metadata['max_version']}")
 
 
 if __name__ == "__main__":

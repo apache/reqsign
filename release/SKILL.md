@@ -143,7 +143,9 @@ The helper:
 
 - Requires a clean checkout at the current `apache/reqsign` `main`.
 - Verifies that the `rust-bootstrap` environment has required reviewers.
-- Dispatches the input-free `bootstrap_rust_crates.yml` workflow.
+- Dispatches the input-free `bootstrap_rust_crates.yml` workflow, which first
+  previews the crate bootstrap plan in the workflow run summary before the
+  protected `rust-bootstrap` job requests PMC approval.
 - Resolves the exact run, verifies its `headSha`, and waits for completion.
 - Blocks while the protected environment awaits PMC approval.
 - Verifies publicly that every crate in the checked publish plan exists and has

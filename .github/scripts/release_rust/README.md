@@ -38,20 +38,25 @@ Live publishing requires the `release` GitHub environment and a job with
 Trusted Publishing cannot create the first version of a crate.
 `bootstrap.py` reserves new names and audits the complete publish plan:
 
-- `discover` reports missing names and existing `0.0.0` placeholders without
-  credentials.
+- `discover` reports missing names, existing `0.0.0` placeholders, and
+  established crates without credentials, and writes a Markdown plan to
+  `GITHUB_STEP_SUMMARY` when running in GitHub Actions.
 - `apply` authenticates every existing crate before any write, publishes a
   dependency-free `0.0.0` namespace reservation for each missing name,
   configures the exact `apache/reqsign`, `release.yml`, `release`
-  Trusted Publisher, enables `trustpub_only`, and performs a final authenticated
-  audit.
+  Trusted Publisher, enables `trustpub_only`, performs a final authenticated
+  audit, and writes the applied result to `GITHUB_STEP_SUMMARY`.
 - `verify` checks public crate metadata and `trustpub_only`. It cannot verify
   ownership or the exact Trusted Publisher because those APIs require
   authentication.
 
-The protected `rust-bootstrap` job audits the complete plan before any write,
-including when no names are missing. It never changes an established crate. Existing crates must be migrated independently before the
-workflow can succeed.
+`bootstrap_rust_crates.yml` runs `discover` in an unprivileged `plan` job first
+so reviewers can inspect the exact crate list in the workflow summary before
+approving the protected `rust-bootstrap` job. The protected `rust-bootstrap` job
+still re-reads the checked-out commit and audits the complete plan before any
+write, including when no names are missing. It never changes an established
+crate. Existing crates must be migrated independently before the workflow can
+succeed.
 
 Published crate metadata may still reference the former repository URL or the
 former project name in a `0.0.0` placeholder description. The audit accepts that
