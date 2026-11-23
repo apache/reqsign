@@ -64,14 +64,18 @@ public `max_version` is `0.0.0`.
 `bootstrap_rust_crates.yml` runs `discover` in an unprivileged `plan` job first
 so reviewers can inspect the exact crate list and missing-name set in the
 workflow summary before approving the protected `rust-bootstrap` job. The plan
-job uploads that reviewed plan as an artifact. The protected job downloads it,
-checks that it belongs to the same dispatch commit and publish plan, and audits
-the complete plan before any write, including when no names are missing. It only
-reconciles crates in the reviewed writable set, and first-publishes only the
-reviewed missing names. If a planned crate that was not reviewed as missing
-disappears after the preview, the job stops before any write and requires a new
-preview. It never changes an established crate. Existing crates must be
-migrated independently before the workflow can succeed.
+job uploads that reviewed plan as an attempt-scoped artifact and records the
+upload's artifact ID in the workflow summary. The protected job downloads
+exactly that ID, not an artifact by name. Re-running only the protected job
+reuses the successful plan job's output; re-running the plan creates a separate
+artifact and summary instead of replacing the approved artifact. A missing,
+invalid, expired, or unavailable artifact fails before `apply`. The protected
+job audits the complete plan before any write, including when no names are
+missing. It only reconciles crates in the reviewed writable set, and
+first-publishes only the reviewed missing names. If a planned crate that was not
+reviewed as missing disappears after the preview, the job stops before any write
+and requires a new preview. It never changes an established crate. Existing
+crates must be migrated independently before the workflow can succeed.
 
 The preview's `trustpub_only` value is public crates.io metadata. It does not
 prove which Trusted Publisher is configured. The protected job performs the

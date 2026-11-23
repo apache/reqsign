@@ -35,6 +35,7 @@ from bootstrap import (
     approved_plan,
     discover,
     format_apply_summary,
+    format_discover_report,
     format_discover_summary,
     load_approved_plan,
     validate_approved_plan,
@@ -365,6 +366,36 @@ class BootstrapTest(unittest.TestCase):
         self.assertIn("including yanked versions", summary)
         self.assertIn("after approval", summary)
 
+    def test_discover_displays_all_yanked_history_without_placeholder_sentinel(self):
+        registry = FakeRegistry(
+            {
+                "all-yanked": crate_payload(
+                    "all-yanked",
+                    PLACEHOLDER_VERSION,
+                    versions=(("0.5.0", True), ("1.0.0", True)),
+                    max_version=PLACEHOLDER_VERSION,
+                )
+            },
+            {},
+        )
+        statuses = discover([Package("all-yanked", "2.0.0")], registry)
+        self.assertEqual(statuses[0].kind, "established")
+        self.assertEqual(
+            statuses[0].display_version,
+            "all versions yanked (0.5.0, 1.0.0)",
+        )
+        summary = format_discover_summary(statuses)
+        self.assertIn(
+            "| `all-yanked` | all versions yanked (0.5.0, 1.0.0) | "
+            "`2.0.0` | `true` |",
+            summary,
+        )
+        self.assertNotIn("| `all-yanked` | 0.0.0 |", summary)
+        report = format_discover_report(statuses)
+        self.assertIn(
+            "crates.io all versions yanked (0.5.0, 1.0.0)", report
+        )
+
     def test_discover_summary_handles_no_missing_crates_and_rejects_foreign_crate(self):
         registry = FakeRegistry(
             {"established": crate_payload("established", "3.0.0")}, {}
@@ -398,6 +429,16 @@ class BootstrapTest(unittest.TestCase):
             discover(
                 [Package("empty", "1.0.0")],
                 FakeRegistry({"empty": empty}, {}),
+            )
+
+        missing_max = crate_payload("missing-max")
+        missing_max["crate"]["max_version"] = "2.0.0"
+        with self.assertRaisesRegex(
+            AssertionError, "absent from its version history"
+        ):
+            discover(
+                [Package("missing-max", "2.0.0")],
+                FakeRegistry({"missing-max": missing_max}, {}),
             )
 
     def test_apply_rejects_an_unapproved_newly_missing_name_before_writes(self):

@@ -131,6 +131,14 @@ def validate_crate(name, metadata, versions):
         assert isinstance(version.get("yanked"), bool), (
             f"{name} has malformed yanked metadata"
         )
+    version_numbers = {version["num"] for version in versions}
+    if (
+        metadata["max_version"] is None
+        or metadata["max_version"] not in version_numbers
+    ):
+        assert all(version["yanked"] for version in versions), (
+            f"{name} reports a public max version absent from its version history"
+        )
     if all(version["num"] == PLACEHOLDER_VERSION for version in versions):
         assert metadata["description"] in {
             PLACEHOLDER_DESCRIPTION,
@@ -300,6 +308,17 @@ class CrateStatus:
             return "placeholder"
         return "established"
 
+    @property
+    def display_version(self) -> str:
+        if self.current_version is not None and self.current_version in self.versions:
+            return self.current_version
+        if not self.versions:
+            return "none"
+        shown = ", ".join(self.versions[:5])
+        if len(self.versions) > 5:
+            shown += f", ... ({len(self.versions)} versions)"
+        return f"all versions yanked ({shown})"
+
 
 def discover(packages, client) -> list[CrateStatus]:
     statuses = []
@@ -351,9 +370,8 @@ def format_discover_report(statuses: list[CrateStatus]) -> str:
     lines.append(f"Established crates (audited only): {len(established)}")
     for status in established:
         flag = "true" if status.trustpub_only else "false"
-        current = status.current_version or "none (all versions yanked)"
         lines.append(
-            f"  - {status.name} (crates.io {current}, "
+            f"  - {status.name} (crates.io {status.display_version}, "
             f"planned {status.planned_version}, trustpub_only={flag})"
         )
 
@@ -465,9 +483,8 @@ def format_discover_summary(statuses: list[CrateStatus]) -> str:
         )
         for status in established:
             flag = "true" if status.trustpub_only else "false"
-            current = status.current_version or "none (all versions yanked)"
             lines.append(
-                f"| `{status.name}` | {current} | "
+                f"| `{status.name}` | {status.display_version} | "
                 f"`{status.planned_version}` | `{flag}` |"
             )
         lines.extend(["", "</details>"])
