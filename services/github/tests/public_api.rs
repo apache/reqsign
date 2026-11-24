@@ -522,14 +522,7 @@ async fn gh_cli_malformed_active_user_is_reported_without_leaking() {
         Vec::new(),
         b"\n".to_vec(),
         b" \n".to_vec(),
-        b"--help\n".to_vec(),
-        b"bad user\n".to_vec(),
         b"first\nsecond\n".to_vec(),
-        b"...\n".to_vec(),
-        b"@@@\n".to_vec(),
-        b"_-_\n".to_vec(),
-        b"user-\n".to_vec(),
-        b"user/name\n".to_vec(),
         b"nonutf8\xff".to_vec(),
     ];
 
@@ -549,77 +542,120 @@ async fn gh_cli_malformed_active_user_is_reported_without_leaking() {
         let debug = format!("{error:?}");
         assert!(!debug.contains("first"));
         assert!(!debug.contains("second"));
-        assert!(!debug.contains("bad user"));
         assert!(!debug.contains("nonutf8"));
     }
 }
 
 #[tokio::test]
-async fn gh_cli_accepts_enterprise_managed_account_names() -> Result<()> {
-    let command =
-        MockCommandExecute::sequence([user_result("mona-cat_octo"), token_result(CLI_TOKEN)]);
-    let ctx = context_with_command(HashMap::new(), command.clone());
+async fn gh_cli_accepts_supported_account_names() -> Result<()> {
+    let names = vec![
+        // Ordinary GitHub.com usernames, including mixed case.
+        "a".to_string(),
+        "octocat".to_string(),
+        "The-Octocat".to_string(),
+        // Enterprise managed user names are `IDP-USERNAME_SHORT-CODE`, and
+        // casing from the identity provider is preserved.
+        "mona-cat_octo".to_string(),
+        "The-Octocat_octo".to_string(),
+        // The setup user form is `SHORT-CODE_admin`, including data residency
+        // shortcodes.
+        "octo_admin".to_string(),
+        "2abvd19d_admin".to_string(),
+        // Minimum username and minimum shortcode.
+        "abc_abc".to_string(),
+        // Longest ordinary username (39 characters) and a managed name that is
+        // exactly 39 characters including the shortcode.
+        "a".repeat(39),
+        format!("{}_octo", "a".repeat(34)),
+    ];
 
-    let parts = sign_parts(DefaultCredentialProvider::new(), ctx, request()).await?;
+    for name in names {
+        let command = MockCommandExecute::sequence([user_result(&name), token_result(CLI_TOKEN)]);
+        let ctx = context_with_command(HashMap::new(), command.clone());
 
-    assert_eq!(
-        parts.headers[AUTHORIZATION].to_str().expect("header text"),
-        format!("Bearer {CLI_TOKEN}")
-    );
-    assert_eq!(
-        command.calls(),
-        vec![
-            RecordedCommand {
-                program: "gh".to_string(),
-                args: ["config", "get", "user", "--host", GITHUB_HOST]
-                    .map(str::to_string)
-                    .to_vec(),
-            },
-            RecordedCommand {
-                program: "gh".to_string(),
-                args: [
-                    "auth",
-                    "token",
-                    "--hostname",
-                    GITHUB_HOST,
-                    "--user",
-                    "mona-cat_octo",
-                    "--no-refresh",
-                ]
-                .map(str::to_string)
-                .to_vec(),
-            },
-        ]
-    );
+        let parts = sign_parts(DefaultCredentialProvider::new(), ctx, request()).await?;
+
+        assert_eq!(
+            parts.headers[AUTHORIZATION].to_str().expect("header text"),
+            format!("Bearer {CLI_TOKEN}"),
+            "name {name}"
+        );
+        let calls = command.calls();
+        assert_eq!(calls.len(), 2, "name {name}");
+        assert_eq!(
+            calls[1].args,
+            [
+                "auth",
+                "token",
+                "--hostname",
+                GITHUB_HOST,
+                "--user",
+                name.as_str(),
+                "--no-refresh",
+            ]
+            .map(str::to_string)
+            .to_vec(),
+            "name {name}"
+        );
+    }
     Ok(())
 }
 
 #[tokio::test]
-async fn gh_cli_invalid_account_names_fail_before_the_token_query() {
-    let cases = [
-        b"...\n".to_vec(),
-        b"@@@\n".to_vec(),
-        b"_-_\n".to_vec(),
-        b"user-\n".to_vec(),
-        b"user/name\n".to_vec(),
+async fn gh_cli_rejects_unsupported_account_names() {
+    let names = vec![
+        // Punctuation-only and embedded whitespace.
+        "...".to_string(),
+        "@@@".to_string(),
+        "_-_".to_string(),
+        "--help".to_string(),
+        "bad user".to_string(),
+        // Normalization rules: no leading or trailing dash, no consecutive
+        // dashes, and no characters other than alphanumerics and dashes.
+        "-The-Octocat".to_string(),
+        "The-Octocat-".to_string(),
+        "The--Octocat".to_string(),
+        "The--Octocat_octo".to_string(),
+        "mona/the-octocat".to_string(),
+        // Managed name rules: one underscore, a username before it, and a
+        // three-to-eight character alphanumeric shortcode after it.
+        "_octo".to_string(),
+        "mona-cat_".to_string(),
+        "mona-cat_oc".to_string(),
+        "mona-cat_123456789".to_string(),
+        "mona_cat_octo".to_string(),
+        "octo_admin_extra".to_string(),
+        // 40 characters, both as an ordinary username and as a managed name.
+        "a".repeat(40),
+        format!("{}_octo", "a".repeat(35)),
     ];
 
-    for stdout in cases {
+    for name in names {
         // A single mock result proves the provider stops before `gh auth
         // token`: a token query would find no result and panic.
         let command = MockCommandExecute::sequence([MockCommandResult::Output(CommandOutput {
             status: 0,
-            stdout,
+            stdout: format!("{name}\n").into_bytes(),
             stderr: Vec::new(),
         })]);
         let ctx = context_with_command(HashMap::new(), command.clone());
-        let error = GhCliCredentialProvider::new()
-            .provide_credential(&ctx)
-            .await
-            .expect_err("an invalid account name must fail");
+        let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+        let original = stale_request();
+        let mut parts = original.clone();
 
-        assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
-        assert_eq!(command.calls().len(), 1);
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("an unsupported account name must not become anonymous access");
+
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid, "name {name}");
+        assert_eq!(command.calls().len(), 1, "name {name}");
+        assert_eq!(parts.uri, original.uri, "name {name}");
+        assert_eq!(parts.headers, original.headers, "name {name}");
+        assert!(
+            !format!("{error:?}").contains(&name),
+            "the error leaked the account name {name}"
+        );
     }
 }
 
@@ -637,6 +673,7 @@ async fn default_provider_rejects_config_lookup_failure_without_mutating_the_req
         MockCommandExecute::sequence([user_result("--help")]),
         MockCommandExecute::sequence([user_result("bad user")]),
         MockCommandExecute::sequence([user_result("...")]),
+        MockCommandExecute::sequence([user_result("The--Octocat_octo")]),
     ];
 
     for command in cases {

@@ -19,9 +19,12 @@ reaches the explicit anonymous slot: no command executor, a missing `gh`
 executable, a confirmed no-account response (`gh config get user` exiting with
 status 1 and exactly `could not find key "user"` on stderr with no stdout),
 or an explicit `no oauth token found` response. A successful account lookup
-that is not a usable GitHub account name is malformed, not an absent account;
-account names use ASCII letters, digits, hyphens, and underscores, and begin
-and end with a letter or digit. Add a `CommandExecute` adapter to
+that is not a usable GitHub account name is malformed, not an absent account.
+Ordinary names use ASCII letters, digits, and single hyphens, begin and end
+with a letter or digit, and are at most 39 characters; enterprise managed
+names append `_` and the three-to-eight character alphanumeric enterprise
+shortcode to a normalized username (`mona-cat_octo`), including the setup
+user's `octo_admin` form. Add a `CommandExecute` adapter to
 the context to enable GitHub CLI discovery; without one, that slot yields no
 credential.
 

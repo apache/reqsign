@@ -60,14 +60,18 @@ pub(crate) const GH_CLI_MIN_VERSION: &str = "2.40.0";
 /// account. A typed command execution failure other than a missing executable,
 /// any other exit status, and successful output that is not a usable GitHub
 /// account name yield a redacted error instead of silently falling back.
-/// Account names use ASCII letters, digits, hyphens, and underscores, begin
-/// and end with a letter or digit, and include enterprise managed names such
-/// as `mona-cat_octo`. After an active user is found, only an explicit
-/// `no oauth token found` response yields no credential. Command execution
-/// errors, empty or whitespace-only successful stdout, malformed output, and
-/// other stored-token failures such as an expired or revoked token yield a
-/// redacted error. Errors never contain the token, the output, or the CLI's
-/// stderr.
+/// Usable names are ordinary GitHub.com usernames and enterprise managed user
+/// names. Ordinary usernames contain ASCII letters, digits, and single
+/// hyphens, begin and end with a letter or digit, and are at most 39
+/// characters. Managed user names append `_` and the enterprise's three-to-
+/// eight character alphanumeric shortcode to a normalized username
+/// (`IDP-USERNAME_SHORT-CODE`, for example `mona-cat_octo`), which also covers
+/// the setup user's `octo_admin` form; letter casing is preserved. After an
+/// active user is found, only an explicit `no oauth token found` response
+/// yields no credential. Command execution errors, empty or whitespace-only
+/// successful stdout, malformed output, and other stored-token failures such
+/// as an expired or revoked token yield a redacted error. Errors never contain
+/// the token, the output, or the CLI's stderr.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GhCliCredentialProvider;
 
@@ -240,23 +244,50 @@ fn command_confirms_missing_user(output: &CommandOutput) -> bool {
 
 /// Check whether successful output is a usable GitHub account name.
 ///
-/// GitHub.com account names and GitHub Enterprise managed account names
-/// (`shortcode_username`) contain ASCII letters, digits, hyphens, and
-/// underscores, and begin and end with a letter or digit. Punctuation-only or
-/// otherwise malformed output such as `--help`, `...`, `bad user`, or
-/// `user/name` is not an account name and must not reach the token query.
+/// GitHub.com usernames are normalized usernames: ASCII letters, digits, and
+/// single hyphens, beginning and ending with a letter or digit, at most 39
+/// characters, with casing preserved. Enterprise managed user names append an
+/// underscore and the enterprise shortcode to a normalized username
+/// (`IDP-USERNAME_SHORT-CODE`, for example `mona-cat_octo`), and the setup
+/// user's name is `SHORT-CODE_admin` (for example `octo_admin`), which fits
+/// the same shape because the shortcode is a three-to-eight character
+/// alphanumeric string. Anything else, including `--help`, `...`, `bad user`,
+/// `user/name`, `The--Octocat_octo`, `mona-cat_`, or `mona_cat_octo`, is not
+/// an account name and must not reach the token query.
 fn is_usable_account_name(user: &str) -> bool {
-    let mut bytes = user.bytes();
-    let Some(first) = bytes.next() else {
+    if user.len() > 39 {
         return false;
-    };
-    let last = user.bytes().next_back().unwrap_or(first);
+    }
 
-    first.is_ascii_alphanumeric()
-        && last.is_ascii_alphanumeric()
-        && user
+    match user.split_once('_') {
+        Some((username, shortcode)) => is_normalized_username(username) && is_shortcode(shortcode),
+        None => is_normalized_username(user),
+    }
+}
+
+/// Check whether a normalized GitHub username is valid.
+///
+/// GitHub normalizes unsupported characters in external identifiers to `-`
+/// and only accepts usernames that contain alphanumeric characters and
+/// dashes, do not begin or end with a dash, do not contain two consecutive
+/// dashes, and do not exceed 39 characters. Letter casing is preserved.
+fn is_normalized_username(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 39
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && !name.contains("--")
+        && name
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+/// Check whether the enterprise shortcode shape is valid.
+///
+/// An enterprise shortcode is an alphanumeric string between three and eight
+/// characters. The setup user's `_admin` suffix has the same shape.
+fn is_shortcode(shortcode: &str) -> bool {
+    (3..=8).contains(&shortcode.len()) && shortcode.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
 fn could_not_read_account_error() -> Error {

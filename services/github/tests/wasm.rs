@@ -106,17 +106,13 @@ impl CommandExecute for WrongStatusMissingAccountCommandExecute {
     }
 }
 
-/// A command adapter that reports punctuation-only account output.
+/// A command adapter that returns one fixed output for every call.
 #[derive(Debug)]
-struct InvalidAccountNameCommandExecute;
+struct FixedOutputCommandExecute(CommandOutput);
 
-impl CommandExecute for InvalidAccountNameCommandExecute {
+impl CommandExecute for FixedOutputCommandExecute {
     async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
-        Ok(CommandOutput {
-            status: 0,
-            stdout: b"...\n".to_vec(),
-            stderr: Vec::new(),
-        })
+        Ok(self.0.clone())
     }
 }
 
@@ -334,48 +330,74 @@ async fn malformed_account_success_does_not_fall_back() {
 }
 
 #[wasm_bindgen_test]
-async fn enterprise_managed_account_name_signs_with_the_stored_token() {
-    let command = SequenceCommandExecute::new([
-        CommandOutput {
-            status: 0,
-            stdout: b"mona-cat_octo\n".to_vec(),
-            stderr: Vec::new(),
-        },
-        CommandOutput {
-            status: 0,
-            stdout: b"wasm-cli-token\n".to_vec(),
-            stderr: Vec::new(),
-        },
-    ]);
-    let signer = Signer::new(
-        Context::new().with_command_execute(command),
-        DefaultCredentialProvider::new(),
-        RequestSigner,
-    );
-    let mut parts = http::Request::get("https://api.github.com/repos/apache/reqsign")
-        .body(())
-        .expect("request must build")
-        .into_parts()
-        .0;
+async fn supported_account_names_sign_with_the_stored_token() {
+    // Ordinary usernames keep their mixed case, and managed names append the
+    // enterprise shortcode; the setup user form fits the same shape.
+    for name in [
+        "The-Octocat",
+        "mona-cat_octo",
+        "The-Octocat_octo",
+        "octo_admin",
+    ] {
+        let command = SequenceCommandExecute::new([
+            CommandOutput {
+                status: 0,
+                stdout: format!("{name}\n").into_bytes(),
+                stderr: Vec::new(),
+            },
+            CommandOutput {
+                status: 0,
+                stdout: b"wasm-cli-token\n".to_vec(),
+                stderr: Vec::new(),
+            },
+        ]);
+        let signer = Signer::new(
+            Context::new().with_command_execute(command),
+            DefaultCredentialProvider::new(),
+            RequestSigner,
+        );
+        let mut parts = http::Request::get("https://api.github.com/repos/apache/reqsign")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
 
-    signer
-        .sign(&mut parts, None)
-        .await
-        .expect("a supported enterprise managed name must reach the token query");
+        signer
+            .sign(&mut parts, None)
+            .await
+            .unwrap_or_else(|error| panic!("name {name} must reach the token query: {error}"));
 
-    assert_eq!(
-        parts.headers[http::header::AUTHORIZATION],
-        "Bearer wasm-cli-token"
-    );
-    assert!(parts.headers[http::header::AUTHORIZATION].is_sensitive());
+        assert_eq!(
+            parts.headers[http::header::AUTHORIZATION],
+            "Bearer wasm-cli-token",
+            "name {name}"
+        );
+        assert!(parts.headers[http::header::AUTHORIZATION].is_sensitive());
+    }
 }
 
 #[wasm_bindgen_test]
-async fn wrong_status_or_invalid_account_name_does_not_fall_back() {
-    for ctx in [
+async fn unconfirmed_or_invalid_account_responses_do_not_fall_back() {
+    let contexts = [
         Context::new().with_command_execute(WrongStatusMissingAccountCommandExecute),
-        Context::new().with_command_execute(InvalidAccountNameCommandExecute),
-    ] {
+        Context::new().with_command_execute(FixedOutputCommandExecute(CommandOutput {
+            status: 0,
+            stdout: b"...\n".to_vec(),
+            stderr: Vec::new(),
+        })),
+        Context::new().with_command_execute(FixedOutputCommandExecute(CommandOutput {
+            status: 0,
+            stdout: b"The--Octocat_octo\n".to_vec(),
+            stderr: Vec::new(),
+        })),
+        Context::new().with_command_execute(FixedOutputCommandExecute(CommandOutput {
+            status: 0,
+            stdout: b"mona-cat_oc\n".to_vec(),
+            stderr: Vec::new(),
+        })),
+    ];
+
+    for ctx in contexts {
         let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
         let original = http::Request::get("https://api.github.com/repos/apache/reqsign")
             .header(
