@@ -30,6 +30,12 @@ rust-version.workspace = true
 http = { workspace = true }
 reqsign-core = { workspace = true }
 
+# Enable Jiff's JavaScript clock for the wasm-bindgen-hosted target. Expiring
+# Yandex Disk credentials use the existing reqsign-core Timestamp::now() clock;
+# credentials without an expiry never read it.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+jiff = { workspace = true, features = ["js"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 

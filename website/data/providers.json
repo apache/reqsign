@@ -574,7 +574,7 @@
       "credential_granting": [],
       "wasm": {
         "supported": true,
-        "verified_by": "CI builds the facade with --features b2 for wasm32-unknown-unknown."
+        "verified_by": "CI checks reqsign-b2 and builds the facade with --features b2 for wasm32-unknown-unknown, and runs public static and expiring credential signing under wasm-bindgen-test in Node."
       },
       "integration_tests": {
         "level": "mock",
@@ -586,7 +586,7 @@
       "source_refs": [
         "services/b2"
       ],
-      "last_verified": "2026-11-21",
+      "last_verified": "2026-11-24",
       "explicit_sources": [
         {
           "id": "static",
@@ -1113,7 +1113,7 @@
       "credential_granting": [],
       "wasm": {
         "supported": true,
-        "verified_by": "CI builds reqsign-upyun and the facade with --features upyun for wasm32-unknown-unknown, and runs the Upyun wasm signing test."
+        "verified_by": "CI checks reqsign-upyun and builds the facade with --features upyun for wasm32-unknown-unknown, and runs the public default-clock signing path with an ignored expires_in under wasm-bindgen-test in Node."
       },
       "integration_tests": {
         "level": "mock",
@@ -1125,7 +1125,7 @@
       "source_refs": [
         "services/upyun"
       ],
-      "last_verified": "2026-11-22",
+      "last_verified": "2026-11-24",
       "explicit_sources": [
         {
           "id": "static",
@@ -1544,7 +1544,7 @@
       "credential_granting": [],
       "wasm": {
         "supported": true,
-        "verified_by": "CI checks reqsign-yandex-disk and builds the facade with --features yandex-disk for wasm32-unknown-unknown. Static credentials without an expiry and header signing run under wasm-bindgen-test without a JavaScript clock."
+        "verified_by": "CI checks reqsign-yandex-disk and builds the facade with --features yandex-disk for wasm32-unknown-unknown. Static credentials without an expiry and expiring credentials run under wasm-bindgen-test in Node; only the expiring path reads the JavaScript clock."
       },
       "integration_tests": {
         "level": "mock",
@@ -1556,7 +1556,7 @@
       "source_refs": [
         "services/yandex-disk/src"
       ],
-      "last_verified": "2026-11-21",
+      "last_verified": "2026-11-24",
       "explicit_sources": [
         {
           "id": "static",
@@ -1661,7 +1661,7 @@
       "credential_granting": [],
       "wasm": {
         "supported": true,
-        "verified_by": "CI checks reqsign-koofr and the facade koofr feature for wasm32-unknown-unknown."
+        "verified_by": "CI checks reqsign-koofr and the facade koofr feature for wasm32-unknown-unknown, and runs public signing without a clock and with an ignored expires_in under wasm-bindgen-test in Node."
       },
       "integration_tests": {
         "level": "mock",
@@ -1673,7 +1673,7 @@
       "source_refs": [
         "services/koofr"
       ],
-      "last_verified": "2026-11-22",
+      "last_verified": "2026-11-24",
       "explicit_sources": [
         {
           "id": "login",

@@ -75,12 +75,12 @@ An empty or non-ASCII token is rejected before it becomes a header value. A
 missing credential fails with `CredentialInvalid`; an invalid explicit static
 token fails with `ConfigInvalid`. `Debug` output for the token, credential, and
 static provider never includes the token. On `wasm32-unknown-unknown`, static
-credentials and header signing need no JavaScript clock.
+credentials without an expiry and header signing need no JavaScript clock;
+expiring credentials read the clock from a wasm-bindgen JavaScript host such as
+a browser or Node.
 
 The caller owns the HTTP client and its redirect policy. Do not forward a
-signed `Authorization` header to a different host. On
-`wasm32-unknown-unknown`, static credentials without an expiry and header
-signing need no JavaScript clock.
+signed `Authorization` header to a different host.
 
 ## License
 

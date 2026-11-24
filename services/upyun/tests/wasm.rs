@@ -17,6 +17,8 @@
 
 #![cfg(target_arch = "wasm32")]
 
+use std::time::Duration;
+
 use http::Request;
 use http::header::{AUTHORIZATION, DATE};
 use reqsign_core::time::Timestamp;
@@ -49,5 +51,40 @@ async fn signs_the_published_upyun_vector_on_wasm() {
     assert_eq!(
         req.headers[AUTHORIZATION],
         "UPYUN operator123:YUaAZX+WNAcJdNGHS5SBlITME5A="
+    );
+}
+
+#[wasm_bindgen_test]
+async fn default_clock_sets_date_and_ignores_expires_in() {
+    let signer = Signer::new(
+        Context::new().with_crypto(RustCryptoProvider::new()),
+        StaticCredentialProvider::new("operator123", "password123"),
+        RequestSigner::new(),
+    );
+    let mut req = Request::get("https://v0.api.upyun.com/upyun-temp/demo.jpg")
+        .body(())
+        .expect("request builds")
+        .into_parts()
+        .0;
+
+    let before = Timestamp::now();
+    signer
+        .sign(&mut req, Some(Duration::MAX))
+        .await
+        .expect("default clock signing must succeed");
+    let after = Timestamp::now();
+
+    let date =
+        Timestamp::parse_rfc2822(req.headers[DATE].to_str().expect("Date must be valid text"))
+            .expect("Date must be an RFC 2822 timestamp");
+    assert!(
+        date.as_second() >= before.as_second() - 1 && date.as_second() <= after.as_second() + 1,
+        "Date must come from the current clock"
+    );
+    assert!(
+        req.headers[AUTHORIZATION]
+            .to_str()
+            .expect("Authorization must be valid text")
+            .starts_with("UPYUN operator123:")
     );
 }

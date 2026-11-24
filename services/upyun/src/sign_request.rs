@@ -71,12 +71,10 @@ impl RequestSigner {
         self.time.unwrap_or_else(Timestamp::now)
     }
 
-    fn required_valid_until_at(
-        &self,
-        signing_time: Timestamp,
-        expires_in: Option<Duration>,
-    ) -> Timestamp {
-        signing_time + expires_in.unwrap_or_default()
+    fn required_valid_until_at(&self, signing_time: Timestamp) -> Timestamp {
+        // Upyun validates the signature for 30 minutes from the signed Date and
+        // does not define a caller-requested lifetime, so expires_in is ignored.
+        signing_time
     }
 }
 
@@ -86,9 +84,9 @@ impl SignRequest for RequestSigner {
     fn required_valid_until(
         &self,
         _credential: &Self::Credential,
-        expires_in: Option<Duration>,
+        _expires_in: Option<Duration>,
     ) -> Timestamp {
-        self.required_valid_until_at(self.get_time(), expires_in)
+        self.required_valid_until_at(self.get_time())
     }
 
     async fn sign_request(
@@ -96,7 +94,7 @@ impl SignRequest for RequestSigner {
         ctx: &Context,
         req: &mut http::request::Parts,
         credential: Option<&Self::Credential>,
-        expires_in: Option<Duration>,
+        _expires_in: Option<Duration>,
     ) -> Result<()> {
         let Some(credential) = credential else {
             return Ok(());
@@ -108,7 +106,7 @@ impl SignRequest for RequestSigner {
         }
 
         let signing_time = self.get_time();
-        if !credential.is_valid_at(self.required_valid_until_at(signing_time, expires_in)) {
+        if !credential.is_valid_at(self.required_valid_until_at(signing_time)) {
             return Err(Error::credential_invalid(
                 "Upyun credential is not valid for the requested signing operation",
             ));

@@ -69,6 +69,14 @@ B2 returns key restrictions such as capabilities, bucket allow-lists, and name
 prefixes. B2 enforces them when the token is used, so they are not part of the
 credential and do not need to be checked while signing.
 
+## WASM
+
+On `wasm32-unknown-unknown`, this crate enables Jiff's `js` feature.
+Authorization-token lifetime checks read the clock from a wasm-bindgen
+JavaScript host such as a browser or Node. A bare WASM runtime without a
+JavaScript clock can compile the crate but is not a supported runtime for
+signing.
+
 ## Scope
 
 The signer covers requests authorized by the Native API account token. Bucket

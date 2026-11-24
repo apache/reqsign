@@ -34,6 +34,11 @@ reqsign-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+# Enable Jiff's JavaScript clock for the wasm-bindgen-hosted target. The
+# default signer reads Timestamp::now() to set the Date header.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+jiff = { workspace = true, features = ["js"] }
+
 [dev-dependencies]
 anyhow = { workspace = true }
 reqsign-crypto-rustcrypto = { workspace = true }
