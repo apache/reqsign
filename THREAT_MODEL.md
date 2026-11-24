@@ -360,11 +360,14 @@ with status 1 and exactly `could not find key "user"` on stderr with no
 stdout), and an explicit `no oauth token found` response yield no credential
 from the CLI slot; another typed command execution failure, any other exit
 status, and malformed account or token output fail instead of selecting
-anonymous access. A usable ordinary account name uses ASCII letters, digits,
-and single hyphens, begins and ends with a letter or digit, and is at most 39
-characters; an enterprise managed user name appends `_` and the three-to-eight
-character alphanumeric shortcode to a normalized username (`mona-cat_octo`),
-including the setup user's `octo_admin` form. A command adapter
+anonymous access. Ordinary logins accept legacy accounts such as `A-` and
+`john--doe`; current registration rules are not used as a validity check, so
+they only need to look like a login: ASCII letters, digits, and hyphens, not
+starting with a hyphen, with at least one letter or digit. An enterprise
+managed user name appends `_` and the three-to-eight character alphanumeric
+shortcode to a normalized username that has no leading, trailing, or
+consecutive dashes, is at most 39 characters in total, and includes the setup
+user's `octo_admin` form. A command adapter
 that does not report a typed I/O cause leaves the slot absent. A caller-supplied
 `ProvideCredentialChain` keeps that chain's documented error policy. Command
 output, including stderr, never appears in errors or `Debug` output. The

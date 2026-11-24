@@ -549,10 +549,13 @@ async fn gh_cli_malformed_active_user_is_reported_without_leaking() {
 #[tokio::test]
 async fn gh_cli_accepts_supported_account_names() -> Result<()> {
     let names = vec![
-        // Ordinary GitHub.com usernames, including mixed case.
+        // Ordinary GitHub.com logins, including mixed case and legacy accounts
+        // that predate the current registration rules.
         "a".to_string(),
         "octocat".to_string(),
         "The-Octocat".to_string(),
+        "A-".to_string(),
+        "john--doe".to_string(),
         // Enterprise managed user names are `IDP-USERNAME_SHORT-CODE`, and
         // casing from the identity provider is preserved.
         "mona-cat_octo".to_string(),
@@ -563,9 +566,10 @@ async fn gh_cli_accepts_supported_account_names() -> Result<()> {
         "2abvd19d_admin".to_string(),
         // Minimum username and minimum shortcode.
         "abc_abc".to_string(),
-        // Longest ordinary username (39 characters) and a managed name that is
-        // exactly 39 characters including the shortcode.
-        "a".repeat(39),
+        // A long ordinary login is accepted because current registration
+        // policy is not a validity check, and a managed name that is exactly
+        // 39 characters including the shortcode.
+        "a".repeat(40),
         format!("{}_octo", "a".repeat(34)),
     ];
 
@@ -610,23 +614,24 @@ async fn gh_cli_rejects_unsupported_account_names() {
         "_-_".to_string(),
         "--help".to_string(),
         "bad user".to_string(),
-        // Normalization rules: no leading or trailing dash, no consecutive
-        // dashes, and no characters other than alphanumerics and dashes.
+        // Ordinary logins must not start with a dash or contain characters
+        // other than ASCII letters, digits, and hyphens. Legacy trailing and
+        // consecutive hyphens are accepted and covered above.
         "-The-Octocat".to_string(),
-        "The-Octocat-".to_string(),
-        "The--Octocat".to_string(),
-        "The--Octocat_octo".to_string(),
         "mona/the-octocat".to_string(),
-        // Managed name rules: one underscore, a username before it, and a
-        // three-to-eight character alphanumeric shortcode after it.
+        // Managed name rules: one underscore, a username before it that
+        // follows GitHub's normalization rules, and a three-to-eight
+        // character alphanumeric shortcode after it.
+        "-mona_octo".to_string(),
+        "mona-_octo".to_string(),
+        "The--Octocat_octo".to_string(),
         "_octo".to_string(),
         "mona-cat_".to_string(),
         "mona-cat_oc".to_string(),
         "mona-cat_123456789".to_string(),
         "mona_cat_octo".to_string(),
         "octo_admin_extra".to_string(),
-        // 40 characters, both as an ordinary username and as a managed name.
-        "a".repeat(40),
+        // A managed name over the 39 character limit.
         format!("{}_octo", "a".repeat(35)),
     ];
 

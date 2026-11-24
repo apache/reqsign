@@ -60,18 +60,21 @@ pub(crate) const GH_CLI_MIN_VERSION: &str = "2.40.0";
 /// account. A typed command execution failure other than a missing executable,
 /// any other exit status, and successful output that is not a usable GitHub
 /// account name yield a redacted error instead of silently falling back.
-/// Usable names are ordinary GitHub.com usernames and enterprise managed user
-/// names. Ordinary usernames contain ASCII letters, digits, and single
-/// hyphens, begin and end with a letter or digit, and are at most 39
-/// characters. Managed user names append `_` and the enterprise's three-to-
-/// eight character alphanumeric shortcode to a normalized username
-/// (`IDP-USERNAME_SHORT-CODE`, for example `mona-cat_octo`), which also covers
-/// the setup user's `octo_admin` form; letter casing is preserved. After an
-/// active user is found, only an explicit `no oauth token found` response
-/// yields no credential. Command execution errors, empty or whitespace-only
-/// successful stdout, malformed output, and other stored-token failures such
-/// as an expired or revoked token yield a redacted error. Errors never contain
-/// the token, the output, or the CLI's stderr.
+/// Usable names are ordinary GitHub.com logins and enterprise managed user
+/// names. Ordinary logins accept legacy accounts such as `A-` and
+/// `john--doe`, so current registration rules are not used as a validity
+/// check: they must only look like a login (ASCII letters, digits, and
+/// hyphens, not starting with a hyphen, with at least one letter or digit).
+/// Managed user names append `_` and the enterprise's three-to-eight character
+/// alphanumeric shortcode to a normalized username (`IDP-USERNAME_SHORT-CODE`,
+/// for example `mona-cat_octo`); the normalized part has no leading, trailing,
+/// or consecutive dashes, the total is at most 39 characters, and the setup
+/// user's `octo_admin` form fits the same shape. Letter casing is preserved.
+/// After an active user is found, only an explicit `no oauth token found`
+/// response yields no credential. Command execution errors, empty or
+/// whitespace-only successful stdout, malformed output, and other stored-token
+/// failures such as an expired or revoked token yield a redacted error. Errors
+/// never contain the token, the output, or the CLI's stderr.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GhCliCredentialProvider;
 
@@ -244,36 +247,49 @@ fn command_confirms_missing_user(output: &CommandOutput) -> bool {
 
 /// Check whether successful output is a usable GitHub account name.
 ///
-/// GitHub.com usernames are normalized usernames: ASCII letters, digits, and
-/// single hyphens, beginning and ending with a letter or digit, at most 39
-/// characters, with casing preserved. Enterprise managed user names append an
-/// underscore and the enterprise shortcode to a normalized username
-/// (`IDP-USERNAME_SHORT-CODE`, for example `mona-cat_octo`), and the setup
-/// user's name is `SHORT-CODE_admin` (for example `octo_admin`), which fits
-/// the same shape because the shortcode is a three-to-eight character
-/// alphanumeric string. Anything else, including `--help`, `...`, `bad user`,
-/// `user/name`, `The--Octocat_octo`, `mona-cat_`, or `mona_cat_octo`, is not
-/// an account name and must not reach the token query.
+/// Ordinary logins accept legacy accounts such as `A-` and `john--doe`, so
+/// current registration rules are not used as a validity check. Enterprise
+/// managed user names append an underscore and the enterprise shortcode to a
+/// normalized username (`IDP-USERNAME_SHORT-CODE`, for example
+/// `mona-cat_octo`), where the normalized part follows GitHub's rules and the
+/// shortcode is a three-to-eight character alphanumeric string. The setup
+/// user's name is `SHORT-CODE_admin` (for example `octo_admin`), which fits the
+/// same shape. Anything else, including `--help`, `...`, `bad user`,
+/// `user/name`, `The--Octocat_octo`, `mona-cat_`, or `mona_cat_octo`, is not an
+/// account name and must not reach the token query.
 fn is_usable_account_name(user: &str) -> bool {
-    if user.len() > 39 {
-        return false;
-    }
-
     match user.split_once('_') {
-        Some((username, shortcode)) => is_normalized_username(username) && is_shortcode(shortcode),
-        None => is_normalized_username(user),
+        Some((username, shortcode)) => {
+            user.len() <= 39 && is_normalized_managed_username(username) && is_shortcode(shortcode)
+        }
+        None => is_ordinary_login(user),
     }
 }
 
-/// Check whether a normalized GitHub username is valid.
+/// Check whether the output looks like an ordinary GitHub login.
 ///
-/// GitHub normalizes unsupported characters in external identifiers to `-`
-/// and only accepts usernames that contain alphanumeric characters and
-/// dashes, do not begin or end with a dash, do not contain two consecutive
-/// dashes, and do not exceed 39 characters. Letter casing is preserved.
-fn is_normalized_username(name: &str) -> bool {
+/// Existing accounts can predate the current registration policy; `A-` and
+/// `john--doe` are supported by GitHub CLI 2.40 and 2.103. Reject only output
+/// that cannot be a login: an empty value, a value that starts with `-` (CLI
+/// help and flags), characters other than ASCII letters, digits, and hyphens,
+/// or punctuation-only text without a letter or digit.
+fn is_ordinary_login(name: &str) -> bool {
     !name.is_empty()
-        && name.len() <= 39
+        && !name.starts_with('-')
+        && name.bytes().any(|byte| byte.is_ascii_alphanumeric())
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+/// Check whether the normalized username part of a managed user name is valid.
+///
+/// GitHub normalizes unsupported characters in external identifiers to `-` and
+/// only creates managed usernames that contain alphanumeric characters and
+/// dashes, do not begin or end with a dash, and do not contain two consecutive
+/// dashes. Letter casing is preserved.
+fn is_normalized_managed_username(name: &str) -> bool {
+    !name.is_empty()
         && !name.starts_with('-')
         && !name.ends_with('-')
         && !name.contains("--")

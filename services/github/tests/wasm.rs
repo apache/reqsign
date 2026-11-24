@@ -331,10 +331,13 @@ async fn malformed_account_success_does_not_fall_back() {
 
 #[wasm_bindgen_test]
 async fn supported_account_names_sign_with_the_stored_token() {
-    // Ordinary usernames keep their mixed case, and managed names append the
-    // enterprise shortcode; the setup user form fits the same shape.
+    // Ordinary logins keep their mixed case and legacy forms, and managed
+    // names append the enterprise shortcode; the setup user form fits the same
+    // shape.
     for name in [
         "The-Octocat",
+        "A-",
+        "john--doe",
         "mona-cat_octo",
         "The-Octocat_octo",
         "octo_admin",
