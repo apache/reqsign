@@ -16,6 +16,7 @@
 // under the License.
 
 use std::borrow::Cow;
+use std::fmt;
 use std::time::Duration;
 
 use crate::{Error, Result};
@@ -52,7 +53,11 @@ fn parse_query(query: &str) -> Vec<(String, String)> {
 /// to [`Self::build`] is already the final caller-provided representation; services
 /// derive canonical values locally and construct query authentication from the
 /// original URI.
-#[derive(Debug)]
+///
+/// The `Debug` implementation preserves request-target context and query
+/// parameter names while redacting every query value, because query
+/// authentication and presigned URLs can place credentials there. Header values
+/// keep their existing `http::HeaderMap` debug behavior.
 pub struct SigningRequest {
     /// Read-only HTTP method used for canonicalization.
     pub method: Method,
@@ -72,6 +77,46 @@ pub struct SigningRequest {
     pub query: Vec<(String, String)>,
     /// Staged HTTP headers committed by [`Self::apply`].
     pub headers: HeaderMap,
+}
+
+impl fmt::Debug for SigningRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SigningRequest")
+            .field("method", &self.method)
+            .field("scheme", &self.scheme)
+            .field("authority", &self.authority)
+            .field("path", &self.path)
+            .field("query", &RedactedQuery(&self.query))
+            .field("headers", &self.headers)
+            .finish()
+    }
+}
+
+/// Debug adapter that keeps query parameter names and empty-value information
+/// without exposing decoded query values.
+struct RedactedQuery<'a>(&'a [(String, String)]);
+
+impl fmt::Debug for RedactedQuery<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|(key, value)| RedactedQueryPair {
+                key,
+                has_value: !value.is_empty(),
+            }))
+            .finish()
+    }
+}
+
+struct RedactedQueryPair<'a> {
+    key: &'a str,
+    has_value: bool,
+}
+
+impl fmt::Debug for RedactedQueryPair<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = if self.has_value { "***" } else { "" };
+        f.debug_tuple("").field(&self.key).field(&value).finish()
+    }
 }
 
 impl SigningRequest {
@@ -433,6 +478,28 @@ mod tests {
             parts.headers.get("authorization"),
             Some(&HeaderValue::from_static("signed"))
         );
+    }
+
+    #[test]
+    fn debug_redacts_query_values() {
+        let mut parts = Request::get(
+            "https://example.com/object?access_token=query-secret%2Fvalue&X-Signature=signature-secret&flag&empty=",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+        let signing = SigningRequest::build(&mut parts).expect("signing request must build");
+        let debug = format!("{signing:?}");
+
+        assert!(debug.contains("access_token"));
+        assert!(debug.contains("X-Signature"));
+        assert!(debug.contains("flag"));
+        assert!(debug.contains("empty"));
+        assert!(debug.contains("/object"));
+        assert!(!debug.contains("query-secret"));
+        assert!(!debug.contains("signature-secret"));
     }
 
     #[cfg(debug_assertions)]
