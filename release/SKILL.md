@@ -90,13 +90,16 @@ Release workflow publishes the plan; GitHub Release from `CHANGELOG.md`.
    release workflow has published the real dependency versions.
 
    Inventory the plan against the registry before asking for a bootstrap. The
-   check is read-only and needs no credentials:
+   check is read-only and needs no credentials. An empty plan exits nonzero
+   instead of passing vacuously:
 
    ```bash
    python3 - <<'EOF'
    import json, subprocess, urllib.request, urllib.error
    plan = json.loads(subprocess.check_output(
        ["python3", ".github/scripts/release_rust/plan.py"], text=True))
+   if not plan:
+       raise SystemExit("plan.py returned an empty publish plan")
    for package in plan:
        request = urllib.request.Request(
            f"https://crates.io/api/v1/crates/{package['name']}",
@@ -420,13 +423,16 @@ NAME
 
    Derive the expected `(name, version)` pairs from `plan.py` and require every
    planned version to be published. A missing name, a missing planned version,
-   an older release, or a `0.0.0` reservation fails the check:
+   an older release, or a `0.0.0` reservation fails the check. An empty plan
+   also exits nonzero instead of passing vacuously:
 
    ```bash
    python3 - <<'EOF'
    import json, subprocess, urllib.error, urllib.request
    plan = json.loads(subprocess.check_output(
        ["python3", ".github/scripts/release_rust/plan.py"], text=True))
+   if not plan:
+       raise SystemExit("plan.py returned an empty publish plan")
    missing = []
    for package in plan:
        request = urllib.request.Request(
