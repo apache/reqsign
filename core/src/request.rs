@@ -54,10 +54,11 @@ fn parse_query(query: &str) -> Vec<(String, String)> {
 /// derive canonical values locally and construct query authentication from the
 /// original URI.
 ///
-/// The `Debug` implementation preserves request-target context and query
-/// parameter names while redacting every query value, because query
-/// authentication and presigned URLs can place credentials there. Header values
-/// keep their existing `http::HeaderMap` debug behavior.
+/// The `Debug` implementation omits query contents because query
+/// authentication, presigned URLs, and fragments pushed through
+/// [`Self::query_append`] can place credentials in either side of a working
+/// entry. It reports only the number of query entries. Header values keep their
+/// existing `http::HeaderMap` debug behavior.
 pub struct SigningRequest {
     /// Read-only HTTP method used for canonicalization.
     pub method: Method,
@@ -86,36 +87,9 @@ impl fmt::Debug for SigningRequest {
             .field("scheme", &self.scheme)
             .field("authority", &self.authority)
             .field("path", &self.path)
-            .field("query", &RedactedQuery(&self.query))
+            .field("query_entries", &self.query.len())
             .field("headers", &self.headers)
             .finish()
-    }
-}
-
-/// Debug adapter that keeps query parameter names and empty-value information
-/// without exposing decoded query values.
-struct RedactedQuery<'a>(&'a [(String, String)]);
-
-impl fmt::Debug for RedactedQuery<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_list()
-            .entries(self.0.iter().map(|(key, value)| RedactedQueryPair {
-                key,
-                has_value: !value.is_empty(),
-            }))
-            .finish()
-    }
-}
-
-struct RedactedQueryPair<'a> {
-    key: &'a str,
-    has_value: bool,
-}
-
-impl fmt::Debug for RedactedQueryPair<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = if self.has_value { "***" } else { "" };
-        f.debug_tuple("").field(&self.key).field(&value).finish()
     }
 }
 
@@ -481,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn debug_redacts_query_values() {
+    fn debug_omits_parsed_query_contents() {
         let mut parts = Request::get(
             "https://example.com/object?access_token=query-secret%2Fvalue&X-Signature=signature-secret&flag&empty=",
         )
@@ -493,13 +467,37 @@ mod tests {
         let signing = SigningRequest::build(&mut parts).expect("signing request must build");
         let debug = format!("{signing:?}");
 
-        assert!(debug.contains("access_token"));
-        assert!(debug.contains("X-Signature"));
-        assert!(debug.contains("flag"));
-        assert!(debug.contains("empty"));
         assert!(debug.contains("/object"));
+        assert!(debug.contains("query_entries: 4"));
+        assert!(!debug.contains("access_token"));
+        assert!(!debug.contains("X-Signature"));
+        assert!(!debug.contains("flag"));
+        assert!(!debug.contains("empty"));
         assert!(!debug.contains("query-secret"));
         assert!(!debug.contains("signature-secret"));
+    }
+
+    #[test]
+    fn debug_omits_appended_query_contents() {
+        let mut parts = Request::get("https://example.com/object")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+
+        let mut signing = SigningRequest::build(&mut parts).expect("signing request must build");
+        // `query_append` stores the whole fragment in the key, so neither side of an
+        // appended entry is safe to print as a parameter name.
+        signing.query_append("append-access_token=append-query-fragment");
+        signing.query_push("pushed-name", "pushed-value");
+
+        let debug = format!("{signing:?}");
+
+        assert!(debug.contains("query_entries: 2"));
+        assert!(!debug.contains("append-access_token"));
+        assert!(!debug.contains("append-query-fragment"));
+        assert!(!debug.contains("pushed-name"));
+        assert!(!debug.contains("pushed-value"));
     }
 
     #[cfg(debug_assertions)]
