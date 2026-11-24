@@ -58,13 +58,16 @@ pub(crate) const GH_CLI_MIN_VERSION: &str = "2.40.0";
 /// stored account with exit status 1, empty stdout, and exactly the stderr
 /// diagnostic `could not find key "user"`; only that response is the absent
 /// account. A typed command execution failure other than a missing executable,
-/// any other non-zero exit status, and empty, blank, or otherwise malformed
-/// successful output yield a redacted error instead of silently falling back.
-/// After an active user is found, only an explicit `no oauth token found`
-/// response yields no credential. Command execution errors, empty or
-/// whitespace-only successful stdout, malformed output, and other stored-token
-/// failures such as an expired or revoked token yield a redacted error. Errors
-/// never contain the token, the output, or the CLI's stderr.
+/// any other exit status, and successful output that is not a usable GitHub
+/// account name yield a redacted error instead of silently falling back.
+/// Account names use ASCII letters, digits, hyphens, and underscores, begin
+/// and end with a letter or digit, and include enterprise managed names such
+/// as `mona-cat_octo`. After an active user is found, only an explicit
+/// `no oauth token found` response yields no credential. Command execution
+/// errors, empty or whitespace-only successful stdout, malformed output, and
+/// other stored-token failures such as an expired or revoked token yield a
+/// redacted error. Errors never contain the token, the output, or the CLI's
+/// stderr.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GhCliCredentialProvider;
 
@@ -96,8 +99,8 @@ impl GhCliCredentialProvider {
 
         if !output.success() {
             // GitHub CLI 2.40.0 and 2.103.3 both report a host without a stored
-            // account with this exact response. Any other failure means the
-            // configuration could not be read.
+            // account with exit status 1 and this exact response. Any other
+            // failure means the configuration could not be read.
             if command_confirms_missing_user(&output) {
                 return Ok(None);
             }
@@ -109,12 +112,10 @@ impl GhCliCredentialProvider {
             Err(_) => return Err(malformed_account_error()),
         };
         // The first-party command prints one stored account name followed by a
-        // newline. An empty, blank, or otherwise unusable success is malformed;
-        // a missing account is only the confirmed non-zero response above.
-        if user.is_empty()
-            || user.starts_with('-')
-            || !user.bytes().all(|byte| byte.is_ascii_graphic())
-        {
+        // newline. Anything that is not a usable GitHub account name is
+        // malformed and must not reach the token query; a missing account is
+        // only the confirmed status-1 response above.
+        if !is_usable_account_name(user) {
             return Err(malformed_account_error());
         }
 
@@ -229,12 +230,33 @@ fn io_error_kind(error: &Error) -> Option<std::io::ErrorKind> {
 /// different status, output, or diagnostic is a failure, not an absent
 /// account.
 fn command_confirms_missing_user(output: &CommandOutput) -> bool {
-    if output.success() || !output.stdout.is_empty() {
+    if output.status != 1 || !output.stdout.is_empty() {
         return false;
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     stderr.trim_end_matches(['\r', '\n']) == "could not find key \"user\""
+}
+
+/// Check whether successful output is a usable GitHub account name.
+///
+/// GitHub.com account names and GitHub Enterprise managed account names
+/// (`shortcode_username`) contain ASCII letters, digits, hyphens, and
+/// underscores, and begin and end with a letter or digit. Punctuation-only or
+/// otherwise malformed output such as `--help`, `...`, `bad user`, or
+/// `user/name` is not an account name and must not reach the token query.
+fn is_usable_account_name(user: &str) -> bool {
+    let mut bytes = user.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    let last = user.bytes().next_back().unwrap_or(first);
+
+    first.is_ascii_alphanumeric()
+        && last.is_ascii_alphanumeric()
+        && user
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
 fn could_not_read_account_error() -> Error {

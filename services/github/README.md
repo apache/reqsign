@@ -16,10 +16,12 @@ different identity. A malformed environment token, an invalid prepended or
 static provider, or a GitHub CLI error or malformed CLI output fails signing;
 the chain does not fall back to anonymous access. Only an absent credential
 reaches the explicit anonymous slot: no command executor, a missing `gh`
-executable, a confirmed no-account response (`gh config get user` exiting
-non-zero with exactly `could not find key "user"` and no stdout), or an
-explicit `no oauth token found` response. An empty or blank successful account
-lookup is malformed, not an absent account. Add a `CommandExecute` adapter to
+executable, a confirmed no-account response (`gh config get user` exiting with
+status 1 and exactly `could not find key "user"` on stderr with no stdout),
+or an explicit `no oauth token found` response. A successful account lookup
+that is not a usable GitHub account name is malformed, not an absent account;
+account names use ASCII letters, digits, hyphens, and underscores, and begin
+and end with a letter or digit. Add a `CommandExecute` adapter to
 the context to enable GitHub CLI discovery; without one, that slot yields no
 credential.
 

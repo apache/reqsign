@@ -356,11 +356,12 @@ as unknown. The default provider does not read `GH_ENTERPRISE_TOKEN` or
 `GITHUB_ENTERPRISE_TOKEN`, does not run a shell, and does not silently fall
 through to another identity when a configured default slot fails. A missing
 `gh` executable, a confirmed no-account response (`gh config get user` exiting
-non-zero with exactly `could not find key "user"` and no stdout), and an
-explicit `no oauth token found` response yield no credential from the CLI slot;
-another typed command execution failure, any other non-zero status, and
-malformed account or token output fail instead of selecting anonymous access.
-An empty or blank successful account lookup is malformed. A command adapter
+with status 1 and exactly `could not find key "user"` on stderr with no
+stdout), and an explicit `no oauth token found` response yield no credential
+from the CLI slot; another typed command execution failure, any other exit
+status, and malformed account or token output fail instead of selecting
+anonymous access. A usable account name uses ASCII letters, digits, hyphens,
+and underscores, and begins and ends with a letter or digit. A command adapter
 that does not report a typed I/O cause leaves the slot absent. A caller-supplied
 `ProvideCredentialChain` keeps that chain's documented error policy. Command
 output, including stderr, never appears in errors or `Debug` output. The

@@ -425,6 +425,8 @@ async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()>
         // GitHub CLI 2.40.0 and 2.103.3 confirm a host without a stored
         // account with exit status 1, empty stdout, and this exact diagnostic.
         MockCommandExecute::failure(1, b"could not find key \"user\"\n".to_vec()),
+        // Line endings around the diagnostic are tolerated.
+        MockCommandExecute::failure(1, b"could not find key \"user\"\r\n".to_vec()),
         MockCommandExecute::sequence([
             user_result("cli-user"),
             failure_result(
@@ -480,10 +482,18 @@ async fn gh_cli_config_lookup_failure_is_reported_without_leaking() {
             )]),
             ErrorKind::ConfigInvalid,
         ),
-        // The confirmed diagnostic requires a non-zero exit status.
+        // The confirmed diagnostic requires exactly exit status 1.
         (
             MockCommandExecute::sequence([output_result(
                 0,
+                Vec::new(),
+                b"could not find key \"user\"\n".to_vec(),
+            )]),
+            ErrorKind::ConfigInvalid,
+        ),
+        (
+            MockCommandExecute::sequence([output_result(
+                2,
                 Vec::new(),
                 b"could not find key \"user\"\n".to_vec(),
             )]),
@@ -515,6 +525,11 @@ async fn gh_cli_malformed_active_user_is_reported_without_leaking() {
         b"--help\n".to_vec(),
         b"bad user\n".to_vec(),
         b"first\nsecond\n".to_vec(),
+        b"...\n".to_vec(),
+        b"@@@\n".to_vec(),
+        b"_-_\n".to_vec(),
+        b"user-\n".to_vec(),
+        b"user/name\n".to_vec(),
         b"nonutf8\xff".to_vec(),
     ];
 
@@ -540,6 +555,75 @@ async fn gh_cli_malformed_active_user_is_reported_without_leaking() {
 }
 
 #[tokio::test]
+async fn gh_cli_accepts_enterprise_managed_account_names() -> Result<()> {
+    let command =
+        MockCommandExecute::sequence([user_result("mona-cat_octo"), token_result(CLI_TOKEN)]);
+    let ctx = context_with_command(HashMap::new(), command.clone());
+
+    let parts = sign_parts(DefaultCredentialProvider::new(), ctx, request()).await?;
+
+    assert_eq!(
+        parts.headers[AUTHORIZATION].to_str().expect("header text"),
+        format!("Bearer {CLI_TOKEN}")
+    );
+    assert_eq!(
+        command.calls(),
+        vec![
+            RecordedCommand {
+                program: "gh".to_string(),
+                args: ["config", "get", "user", "--host", GITHUB_HOST]
+                    .map(str::to_string)
+                    .to_vec(),
+            },
+            RecordedCommand {
+                program: "gh".to_string(),
+                args: [
+                    "auth",
+                    "token",
+                    "--hostname",
+                    GITHUB_HOST,
+                    "--user",
+                    "mona-cat_octo",
+                    "--no-refresh",
+                ]
+                .map(str::to_string)
+                .to_vec(),
+            },
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn gh_cli_invalid_account_names_fail_before_the_token_query() {
+    let cases = [
+        b"...\n".to_vec(),
+        b"@@@\n".to_vec(),
+        b"_-_\n".to_vec(),
+        b"user-\n".to_vec(),
+        b"user/name\n".to_vec(),
+    ];
+
+    for stdout in cases {
+        // A single mock result proves the provider stops before `gh auth
+        // token`: a token query would find no result and panic.
+        let command = MockCommandExecute::sequence([MockCommandResult::Output(CommandOutput {
+            status: 0,
+            stdout,
+            stderr: Vec::new(),
+        })]);
+        let ctx = context_with_command(HashMap::new(), command.clone());
+        let error = GhCliCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await
+            .expect_err("an invalid account name must fail");
+
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+        assert_eq!(command.calls().len(), 1);
+    }
+}
+
+#[tokio::test]
 async fn default_provider_rejects_config_lookup_failure_without_mutating_the_request() -> Result<()>
 {
     let cases = [
@@ -548,9 +632,11 @@ async fn default_provider_rejects_config_lookup_failure_without_mutating_the_req
         )]),
         MockCommandExecute::failure(1, b"failed to read config SENTINEL_CONFIG_STDERR".to_vec()),
         MockCommandExecute::failure(1, b"could not find key \"user\" (extra)".to_vec()),
+        MockCommandExecute::failure(2, b"could not find key \"user\"\n".to_vec()),
         MockCommandExecute::success(Vec::new()),
         MockCommandExecute::sequence([user_result("--help")]),
         MockCommandExecute::sequence([user_result("bad user")]),
+        MockCommandExecute::sequence([user_result("...")]),
     ];
 
     for command in cases {

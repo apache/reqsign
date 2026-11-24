@@ -91,6 +91,60 @@ impl CommandExecute for MalformedAccountCommandExecute {
     }
 }
 
+/// A command adapter that reports the missing-account diagnostic with the
+/// wrong exit status.
+#[derive(Debug)]
+struct WrongStatusMissingAccountCommandExecute;
+
+impl CommandExecute for WrongStatusMissingAccountCommandExecute {
+    async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+        Ok(CommandOutput {
+            status: 2,
+            stdout: Vec::new(),
+            stderr: b"could not find key \"user\"\n".to_vec(),
+        })
+    }
+}
+
+/// A command adapter that reports punctuation-only account output.
+#[derive(Debug)]
+struct InvalidAccountNameCommandExecute;
+
+impl CommandExecute for InvalidAccountNameCommandExecute {
+    async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+        Ok(CommandOutput {
+            status: 0,
+            stdout: b"...\n".to_vec(),
+            stderr: Vec::new(),
+        })
+    }
+}
+
+/// A command adapter that returns a fixed sequence of outputs.
+#[derive(Debug)]
+struct SequenceCommandExecute {
+    outputs: std::sync::Mutex<std::collections::VecDeque<CommandOutput>>,
+}
+
+impl SequenceCommandExecute {
+    fn new(outputs: impl IntoIterator<Item = CommandOutput>) -> Self {
+        Self {
+            outputs: std::sync::Mutex::new(outputs.into_iter().collect()),
+        }
+    }
+}
+
+impl CommandExecute for SequenceCommandExecute {
+    async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+        Ok(self
+            .outputs
+            .lock()
+            .expect("output lock")
+            .pop_front()
+            .expect("mock output must exist"))
+    }
+}
+
 #[wasm_bindgen_test]
 async fn env_token_signs_without_a_clock() {
     let context = Context::new().with_env(StaticEnv {
@@ -277,4 +331,74 @@ async fn malformed_account_success_does_not_fall_back() {
         parts.headers[http::header::AUTHORIZATION],
         "Bearer stale-wasm-github-token"
     );
+}
+
+#[wasm_bindgen_test]
+async fn enterprise_managed_account_name_signs_with_the_stored_token() {
+    let command = SequenceCommandExecute::new([
+        CommandOutput {
+            status: 0,
+            stdout: b"mona-cat_octo\n".to_vec(),
+            stderr: Vec::new(),
+        },
+        CommandOutput {
+            status: 0,
+            stdout: b"wasm-cli-token\n".to_vec(),
+            stderr: Vec::new(),
+        },
+    ]);
+    let signer = Signer::new(
+        Context::new().with_command_execute(command),
+        DefaultCredentialProvider::new(),
+        RequestSigner,
+    );
+    let mut parts = http::Request::get("https://api.github.com/repos/apache/reqsign")
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+    signer
+        .sign(&mut parts, None)
+        .await
+        .expect("a supported enterprise managed name must reach the token query");
+
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        "Bearer wasm-cli-token"
+    );
+    assert!(parts.headers[http::header::AUTHORIZATION].is_sensitive());
+}
+
+#[wasm_bindgen_test]
+async fn wrong_status_or_invalid_account_name_does_not_fall_back() {
+    for ctx in [
+        Context::new().with_command_execute(WrongStatusMissingAccountCommandExecute),
+        Context::new().with_command_execute(InvalidAccountNameCommandExecute),
+    ] {
+        let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+        let original = http::Request::get("https://api.github.com/repos/apache/reqsign")
+            .header(
+                http::header::AUTHORIZATION,
+                "Bearer stale-wasm-github-token",
+            )
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+        let mut parts = original.clone();
+
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("an unconfirmed account response must not become anonymous access");
+
+        assert_eq!(error.kind(), reqsign_core::ErrorKind::ConfigInvalid);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+        assert_eq!(
+            parts.headers[http::header::AUTHORIZATION],
+            "Bearer stale-wasm-github-token"
+        );
+    }
 }
