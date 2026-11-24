@@ -334,21 +334,21 @@ The Huawei Cloud OBS and Volcengine TOS `Credential` types gained
 breaks struct-literal construction:
 
 ```rust
-// 0.20 and earlier
+// 0.20.8 and earlier
 let credential = obs::Credential {
     access_key_id,
     secret_access_key,
-    security_token,
+    security_token, // Option<String>
 };
 
-// 0.21, Huawei Cloud OBS: the constructor keeps the security token and leaves
-// the expiration unset.
+// 0.20.9 and later, Huawei Cloud OBS: the constructor takes the key pair and
+// an optional security token, and leaves the expiration unset.
 let credential = obs::Credential::new(access_key_id, secret_access_key, security_token)
     .with_expires_at(expires_at);
 
-// 0.21, Volcengine TOS: the constructor takes only the key pair.
+// 0.20.9 and later, Volcengine TOS: the constructor takes only the key pair.
 let credential = tos::Credential::new(&access_key_id, &secret_access_key)
-    .with_session_token(&security_token)
+    .with_session_token(&session_token)
     .with_expires_at(expires_at);
 ```
 

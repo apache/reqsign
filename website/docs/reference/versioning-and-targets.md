@@ -58,8 +58,11 @@ reqsign-aws-v4 = "4"
 ```
 
 Every release ships as an ASF source release plus crates.io packages — see
-[Download](/download/). Release notes and migration steps for breaking
-majors are published with each
+[Download](/download/). The source release also contains
+[`reqsign-crypto-boring`](https://github.com/apache/reqsign/tree/main/crypto/boring),
+which is not part of the workspace crates.io publish plan; publishing it to
+crates.io requires a separate decision. Release notes and migration steps for
+breaking majors are published with each
 [GitHub release](https://github.com/apache/reqsign/releases).
 
 ## Targets
