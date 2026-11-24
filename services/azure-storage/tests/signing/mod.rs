@@ -16,4 +16,5 @@
 // under the License.
 
 pub mod sas_token;
+pub mod service_sas;
 pub mod shared_key;

@@ -631,6 +631,7 @@ pub struct ServiceSharedAccessSignature {
     ip: Option<String>,
     protocol: Option<String>,
     version: String,
+    content_disposition: String,
 }
 
 impl ServiceSharedAccessSignature {
@@ -652,6 +653,7 @@ impl ServiceSharedAccessSignature {
             ip: None,
             protocol: None,
             version: SERVICE_SAS_VERSION.to_string(),
+            content_disposition: String::new(),
         }
     }
 
@@ -679,6 +681,15 @@ impl ServiceSharedAccessSignature {
         self
     }
 
+    /// Sign a `rscd` Content-Disposition response override.
+    ///
+    /// The value must be the percent-decoded query value, as required by the
+    /// Service SAS string-to-sign contract.
+    pub(crate) fn with_content_disposition(mut self, content_disposition: String) -> Self {
+        self.content_disposition = content_disposition;
+        self
+    }
+
     fn string_to_sign(&self) -> String {
         [
             self.permissions.clone(),
@@ -694,7 +705,7 @@ impl ServiceSharedAccessSignature {
             String::new(), // snapshot time
             String::new(), // encryption scope
             String::new(), // rscc
-            String::new(), // rscd
+            self.content_disposition.clone(),
             String::new(), // rsce
             String::new(), // rscl
             String::new(), // rsct
