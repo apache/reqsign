@@ -327,5 +327,5 @@ jiff = { version = "1.0.1", features = ["js"] }
 
 The default features enabled above include `default-context` and
 `default-crypto`. Jiff's `js` clock reads `js_sys::Date` through wasm-bindgen
-JS host imports, so it needs a JavaScript host such as a browser or Node; a
-bare WASM runtime without those imports panics in `Timestamp::now()`.
+JS host imports, so this recipe needs a wasm-bindgen JavaScript host, such as
+a browser or Node, that provides the clock imports.
