@@ -43,7 +43,8 @@ Everything else on this page is the detail behind those steps.
 | `reqsign` | `0.20.x` | `0.21.x` |
 | `reqsign-core`, `reqsign-aws-core`, every established service crate, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | `3.x` | `4.0.0` |
 | `reqsign-http-send-reqwest` | `4.0.x` | `5.0.0` |
-| `reqsign-crypto-rustcrypto`, `reqsign-crypto-boring` | — | `1.0.0` |
+| `reqsign-crypto-rustcrypto` | — | `1.0.0` |
+| `reqsign-crypto-boring` | — | `1.0.0` (source release only) |
 | `reqsign-aliyun-drive`, `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`, `reqsign-github`, `reqsign-koofr`, `reqsign-oauth2`, `reqsign-onedrive`, `reqsign-seafile`, `reqsign-upyun`, `reqsign-vercel`, `reqsign-yandex-disk`, and the B2 crate `reqsign-b2` | — | `1.0.0` |
 
 Mixing core majors does not compile, because the traits are the compatibility
@@ -155,10 +156,12 @@ loading credentials to see the `ConfigInvalid` failure itself.
 ### Backend crates
 
 - `reqsign-crypto-rustcrypto` implements all operations and supports
-  `wasm32-unknown-unknown` for SHA-1, SHA-256, HMAC-SHA-1/256, and P-256 ECDSA.
-  RSA, AES-GCM, and random generation report `ConfigInvalid` there.
-- `reqsign-crypto-boring` is native-only, excluded from the main workspace, and
-  forwards an optional `fips` feature. Bind it explicitly:
+  `wasm32-unknown-unknown` for MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512, and
+  P-256 ECDSA. RSA, AES-GCM, and random generation report `ConfigInvalid` there.
+- `reqsign-crypto-boring` is native-only, excluded from the main workspace and
+  the workspace publish plan, and forwards an optional `fips` feature. It ships
+  in the source release only; it is not published to crates.io by this release,
+  and publishing it requires a separate decision. Bind it explicitly:
   `Context::new().with_crypto(BoringCryptoProvider::new())`.
 
 ## Default signers take an explicit `Context`
@@ -247,6 +250,37 @@ When the provider returns static credentials or caches them itself, the
 repeated load can be cheap. That is a provider property, not a guarantee from
 `Signer`.
 
+## Sign with the credential that built the request URI
+
+`Signer::sign` may refresh the cached credential before signing. When the
+credential carries routing metadata that the request URI must agree with — for
+example the Backblaze B2 `api_url` — load the credential first, build the URI
+from it, and sign with that same credential:
+
+```rust
+let credential = signer.credential_for(None).await?;
+let uri = format!(
+    "{}/b2api/v4/b2_list_buckets?accountId={account_id}",
+    credential.api_url
+);
+
+let mut req = http::Request::builder()
+    .method(http::Method::GET)
+    .uri(uri)
+    .body(())?
+    .into_parts()
+    .0;
+
+signer.sign_with_credential(&mut req, &credential, None).await?;
+```
+
+`credential_for` uses the same serialized cache and operation-deadline checks
+as `sign`. `sign_with_credential` never loads, refreshes, or stores a
+credential; when the supplied credential cannot cover the requested operation,
+it returns `CredentialInvalid` and leaves the request unchanged. Load a new
+credential and rebuild the URI in that case. The
+[Backblaze B2 provider page](/docs/providers/b2/) shows the complete example.
+
 ## Minimum supported Rust version is 1.87
 
 The RustCrypto backend's `rsa 0.10` dependency requires Rust 1.87, and the
@@ -296,25 +330,25 @@ preserves the rest of the wire query.
 ## OBS and TOS credentials carry an absolute expiry
 
 The Huawei Cloud OBS and Volcengine TOS `Credential` types gained
-`expires_at: Option<Timestamp>` in the v0.20.9 release-candidate source. That
-public field breaks struct-literal construction:
+`expires_at: Option<Timestamp>` in the v0.20.9 release. That public field
+breaks struct-literal construction:
 
 ```rust
-// 0.20 and earlier
+// 0.20.8 and earlier
 let credential = obs::Credential {
     access_key_id,
     secret_access_key,
-    security_token,
+    security_token, // Option<String>
 };
 
-// 0.21, Huawei Cloud OBS: the constructor keeps the security token and leaves
-// the expiration unset.
+// 0.20.9 and later, Huawei Cloud OBS: the constructor takes the key pair and
+// an optional security token, and leaves the expiration unset.
 let credential = obs::Credential::new(access_key_id, secret_access_key, security_token)
     .with_expires_at(expires_at);
 
-// 0.21, Volcengine TOS: the constructor takes only the key pair.
+// 0.20.9 and later, Volcengine TOS: the constructor takes only the key pair.
 let credential = tos::Credential::new(&access_key_id, &secret_access_key)
-    .with_session_token(&security_token)
+    .with_session_token(&session_token)
     .with_expires_at(expires_at);
 ```
 
@@ -324,9 +358,8 @@ signed URL. The STS granters (`AssumeRole` for TOS, IAM `Agency` for OBS) and
 Tencent COS `GetFederationToken` return credentials that carry the exact
 cloud-side expiration.
 
-These changes already landed in the v0.20.9 release-candidate source, so they
-are new relative to the published 0.20.8 crates. If the v0.20.9 vote completes
-first, they reach crates.io there; the 0.21 release carries them either way.
+v0.20.9 is released, so these changes are new relative to the 0.20.8 crates
+and already available on the 0.20 line. The 0.21 release carries them as well.
 
 ## Behavior preserved
 
