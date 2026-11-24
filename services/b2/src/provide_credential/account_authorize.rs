@@ -114,11 +114,8 @@ impl ProvideCredential for AccountAuthorizationCredentialProvider {
             return Err(authorization_error(response.status(), response.body()));
         }
 
-        let response: AuthorizeAccountResponse =
-            serde_json::from_slice(response.body()).map_err(|e| {
-                Error::unexpected("failed to parse B2 account authorization response")
-                    .with_source(e)
-            })?;
+        let response: AuthorizeAccountResponse = serde_json::from_slice(response.body())
+            .map_err(|_| Error::unexpected("failed to parse B2 account authorization response"))?;
 
         if response.authorization_token.is_empty() {
             return Err(Error::unexpected(
@@ -188,13 +185,16 @@ fn authorization_error(status: http::StatusCode, body: &[u8]) -> Error {
     }
 
     // B2 error bodies are not secret, but only the stable error code is useful
-    // for diagnosis. Do not echo the response body or the request credentials.
+    // for diagnosis. Echo only codes documented for this operation so a proxy or
+    // malformed response cannot place credential material in the error message.
     let code = serde_json::from_slice::<ErrorResponse>(body)
         .ok()
         .and_then(|response| response.code);
-    let code = code
-        .map(|code| format!(", code {code}"))
-        .unwrap_or_default();
+    let code = match code.as_deref() {
+        Some(code) if is_authorize_account_error_code(code) => format!(", code {code}"),
+        Some(_) => ", code unrecognized".to_string(),
+        None => String::new(),
+    };
     let message = format!("B2 account authorization failed (status {status}{code})");
 
     match status {
@@ -205,6 +205,22 @@ fn authorization_error(status: http::StatusCode, body: &[u8]) -> Error {
         _ if status.is_server_error() => Error::unexpected(message).set_retryable(true),
         _ => Error::unexpected(message),
     }
+}
+
+/// Error codes documented for
+/// [`b2_authorize_account`](https://www.backblaze.com/apidocs/b2-authorize-account).
+///
+/// Responses are untrusted. Keeping the set fixed lets an unexpected code appear
+/// as `unrecognized` instead of being copied into logs.
+fn is_authorize_account_error_code(code: &str) -> bool {
+    matches!(
+        code,
+        "bad_bucket_id"
+            | "bad_request"
+            | "transaction_cap_exceeded"
+            | "unauthorized"
+            | "unsupported"
+    )
 }
 
 #[derive(serde::Deserialize)]
@@ -254,6 +270,19 @@ mod tests {
         let text = format!("{error:?}");
         assert!(text.contains("status 401"));
         assert!(text.contains("code unauthorized"));
+        assert!(!text.contains("application-key-secret"));
+    }
+
+    #[test]
+    fn unknown_error_response_code_is_not_echoed() {
+        let body = br#"{"status":401,"code":"synthetic-unrecognized-code","message":"do not echo application-key-secret"}"#;
+        let error = authorization_error(http::StatusCode::UNAUTHORIZED, body);
+
+        assert_eq!(reqsign_core::ErrorKind::CredentialInvalid, error.kind());
+        let text = format!("{error:?}");
+        assert!(text.contains("status 401"));
+        assert!(text.contains("code unrecognized"));
+        assert!(!text.contains("synthetic-unrecognized-code"));
         assert!(!text.contains("application-key-secret"));
     }
 }
