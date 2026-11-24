@@ -252,4 +252,5 @@ POSSIBILITY OF SUCH DAMAGE.
 The RSA test key rsa_balanced_pkcs8.pem under tests/fixtures/ was generated
 for this project and is not derived from RFC 9421. The signature fixture
 rsa_balanced_signature.txt was generated for this project with that key over
-the RFC 9421 Section 4.3 signature base and is not an RFC 9421 example value.
+the RFC 9421 Section 4.3 signature base with keyid="test-key-rsa" changed to
+keyid="test-key-rsa-balanced"; it is not an RFC 9421 example value.
