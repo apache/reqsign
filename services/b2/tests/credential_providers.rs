@@ -235,6 +235,26 @@ async fn malformed_response_is_rejected_without_echoing_the_body() {
 }
 
 #[tokio::test]
+async fn mistyped_response_is_rejected_without_echoing_the_payload() {
+    let unexpected_value = "synthetic-expiration-string";
+    let body = format!(
+        r#"{{"apiInfo":{{"storageApi":{{"apiUrl":"{API_URL}","downloadUrl":"{DOWNLOAD_URL}"}}}},"authorizationToken":"{AUTHORIZATION_TOKEN}","applicationKeyExpirationTimestamp":"{unexpected_value}"}}"#
+    );
+    let mock = MockB2::new(body);
+    let context = Context::new().with_http_send(mock);
+
+    let error = explicit_provider()
+        .provide_credential(&context)
+        .await
+        .expect_err("mistyped response must fail");
+
+    assert_eq!(reqsign_core::ErrorKind::Unexpected, error.kind());
+    let text = format!("{error:?}");
+    assert!(!text.contains(unexpected_value));
+    assert!(!text.contains(AUTHORIZATION_TOKEN));
+}
+
+#[tokio::test]
 async fn response_without_native_api_urls_is_rejected() {
     let body = format!(
         r#"{{"apiInfo":{{"storageApi":{{"apiUrl":"","downloadUrl":"{DOWNLOAD_URL}"}}}},"authorizationToken":"{AUTHORIZATION_TOKEN}"}}"#
