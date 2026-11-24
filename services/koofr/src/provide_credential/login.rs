@@ -258,23 +258,31 @@ fn is_dot_segment(segment: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
     use std::collections::VecDeque;
+    #[cfg(not(target_arch = "wasm32"))]
     use std::error::Error as StdError;
+    #[cfg(not(target_arch = "wasm32"))]
     use std::sync::{Arc, Mutex};
 
+    #[cfg(not(target_arch = "wasm32"))]
     use bytes::Bytes;
+    #[cfg(not(target_arch = "wasm32"))]
     use reqsign_core::HttpSend;
 
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
     type MockResult = std::result::Result<http::Response<Bytes>, Error>;
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[derive(Debug, Clone, Default)]
     struct MockHttp {
         responses: Arc<Mutex<VecDeque<MockResult>>>,
         requests: Arc<Mutex<Vec<http::Request<Bytes>>>>,
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     impl MockHttp {
         fn with_response(response: http::Response<Bytes>) -> Self {
             let mock = Self::default();
@@ -293,6 +301,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     impl HttpSend for MockHttp {
         async fn http_send(&self, request: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
             self.requests.lock().expect("lock").push(request);
@@ -304,6 +313,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn json_response(status: u16, body: &str) -> http::Response<Bytes> {
         http::Response::builder()
             .status(status)
@@ -312,10 +322,12 @@ mod tests {
             .expect("response must build")
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn test_context(mock: MockHttp) -> Context {
         Context::new().with_http_send(mock)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn rendered_error(error: &Error) -> String {
         let mut rendered = format!("{error} {error:?}");
         let mut source = StdError::source(error);
@@ -326,11 +338,13 @@ mod tests {
         rendered
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn provider(endpoint: &str) -> LoginCredentialProvider {
         LoginCredentialProvider::new("me@example.com", "fabricated-app-password")
             .with_endpoint(endpoint)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn exchanges_first_party_sdk_json_body_for_token() -> Result<()> {
         let mock = MockHttp::with_response(json_response(200, r#"{"token":"fabricated-token"}"#));
@@ -359,6 +373,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn accepts_capitalized_token_field_from_first_party_sdk_shape() -> Result<()> {
         let mock = MockHttp::with_response(json_response(200, r#"{"Token":"fabricated-token"}"#));
@@ -372,6 +387,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn preserves_explicit_http_base_prefix_and_port() -> Result<()> {
         for (endpoint, expected) in [
@@ -396,6 +412,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn rejects_invalid_endpoint_before_transport() {
         for endpoint in [
@@ -438,6 +455,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn endpoint_validation_error_omits_raw_endpoint() {
         let mock = MockHttp::default();
@@ -457,6 +475,7 @@ mod tests {
         assert!(!rendered.contains("fabricated-query-marker"));
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn rejects_incomplete_configuration_before_http() {
         for provider in [
@@ -476,6 +495,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn rejects_empty_or_malformed_token_response() {
         for body in [
@@ -497,6 +517,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn malformed_response_does_not_echo_body_or_parser_source() {
         let mock = MockHttp::with_response(json_response(200, r#""fabricated-response-marker""#));
@@ -513,6 +534,7 @@ mod tests {
         assert!(!rendered.contains("fabricated-response-marker"));
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn error_response_drops_free_form_server_fields() {
         let mock = MockHttp::with_response(json_response(
@@ -534,6 +556,7 @@ mod tests {
         assert!(!rendered.contains("fabricated-request-marker"));
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn transport_error_keeps_kind_and_retryability_without_leaking() {
         let transport_error = Error::unexpected("fabricated-transport-marker")
@@ -557,6 +580,7 @@ mod tests {
         assert!(!rendered.contains("fabricated-source-marker"));
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn unicode_application_secret_debug_and_wire_encoding() -> Result<()> {
         let app_password = "密码 é 🚀";

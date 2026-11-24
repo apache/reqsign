@@ -100,9 +100,11 @@ Cloudflare and Vercel environment, static, and header signing need no JavaScript
 clock.
 
 Yandex Disk static credentials without an expiry and header signing need no
-JavaScript clock. Baidu Netdisk static query signing also needs no JavaScript
-clock. Seafile signing also needs no JavaScript clock. HTTP Message Signatures
-signing needs a JavaScript clock and therefore a wasm-bindgen host.
+JavaScript clock; expiring Yandex Disk credentials read it. Baidu Netdisk static
+query signing also needs no JavaScript clock. Seafile signing also needs no
+JavaScript clock. Koofr signing needs no JavaScript clock and ignores
+`expires_in`. HTTP Message Signatures signing needs a JavaScript clock and
+therefore a wasm-bindgen host.
 
 These clock notes cover the named paths only and are not an exhaustive
 inventory: a compile-tested provider not named here may still read the clock on
@@ -112,14 +114,17 @@ The [provider matrix](/docs/providers/) marks WASM status per provider;
 treat providers outside this set as unsupported there until the catalog says
 otherwise.
 
-The HTTP Message Signatures, OAuth 2.0, Dropbox, Aliyun Drive, and OneDrive
-paths enable Jiff's `js` feature for `wasm32-unknown-unknown`. Their public
-signing and refresh entry points read the clock from a wasm-bindgen JavaScript
-host such as a browser or Node. A bare WASM runtime without a JavaScript clock
-can compile the crates but is not a supported runtime; calling `Timestamp::now`
-traps there. CI exercises the public HTTP Message Signatures HMAC signing,
-Dropbox signing, OAuth2 mock-refresh, Aliyun Drive static and refresh, and
-OneDrive signing and refresh paths under `wasm-bindgen-test` in Node.
+The Backblaze B2, Upyun, Yandex Disk, HTTP Message Signatures, OAuth 2.0,
+Dropbox, Aliyun Drive, and OneDrive crates enable Jiff's `js` feature for
+`wasm32-unknown-unknown`. B2 authorization-token lifetime checks, the Upyun
+default signer's `Date`, expiring Yandex Disk credentials, and HTTP Message
+Signatures signing read the clock from a wasm-bindgen JavaScript host such as a
+browser or Node. A bare WASM runtime without a JavaScript clock can compile the
+crates but is not a supported runtime for those paths; calling `Timestamp::now`
+traps there. CI exercises the public B2 signing, Upyun default-clock signing,
+expiring Yandex Disk signing, HTTP Message Signatures HMAC signing, Dropbox
+signing, OAuth2 mock-refresh, Aliyun Drive static and refresh, and OneDrive
+signing and refresh paths under `wasm-bindgen-test` in Node.
 
 ```bash
 rustup target add wasm32-unknown-unknown

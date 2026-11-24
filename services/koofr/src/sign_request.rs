@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use http::HeaderValue;
 use http::header::AUTHORIZATION;
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Error, Result, SignRequest, SigningCredential};
 
 use crate::Credential;
@@ -42,6 +43,16 @@ impl RequestSigner {
 
 impl SignRequest for RequestSigner {
     type Credential = Credential;
+
+    fn required_valid_until(
+        &self,
+        _credential: &Self::Credential,
+        _expires_in: Option<Duration>,
+    ) -> Timestamp {
+        // Koofr tokens have no protocol time and the exchange returns no expiry,
+        // so signing has no clock dependency and expires_in is ignored.
+        Timestamp::default()
+    }
 
     async fn sign_request(
         &self,
@@ -73,7 +84,7 @@ impl SignRequest for RequestSigner {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use reqsign_core::Context;
 

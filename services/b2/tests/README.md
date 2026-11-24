@@ -10,9 +10,12 @@ authorization header.
 
 ```text
 tests/
-└── credential_providers.rs   # Account exchange, providers, signer, caching
+├── credential_providers.rs   # Account exchange, providers, signer, caching
+└── wasm.rs                   # Public signing with the JavaScript clock
 ```
 
 The tests cover the v4 account authorization exchange, application key expiry,
 error redaction, environment discovery, static credentials, default-chain
-overrides, request-target preservation, and credential caching.
+overrides, request-target preservation, and credential caching. `wasm.rs` runs
+the public signing path with static and expiring credentials under
+`wasm-bindgen-test` in Node.
