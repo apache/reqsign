@@ -88,6 +88,9 @@ let provider = DefaultCredentialProvider::new()
     .push_front(StaticCredentialProvider::new("operator", "password"));
 ```
 
+The default source and prepended providers fail closed: a provider error is
+returned instead of falling through to a lower-priority source.
+
 ## Contract
 
 - Only header authentication is implemented. `expires_in` is ignored.

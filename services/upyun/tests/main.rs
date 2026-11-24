@@ -22,9 +22,11 @@ use http::{Request, header};
 use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::base64_encode;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Error, ErrorKind, FileRead, Result, Signer};
+use reqsign_core::{Context, Error, ErrorKind, FileRead, ProvideCredentialChain, Result, Signer};
 use reqsign_crypto_rustcrypto::RustCryptoProvider;
-use reqsign_upyun::{RequestSigner, StaticCredentialProvider, UpxConfigCredentialProvider};
+use reqsign_upyun::{
+    DefaultCredentialProvider, RequestSigner, StaticCredentialProvider, UpxConfigCredentialProvider,
+};
 use std::collections::HashMap;
 
 const CONTENT_MD5: &str = "content-md5";
@@ -236,5 +238,114 @@ async fn signer_fails_closed_without_md5_and_preserves_the_request() -> anyhow::
     assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
     assert_eq!(req.uri, original.uri);
     assert_eq!(req.headers, original.headers);
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_explicit_session_read_does_not_fall_back_to_the_configured_session()
+-> anyhow::Result<()> {
+    let valid_path = "/test/.upx.cfg";
+    let bad_path = "/test/bad.cfg";
+    let content = encode_upx_config(&serde_json::json!({
+        "user_idx": 0,
+        "users": [
+            {"bucket": "upyun-temp", "username": "operator123", "password": "password123"}
+        ]
+    }));
+    let ctx = test_context().with_file_read(TestFileRead {
+        files: HashMap::from([
+            (valid_path.to_string(), content),
+            (bad_path.to_string(), b"!!!".to_vec()),
+        ]),
+    });
+    let provider = DefaultCredentialProvider::builder()
+        .upx_config(UpxConfigCredentialProvider::new().with_config_file(valid_path))
+        .build()
+        .push_front(UpxConfigCredentialProvider::new().with_config_file(bad_path));
+    let signer = Signer::new(
+        ctx,
+        provider,
+        RequestSigner::new().with_time(signing_time()),
+    );
+    let mut req = Request::put("https://v0.api.upyun.com/upyun-temp/demo.jpg")
+        .header(CONTENT_MD5, "7ac66c0f148de9519b8bd264312c4d64")
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+    let original = req.clone();
+
+    let err = signer
+        .sign(&mut req, None)
+        .await
+        .expect_err("a failed explicit session must not use the configured session");
+
+    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+    assert_eq!(req.uri, original.uri);
+    assert_eq!(req.headers, original.headers);
+    Ok(())
+}
+
+#[tokio::test]
+async fn configured_session_read_error_is_not_replaced_by_a_missing_credential()
+-> anyhow::Result<()> {
+    let bad_path = "/test/bad.cfg";
+    let ctx = test_context().with_file_read(TestFileRead {
+        files: HashMap::from([(bad_path.to_string(), b"!!!".to_vec())]),
+    });
+    let provider = DefaultCredentialProvider::builder()
+        .upx_config(UpxConfigCredentialProvider::new().with_config_file(bad_path))
+        .build();
+    let signer = Signer::new(
+        ctx,
+        provider,
+        RequestSigner::new().with_time(signing_time()),
+    );
+    let mut req = Request::get("https://v0.api.upyun.com/upyun-temp/object.txt")
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+    let err = signer
+        .sign(&mut req, None)
+        .await
+        .expect_err("a configured session error must not become a missing credential");
+
+    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+    Ok(())
+}
+
+#[tokio::test]
+async fn with_chain_keeps_the_callers_error_policy() -> anyhow::Result<()> {
+    let bad_path = "/test/bad.cfg";
+    let ctx = test_context().with_file_read(TestFileRead {
+        files: HashMap::from([(bad_path.to_string(), b"!!!".to_vec())]),
+    });
+    let chain = ProvideCredentialChain::new()
+        .push(UpxConfigCredentialProvider::new().with_config_file(bad_path))
+        .push(StaticCredentialProvider::new("operator123", "password123"));
+    let signer = Signer::new(
+        ctx,
+        DefaultCredentialProvider::with_chain(chain),
+        RequestSigner::new().with_time(signing_time()),
+    );
+    let mut req = Request::put("https://v0.api.upyun.com/upyun-temp/demo.jpg")
+        .header(CONTENT_MD5, "7ac66c0f148de9519b8bd264312c4d64")
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+    signer
+        .sign(&mut req, None)
+        .await
+        .expect("a caller-supplied chain keeps its permissive error policy");
+
+    assert!(
+        req.headers[AUTHORIZATION]
+            .to_str()?
+            .starts_with("UPYUN operator123:")
+    );
     Ok(())
 }

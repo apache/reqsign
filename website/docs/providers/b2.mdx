@@ -57,6 +57,10 @@ for a Native API authorization token with the documented v4
 the Native API and download base URLs, and the earlier of the 24-hour token limit
 and the application key expiration timestamp. `Signer` caches and refreshes it.
 
+The default source and prepended providers fail closed: a provider error is
+returned to the caller instead of falling through, so a retryable
+`b2_authorize_account` failure stays retryable.
+
 Use `AccountAuthorizationCredentialProvider` for an explicit application key, or
 `StaticCredentialProvider` when the caller already obtained the token and base
 URLs. Key capabilities and bucket or prefix restrictions are enforced by B2 and

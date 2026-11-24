@@ -41,7 +41,10 @@ signer.sign(&mut request, None).await?;
 The default chain reads `B2_APPLICATION_KEY_ID` and `B2_APPLICATION_KEY`, the
 variables used by the official B2 command line tools, and sends them to
 `https://api.backblazeb2.com/b2api/v4/b2_authorize_account` with HTTP Basic
-authentication. API v4 supports Multi-Bucket Application Keys.
+authentication. API v4 supports Multi-Bucket Application Keys. The default
+source and prepended providers fail closed: a provider error is returned to
+the caller instead of falling through, so a retryable `b2_authorize_account`
+failure stays retryable.
 
 Use `AccountAuthorizationCredentialProvider` for an explicit application key, or
 `StaticCredentialProvider` when the caller already has an authorization token and
