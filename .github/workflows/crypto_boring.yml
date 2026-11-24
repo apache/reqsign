@@ -61,3 +61,14 @@ jobs:
         run: cargo clippy --manifest-path crypto/boring/Cargo.toml --all-targets -- -D warnings
       - name: Test
         run: cargo test --manifest-path crypto/boring/Cargo.toml
+      # BoringSSL's FIPS build runs its Go tools, and its go.mod requires Go
+      # 1.27 while the runner images default to Go 1.26.
+      - name: Install Go for the FIPS build
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: ">=1.27.0"
+          cache: false
+      - name: Clippy (fips)
+        run: cargo clippy --manifest-path crypto/boring/Cargo.toml --all-targets --features fips -- -D warnings
+      - name: Test (fips)
+        run: cargo test --manifest-path crypto/boring/Cargo.toml --features fips
