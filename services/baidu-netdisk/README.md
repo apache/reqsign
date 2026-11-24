@@ -55,9 +55,9 @@ different token.
 The caller owns the API host, method, path, other query parameters, headers
 (including `User-Agent`), and body. Signing removes any existing `access_token`
 query parameter and appends one encoded parameter. Existing percent escapes,
-parameter order, duplicate keys, empty values, literal `+` characters, and all
-headers are preserved. This makes re-signing safe without leaving stale
-authentication parameters.
+parameter order, duplicate keys, empty values, empty segments, literal `+`
+characters, and all headers are preserved. This makes re-signing safe without
+leaving stale authentication parameters.
 
 Query authentication has no separate presign lifetime here, so signing rejects
 `expires_in`. Do not forward a signed request to an unrelated host.

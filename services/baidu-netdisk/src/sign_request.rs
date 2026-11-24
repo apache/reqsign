@@ -84,19 +84,27 @@ impl SignRequest for RequestSigner {
 }
 
 fn append_access_token(uri: &http::Uri, access_token: &str) -> Result<http::Uri> {
-    let mut query = uri
-        .query()
-        .unwrap_or_default()
-        .split('&')
-        .filter(|pair| {
-            form_urlencoded::parse(pair.as_bytes())
-                .next()
-                .is_none_or(|(name, _)| name != "access_token")
-        })
-        .collect::<Vec<_>>()
-        .join("&");
+    // Split the raw query so unrelated segments keep their exact wire
+    // representation, including empty segments and encoded names. An absent or
+    // empty query has no segment to preserve; splitting it would produce one
+    // empty segment that must not contribute a separator.
+    let preserved = match uri.query() {
+        Some(query) if !query.is_empty() => query
+            .split('&')
+            .filter(|pair| {
+                form_urlencoded::parse(pair.as_bytes())
+                    .next()
+                    .is_none_or(|(name, _)| name != "access_token")
+            })
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
 
-    if !query.is_empty() && !query.ends_with('&') {
+    let mut query = preserved.join("&");
+    // Every preserved segment needs its own separator, including a trailing
+    // empty segment, so appending the token cannot reuse a `&` that already
+    // represents an empty segment.
+    if !preserved.is_empty() {
         query.push('&');
     }
     query.push_str(
