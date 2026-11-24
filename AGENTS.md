@@ -82,7 +82,7 @@ servers checked into `services/aws-v4/tests/mocks/`.
 `reqsign-core` and a subset of services (`aws-v4`, `aws-v4a`, `azure`,
 `aliyun`, `aliyun-drive`, `b2`, `baidu-netdisk`, `tencent`, `cloudflare`,
 `oauth2`, `dropbox`, `http-message-signatures`, `github`, `koofr`, `onedrive`,
-`vercel`, `yandex-disk`) must compile for
+`upyun`, `seafile`, `vercel`, `yandex-disk`) must compile for
 `wasm32-unknown-unknown`. CI verifies this supported subset. GitHub environment,
 static, and anonymous signing need no JavaScript clock; GitHub CLI discovery
 still requires a `CommandExecute` adapter at runtime and is unavailable in bare

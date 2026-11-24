@@ -69,7 +69,10 @@ The refresh provider sends the client ID and secret in the RFC 6749 form body
 and uses Dropbox's fixed token endpoint unless the caller explicitly replaces
 it with another trusted HTTPS endpoint. It rejects a successful token response
 that omits `expires_in`, because Dropbox access tokens are expected to expire
-and an unknown lifetime must not be cached as permanent.
+and an unknown lifetime must not be cached as permanent. The default source and
+prepended providers fail closed: a failed explicit refresh or an unusable
+explicit token returns an error instead of falling through to
+`DBXCLI_ACCESS_TOKEN`.
 
 Dropbox uses header authentication only. Signing adds a sensitive
 `Authorization: Bearer` header and rejects `expires_in`; it never modifies the

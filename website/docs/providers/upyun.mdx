@@ -59,12 +59,15 @@ local check of the request target and does not assume server-side path
 rewriting. The file has no account or endpoint scope beyond the bucket. Install
 `StaticCredentialProvider` directly, or push it in front of the default chain,
 when credentials come from application configuration; explicit static
-credentials are unscoped unless the caller sets a bucket.
+credentials are unscoped unless the caller sets a bucket. The default source
+and prepended providers fail closed: a provider error is returned instead of
+falling through to a lower-priority source.
 
 The signer adds `Date` and `Authorization`. Set `Content-MD5` before signing
 when the request body should participate in the signature. The signed URI is
-the request's wire path exactly as supplied; the signer does not decode,
-normalize, or rebuild it. It does not create presigned URLs or token
-credentials, and it does not send the request.
+the request's wire path and raw query exactly as supplied, so endpoints such as
+`?usage` and `?metadata=...` are covered; the signer does not decode, reorder,
+or rebuild those bytes. It does not create presigned URLs or token credentials,
+and it does not send the request.
 
 <ProviderDetails id="upyun" />

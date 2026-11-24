@@ -27,10 +27,11 @@ const CONTENT_MD5: &str = "content-md5";
 
 /// RequestSigner signs Upyun REST API requests with the UPYUN header scheme.
 ///
-/// The signature covers the request method, the wire path, the `Date` header,
-/// and the `Content-MD5` header when it is present and non-empty. The signer
-/// inserts `Date` and `Authorization` and preserves the request path and query
-/// exactly as supplied by the caller.
+/// The signature covers the request method, the wire URI, the `Date` header,
+/// and the `Content-MD5` header when it is present and non-empty. The wire URI
+/// is the request path plus the raw query string when one is present. The
+/// signer inserts `Date` and `Authorization` and preserves the request path and
+/// query exactly as supplied by the caller.
 ///
 /// A credential scoped to a bucket is accepted only when the first segment of
 /// the request's wire path exactly equals that bucket. This check runs on every
@@ -38,9 +39,9 @@ const CONTENT_MD5: &str = "content-md5";
 /// credential. Explicit static credentials are unscoped unless the caller sets
 /// a bucket.
 ///
-/// The signed URI is the wire path exactly as supplied. The signer does not
-/// decode, normalize, or rebuild it, and makes no claim about path rewriting by
-/// a proxy or server.
+/// The signed URI is the wire path and raw query exactly as supplied. The
+/// signer does not decode, normalize, reorder, or rebuild them, and makes no
+/// claim about path rewriting by a proxy or server.
 ///
 /// `expires_in` is ignored. Upyun validates the header signature for 30 minutes
 /// from the signed `Date`; the signer does not create presigned URLs or token
@@ -138,9 +139,20 @@ impl SignRequest for RequestSigner {
             None => None,
         };
 
+        // Upyun signs the request target as it appears on the wire. The first-party
+        // Go and Python SDKs pass the URL path and raw query into Unified Auth, so
+        // endpoints such as `?usage` and `?metadata=...` require the query here.
+        // The query is used verbatim: decoding or rebuilding it would change the
+        // signed bytes for encoded separators, repeated keys, and their order.
+        let mut signed_uri = signing_req.path.clone();
+        if let Some(query) = req.uri.query().filter(|query| !query.is_empty()) {
+            signed_uri.push('?');
+            signed_uri.push_str(query);
+        }
+
         let mut elements = vec![
             signing_req.method.as_str(),
-            signing_req.path.as_str(),
+            signed_uri.as_str(),
             date.as_str(),
         ];
         if let Some(content_md5) = content_md5 {
@@ -153,8 +165,11 @@ impl SignRequest for RequestSigner {
             base64_encode(&provider.hmac_sha1(signing_key.as_bytes(), string_to_sign.as_bytes())?);
 
         let date = HeaderValue::from_str(&date)?;
-        let authorization =
+        let mut authorization =
             HeaderValue::from_str(&format!("UPYUN {}:{signature}", credential.operator))?;
+        // The signature authenticates requests for 30 minutes, so keep it out of
+        // header-map `Debug` output and other diagnostic formatting.
+        authorization.set_sensitive(true);
 
         signing_req.headers.insert(DATE, date);
         signing_req.headers.insert(AUTHORIZATION, authorization);
@@ -222,6 +237,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn marks_the_authorization_header_as_sensitive() -> anyhow::Result<()> {
+        let signer = RequestSigner::new().with_time(signing_time());
+        let credential = Credential::new("operator123", "password123");
+        let mut req = http::Request::get("https://v0.api.upyun.com/bucket/object.txt")
+            .body(())?
+            .into_parts()
+            .0;
+
+        signer
+            .sign_request(&test_context(), &mut req, Some(&credential), None)
+            .await?;
+
+        assert!(
+            req.headers[AUTHORIZATION].is_sensitive(),
+            "the generated signature must not appear in header-map Debug output"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn signs_the_wire_path_without_decoding_it() -> anyhow::Result<()> {
         let signer = RequestSigner::new().with_time(signing_time());
         let credential = Credential::new("operator123", "password123");
@@ -237,6 +272,69 @@ mod tests {
         assert_eq!(
             req.headers[AUTHORIZATION],
             "UPYUN operator123:jrQiupCLfC0gKVOqBhCjrMTR1UQ="
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn signs_the_raw_query_string_with_the_path() -> anyhow::Result<()> {
+        let signer = RequestSigner::new().with_time(signing_time());
+        let credential = Credential::new("operator123", "password123").with_bucket("upyun-temp");
+        let mut req = http::Request::get("https://v0.api.upyun.com/upyun-temp/?usage")
+            .body(())?
+            .into_parts()
+            .0;
+
+        signer
+            .sign_request(&test_context(), &mut req, Some(&credential), None)
+            .await?;
+
+        assert_eq!(
+            req.headers[AUTHORIZATION],
+            "UPYUN operator123:FUcq+SD/n+/UyNIxDLpqaUt92Ws="
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn signs_the_query_before_the_content_md5_element() -> anyhow::Result<()> {
+        let signer = RequestSigner::new().with_time(signing_time());
+        let credential = Credential::new("operator123", "password123");
+        let mut req =
+            http::Request::patch("https://v0.api.upyun.com/upyun-temp/demo.jpg?metadata=delete")
+                .header(CONTENT_MD5, "7ac66c0f148de9519b8bd264312c4d64")
+                .body(())?
+                .into_parts()
+                .0;
+
+        signer
+            .sign_request(&test_context(), &mut req, Some(&credential), None)
+            .await?;
+
+        assert_eq!(
+            req.headers[AUTHORIZATION],
+            "UPYUN operator123:KM+OCMH7XWJS/d6rT48SOOrOIUw="
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn preserves_the_raw_query_encoding_and_order() -> anyhow::Result<()> {
+        let signer = RequestSigner::new().with_time(signing_time());
+        let credential = Credential::new("operator123", "password123");
+        let mut req =
+            http::Request::get("https://v0.api.upyun.com/upyun-temp/demo.jpg?b=2&a=%2F&a=1+2")
+                .body(())?
+                .into_parts()
+                .0;
+
+        signer
+            .sign_request(&test_context(), &mut req, Some(&credential), None)
+            .await?;
+
+        assert_eq!(
+            req.headers[AUTHORIZATION], "UPYUN operator123:OQfqVaF2jBgEpxBuzbkKEIFUfNw=",
+            "the signature must cover the query bytes exactly as supplied"
         );
         Ok(())
     }

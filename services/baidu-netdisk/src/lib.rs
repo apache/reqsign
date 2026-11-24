@@ -42,7 +42,8 @@
 //! existing `access_token` query parameter and appends one encoded
 //! `access_token` parameter. It preserves the raw representation and order of
 //! unrelated query parameters, including existing percent escapes, duplicate
-//! keys, empty values, and literal `+` characters. All headers are preserved.
+//! keys, empty values, empty segments, and literal `+` characters. All
+//! headers are preserved.
 //!
 //! Because the access token appears in the request URI, treat signed URLs,
 //! logs that include the URI, and error output as secret-bearing material. Do

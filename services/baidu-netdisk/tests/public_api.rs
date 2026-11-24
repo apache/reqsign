@@ -87,6 +87,35 @@ async fn re_signing_replaces_authentication_and_preserves_wire_query() {
     assert_eq!(original_headers, parts.headers);
 }
 
+#[tokio::test]
+async fn re_signing_preserves_empty_and_encoded_query_segments() {
+    for (uri, expected) in [
+        (
+            "https://pan.baidu.com/rest/2.0/xpan/file?a=1&&access_token=old",
+            "https://pan.baidu.com/rest/2.0/xpan/file?a=1&&access_token=fresh-token",
+        ),
+        (
+            "https://pan.baidu.com/rest/2.0/xpan/file?a=1&",
+            "https://pan.baidu.com/rest/2.0/xpan/file?a=1&&access_token=fresh-token",
+        ),
+        (
+            "https://pan.baidu.com/rest/2.0/xpan/file?&access_token=old",
+            "https://pan.baidu.com/rest/2.0/xpan/file?&access_token=fresh-token",
+        ),
+        (
+            "https://pan.baidu.com/rest/2.0/xpan/file?a=1&&access%5Ftoken=old",
+            "https://pan.baidu.com/rest/2.0/xpan/file?a=1&&access_token=fresh-token",
+        ),
+    ] {
+        let mut parts = request(uri);
+        signer("fresh-token")
+            .sign(&mut parts, None)
+            .await
+            .expect("signing must succeed");
+        assert_eq!(expected, parts.uri.to_string(), "input URI: {uri}");
+    }
+}
+
 #[derive(Debug)]
 struct MissingProvider;
 
