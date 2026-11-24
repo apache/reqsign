@@ -253,12 +253,15 @@ pub trait SignRequest: Debug + Send + Sync + Unpin + 'static {
     /// method must not perform I/O or mutate state. When a deadline depends on an
     /// artifact's signing time, [`SignRequest::sign_request`] must derive both the
     /// deadline check and the artifact from the same captured timestamp.
+    ///
+    /// The default implementation returns `Timestamp::now()` plus `expires_in`,
+    /// saturating at the maximum representable timestamp when the sum overflows.
     fn required_valid_until(
         &self,
         _credential: &Self::Credential,
         expires_in: Option<Duration>,
     ) -> Timestamp {
-        Timestamp::now() + expires_in.unwrap_or_default()
+        Timestamp::now().saturating_add(expires_in.unwrap_or_default())
     }
 
     /// Sign a request head.
@@ -298,12 +301,15 @@ pub trait SignRequestDyn: Debug + Send + Sync + Unpin + 'static {
     type Credential: Send + Sync + Unpin + 'static;
 
     /// Dyn version of [`SignRequest::required_valid_until`].
+    ///
+    /// Its default implementation independently computes the same saturating
+    /// deadline.
     fn required_valid_until_dyn(
         &self,
         _credential: &Self::Credential,
         expires_in: Option<Duration>,
     ) -> Timestamp {
-        Timestamp::now() + expires_in.unwrap_or_default()
+        Timestamp::now().saturating_add(expires_in.unwrap_or_default())
     }
 
     /// Dyn version of [`SignRequest::sign_request`].
@@ -532,5 +538,127 @@ mod tests {
         assert!(credential.is_valid_at(timestamp));
         assert!(!credential.is_valid_at(timestamp + Duration::from_secs(1)));
         assert!(!None::<ExactCredential>.is_valid_at(timestamp));
+    }
+
+    #[derive(Clone, Debug)]
+    struct DeadlineCredential {
+        expires_at: Timestamp,
+    }
+
+    impl SigningCredential for DeadlineCredential {
+        fn is_valid(&self) -> bool {
+            self.expires_at > Timestamp::now()
+        }
+
+        fn is_valid_at(&self, timestamp: Timestamp) -> bool {
+            self.expires_at > timestamp
+        }
+    }
+
+    #[derive(Debug)]
+    struct DefaultDeadlineSigner;
+
+    impl SignRequest for DefaultDeadlineSigner {
+        type Credential = DeadlineCredential;
+
+        async fn sign_request(
+            &self,
+            _ctx: &Context,
+            _req: &mut http::request::Parts,
+            _credential: Option<&Self::Credential>,
+            _expires_in: Option<Duration>,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct DynDefaultDeadlineSigner;
+
+    impl SignRequestDyn for DynDefaultDeadlineSigner {
+        type Credential = DeadlineCredential;
+
+        fn sign_request_dyn<'a>(
+            &'a self,
+            _ctx: &'a Context,
+            _req: &'a mut http::request::Parts,
+            _credential: Option<&'a Self::Credential>,
+            _expires_in: Option<Duration>,
+        ) -> BoxedFuture<'a, Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn max_timestamp() -> Timestamp {
+        jiff::Timestamp::MAX
+            .to_string()
+            .parse()
+            .expect("jiff maximum timestamp must parse")
+    }
+
+    fn assert_deadline_covers(
+        deadline: Timestamp,
+        duration: Duration,
+        before: Timestamp,
+        after: Timestamp,
+    ) {
+        assert!(
+            deadline >= before.saturating_add(duration),
+            "deadline {deadline} must not understate {before} + {duration:?}"
+        );
+        assert!(
+            deadline <= after.saturating_add(duration),
+            "deadline {deadline} must not exceed {after} + {duration:?}"
+        );
+    }
+
+    fn finite_deadline_credential() -> DeadlineCredential {
+        DeadlineCredential {
+            expires_at: Timestamp::now() + Duration::from_secs(86_400),
+        }
+    }
+
+    #[test]
+    fn default_required_valid_until_is_nanosecond_accurate_and_saturating() {
+        let signer = DefaultDeadlineSigner;
+        let credential = finite_deadline_credential();
+
+        let before = Timestamp::now();
+        let deadline = signer.required_valid_until(&credential, None);
+        let after = Timestamp::now();
+        assert_deadline_covers(deadline, Duration::ZERO, before, after);
+
+        for duration in [Duration::from_secs(30), Duration::from_millis(1_500)] {
+            let before = Timestamp::now();
+            let deadline = signer.required_valid_until(&credential, Some(duration));
+            let after = Timestamp::now();
+            assert_deadline_covers(deadline, duration, before, after);
+        }
+
+        let deadline = signer.required_valid_until(&credential, Some(Duration::MAX));
+        assert_eq!(deadline, max_timestamp());
+        assert!(
+            !credential.is_valid_at(deadline),
+            "an overflowing request must not make a finite credential valid"
+        );
+    }
+
+    #[test]
+    fn dyn_default_required_valid_until_is_nanosecond_accurate_and_saturating() {
+        let signer = DynDefaultDeadlineSigner;
+        let credential = finite_deadline_credential();
+
+        let before = Timestamp::now();
+        let deadline =
+            signer.required_valid_until_dyn(&credential, Some(Duration::from_millis(1_500)));
+        let after = Timestamp::now();
+        assert_deadline_covers(deadline, Duration::from_millis(1_500), before, after);
+
+        let deadline = signer.required_valid_until_dyn(&credential, Some(Duration::MAX));
+        assert_eq!(deadline, max_timestamp());
+        assert!(
+            !credential.is_valid_at(deadline),
+            "an overflowing request must not make a finite credential valid"
+        );
     }
 }

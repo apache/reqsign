@@ -230,6 +230,42 @@ async fn expiration_controls_refresh_and_exact_signing_deadline() -> Result<()> 
 }
 
 #[tokio::test]
+async fn relative_expiry_builders_keep_subsecond_precision_and_saturate() -> Result<()> {
+    // Jiff's maximum representable timestamp, `9999-12-30T22:00:00.999999999Z`,
+    // is the largest instant that can be combined with any legal UTC offset.
+    let max: Timestamp = "9999-12-30T22:00:00.999999999Z"
+        .parse()
+        .expect("the maximum representable timestamp must parse");
+
+    let before = Timestamp::now();
+    let credential = Credential::new(STATIC_TOKEN)?.with_expires_in(Duration::from_millis(1_500));
+    let after = Timestamp::now();
+    let expires_at = credential
+        .expires_at()
+        .expect("a relative expiry must be stored");
+    assert!(expires_at >= before + Duration::from_millis(1_500));
+    assert!(expires_at <= after + Duration::from_millis(1_500));
+
+    let credential = Credential::new(STATIC_TOKEN)?.with_expires_in(Duration::from_secs(30));
+    let expires_at = credential
+        .expires_at()
+        .expect("a relative expiry must be stored");
+    assert!(expires_at > Timestamp::now());
+
+    let credential = Credential::new(STATIC_TOKEN)?.with_expires_in(Duration::MAX);
+    assert_eq!(credential.expires_at(), Some(max));
+
+    let provider = StaticCredentialProvider::new(STATIC_TOKEN).with_expires_in(Duration::MAX);
+    let credential = provider
+        .provide_credential(&Context::new())
+        .await?
+        .expect("the static provider must return a credential");
+    assert_eq!(credential.expires_at(), Some(max));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn expired_static_credential_fails_without_mutating_the_request() -> Result<()> {
     let signer = Signer::new(
         Context::new(),
