@@ -474,6 +474,12 @@ impl SignRequest for RequestSigner {
                         if let Some(version) = &self.service_sas_version {
                             signer = signer.with_version(version);
                         }
+                        // The working query view is decoded once. Azure requires the
+                        // URL-decoded response override value in the string-to-sign.
+                        if let Some((_, value)) = sctx.query.iter().find(|(name, _)| name == "rscd")
+                        {
+                            signer = signer.with_content_disposition(value.clone());
+                        }
 
                         let signer_token = signer.token(provider).map_err(|e| {
                             reqsign_core::Error::new(
@@ -988,6 +994,116 @@ mod tests {
             format!(
                 "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&sig=CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D"
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn test_shared_key_presign_signs_content_disposition() {
+        let ctx = crate::test_context();
+        let key = reqsign_core::hash::base64_encode(b"key");
+        let cred = Credential::with_shared_key("account", &key);
+        let signer = RequestSigner::new()
+            .with_time(Timestamp::from_str("2022-03-01T08:12:34Z").unwrap())
+            .with_service_sas_permissions("racwd");
+        let encoded = "attachment%3B%20filename%3D%22foo%2Bbar%25.txt%22";
+        let decoded = "attachment; filename=\"foo+bar%.txt\"";
+        let request = Request::get(format!(
+            "https://account.blob.core.windows.net/container/blob.txt?rscd={encoded}"
+        ))
+        .body(())
+        .unwrap();
+        let (mut parts, _) = request.into_parts();
+
+        signer
+            .sign_request(
+                &ctx,
+                &mut parts,
+                Some(&cred),
+                Some(Duration::from_secs(300)),
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            parts
+                .uri
+                .query()
+                .unwrap()
+                .starts_with(&format!("rscd={encoded}&")),
+            "the original encoded override must remain on the wire"
+        );
+
+        let string_to_sign = [
+            "racwd",
+            "", // Start time
+            "2022-03-01T08:17:34Z",
+            "/blob/account/container/blob.txt",
+            "", // Signed identifier
+            "", // IP range
+            "", // Protocol
+            "2020-12-06",
+            "b",
+            "", // Snapshot time
+            "", // Encryption scope
+            "", // rscc
+            decoded,
+            "", // rsce
+            "", // rscl
+            "", // rsct
+        ]
+        .join("\n");
+        let expected_signature = base64_hmac_sha256(
+            ctx.crypto_provider().unwrap(),
+            b"key",
+            string_to_sign.as_bytes(),
+        )
+        .unwrap();
+        let request = SigningRequest::build(&mut parts).unwrap();
+        assert!(
+            request
+                .query
+                .iter()
+                .any(|(name, value)| name == "sig" && value == &expected_signature),
+            "Service SAS must authenticate the decoded response override"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_shared_key_presign_empty_content_disposition_matches_omitted() {
+        async fn sign(uri: &str) -> String {
+            let ctx = crate::test_context();
+            let key = reqsign_core::hash::base64_encode(b"key");
+            let cred = Credential::with_shared_key("account", &key);
+            let signer = RequestSigner::new()
+                .with_time(Timestamp::from_str("2022-03-01T08:12:34Z").unwrap())
+                .with_service_sas_permissions("r");
+            let request = Request::get(uri).body(()).unwrap();
+            let (mut parts, _) = request.into_parts();
+
+            signer
+                .sign_request(
+                    &ctx,
+                    &mut parts,
+                    Some(&cred),
+                    Some(Duration::from_secs(300)),
+                )
+                .await
+                .unwrap();
+
+            let request = SigningRequest::build(&mut parts).unwrap();
+            request
+                .query
+                .iter()
+                .find(|(name, _)| name == "sig")
+                .map(|(_, value)| value.clone())
+                .expect("presigned request must contain a signature")
+        }
+
+        let omitted = sign("https://account.blob.core.windows.net/container/blob.txt").await;
+        let empty = sign("https://account.blob.core.windows.net/container/blob.txt?rscd=").await;
+        assert!(
+            empty == omitted,
+            "an empty response override must not change the Service SAS signature"
         );
     }
 
