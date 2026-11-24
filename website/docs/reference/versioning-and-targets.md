@@ -77,8 +77,9 @@ do.
 **WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a
 defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS
 SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2,
-Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox,
-Koofr, OneDrive, Upyun, Yandex Disk, and Seafile providers. The shared
+Baidu Netdisk, Cloudflare, HTTP Message Signatures, Vercel Blob, Vercel
+Artifacts, Tencent COS, Dropbox, Koofr, OneDrive, Upyun, Yandex Disk, and
+Seafile providers. The shared
 `reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same
 subset. Cloudflare and Vercel environment, static, and header signing work
 without a JavaScript clock. Baidu Netdisk static query signing needs no
@@ -86,9 +87,9 @@ JavaScript clock. Seafile signing also needs no JavaScript clock. GitHub environ
 static, and anonymous signing work without a JavaScript clock; GitHub CLI
 discovery needs a `CommandExecute` adapter and is unavailable in bare WASM
 runtimes. Yandex Disk static credentials without an expiry and header signing
-work without a JavaScript clock. Dropbox, OAuth2, Aliyun Drive, and OneDrive
-runtime signing or refresh additionally requires a wasm-bindgen JavaScript host
-for the clock; see the
+work without a JavaScript clock. HTTP Message Signatures signing, and Dropbox,
+OAuth2, Aliyun Drive, and OneDrive signing or refresh, additionally require a
+wasm-bindgen JavaScript host for the clock; see the
 [Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The
 [provider matrix](/docs/providers/) is the authoritative per-provider
 status.
