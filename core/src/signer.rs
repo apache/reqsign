@@ -26,7 +26,7 @@ use crate::SigningCredential;
 use asyncband::mutex::Mutex;
 use std::any::type_name;
 use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 /// Loads credentials and atomically signs request heads.
@@ -38,7 +38,25 @@ pub struct Signer<K: SigningCredential> {
     ctx: Context,
     loader: Arc<dyn ProvideCredentialDyn<Credential = K>>,
     builder: Arc<dyn SignRequestDyn<Credential = K>>,
-    credential: Arc<Mutex<Option<K>>>,
+    credential: Arc<CredentialCache<K>>,
+}
+
+/// Credential cache shared by clones of a [`Signer`].
+///
+/// Valid credentials are read from `current` without awaiting, so concurrent
+/// signing doesn't serialize. `refresh` only serializes loading a new credential.
+struct CredentialCache<K> {
+    current: RwLock<Option<K>>,
+    refresh: Mutex<()>,
+}
+
+impl<K> CredentialCache<K> {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            current: RwLock::new(None),
+            refresh: Mutex::new(()),
+        })
+    }
 }
 
 impl<K: SigningCredential> Debug for Signer<K> {
@@ -61,14 +79,14 @@ impl<K: SigningCredential> Signer<K> {
 
             loader: Arc::new(loader),
             builder: Arc::new(builder),
-            credential: Arc::new(Mutex::new(None)),
+            credential: CredentialCache::new(),
         }
     }
 
     /// Replace the context and create an isolated empty credential cache.
     pub fn with_context(mut self, ctx: Context) -> Self {
         self.ctx = ctx;
-        self.credential = Arc::new(Mutex::new(None));
+        self.credential = CredentialCache::new();
         self
     }
 
@@ -79,7 +97,7 @@ impl<K: SigningCredential> Signer<K> {
         provider: impl ProvideCredential<Credential = K>,
     ) -> Self {
         self.loader = Arc::new(provider);
-        self.credential = Arc::new(Mutex::new(None));
+        self.credential = CredentialCache::new();
         self
     }
 
@@ -138,16 +156,13 @@ impl<K: SigningCredential> Signer<K> {
     /// routing metadata, then pass the same credential to
     /// [`Signer::sign_with_credential`] so the URI and its authentication agree.
     pub async fn credential_for(&self, expires_in: Option<Duration>) -> Result<K> {
-        let mut cached = self.credential.lock().await;
-        if let Some(credential) = cached.as_ref() {
-            if credential.is_valid()
-                && credential.is_valid_at(
-                    self.builder
-                        .required_valid_until_dyn(credential, expires_in),
-                )
-            {
-                return Ok(credential.clone());
-            }
+        if let Some(credential) = self.usable_cached(expires_in) {
+            return Ok(credential);
+        }
+
+        let refresh = self.credential.refresh.lock().await;
+        if let Some(credential) = self.usable_cached(expires_in) {
+            return Ok(credential);
         }
 
         let credential = self
@@ -159,10 +174,32 @@ impl<K: SigningCredential> Signer<K> {
                     .with_context(format!("credential_type: {}", type_name::<K>()))
             })?;
 
-        *cached = Some(credential.clone());
-        drop(cached);
+        *self
+            .credential
+            .current
+            .write()
+            .expect("credential cache poisoned") = Some(credential.clone());
+        drop(refresh);
 
         self.validate_refreshed_credential(credential, expires_in)
+    }
+
+    fn usable_cached(&self, expires_in: Option<Duration>) -> Option<K> {
+        let current = self
+            .credential
+            .current
+            .read()
+            .expect("credential cache poisoned");
+        current
+            .as_ref()
+            .filter(|credential| {
+                credential.is_valid()
+                    && credential.is_valid_at(
+                        self.builder
+                            .required_valid_until_dyn(credential, expires_in),
+                    )
+            })
+            .cloned()
     }
 
     /// Sign a wire-ready request head with a caller-supplied credential.
@@ -602,8 +639,9 @@ mod tests {
     fn set_cached_credential<K: SigningCredential>(signer: &Signer<K>, credential: K) {
         *signer
             .credential
-            .try_lock()
-            .expect("credential cache must be unlocked") = Some(credential);
+            .current
+            .write()
+            .expect("credential cache poisoned") = Some(credential);
     }
 
     #[test]
@@ -658,6 +696,35 @@ mod tests {
             Some(&HeaderValue::from_static("signed"))
         );
         assert!(!parts.headers.contains_key("x-original"));
+    }
+
+    #[test]
+    fn valid_cached_credential_does_not_wait_for_refresh_lock() {
+        use futures::FutureExt;
+
+        let signer = Signer::new(
+            Context::new(),
+            StaticProvider,
+            MutatingSigner { fail: false },
+        );
+        futures::executor::block_on(signer.sign(&mut request_parts(), None))
+            .expect("signing must succeed");
+
+        let _refresh = signer
+            .credential
+            .refresh
+            .try_lock()
+            .expect("refresh lock must be free");
+        let mut parts = request_parts();
+        signer
+            .sign(&mut parts, None)
+            .now_or_never()
+            .expect("signing with a valid cached credential must not wait")
+            .expect("signing must succeed");
+        assert_eq!(
+            parts.headers.get("authorization"),
+            Some(&HeaderValue::from_static("signed"))
+        );
     }
 
     #[test]
@@ -1157,8 +1224,9 @@ mod tests {
         assert!(
             signer
                 .credential
-                .try_lock()
-                .expect("credential cache must be unlocked")
+                .current
+                .read()
+                .expect("credential cache poisoned")
                 .is_none()
         );
     }
