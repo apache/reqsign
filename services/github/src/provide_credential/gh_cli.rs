@@ -48,14 +48,22 @@ pub(crate) const GH_CLI_MIN_VERSION: &str = "2.40.0";
 ///
 /// The command is executed directly, never through a shell. Reqsign does not
 /// parse the CLI's configuration files; the CLI remains the source of truth
-/// for account and host selection. A missing command adapter or a missing
-/// stored account during the initial `gh config get user` lookup yields no
-/// credential and permits anonymous fallback. After an active user is found,
-/// only an explicit `no oauth token found` response yields no credential.
-/// Command execution errors, empty or whitespace-only successful stdout,
-/// malformed output, and other stored-token failures such as an expired or
-/// revoked token yield a redacted error instead of silently falling back.
-/// Errors never contain the token, the output, or the CLI's stderr.
+/// for account and host selection.
+///
+/// The initial `gh config get user` lookup distinguishes an absent account
+/// from a failure. A context without a command executor, a command adapter
+/// that does not report a typed I/O cause, a missing `gh` executable, a
+/// success without output on older GitHub CLI versions, and the explicit
+/// missing-`user`-key response on newer versions all yield no credential and
+/// permit anonymous fallback. A typed command execution failure other than a
+/// missing executable, a non-zero exit status other than the missing `user`
+/// key, and malformed account output yield a redacted error instead of
+/// silently falling back. After an active user is found, only an explicit
+/// `no oauth token found` response yields no credential. Command execution
+/// errors, empty or whitespace-only successful stdout, malformed output, and
+/// other stored-token failures such as an expired or revoked token yield a
+/// redacted error. Errors never contain the token, the output, or the CLI's
+/// stderr.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GhCliCredentialProvider;
 
@@ -65,27 +73,54 @@ impl GhCliCredentialProvider {
         Self
     }
 
-    async fn execute(&self, ctx: &Context, args: &[&str]) -> Option<CommandOutput> {
-        ctx.command_execute(GH_CLI, args).await.ok()
-    }
-
-    async fn active_user(&self, ctx: &Context) -> Option<String> {
-        let output = self
-            .execute(ctx, &["config", "get", "user", "--host", GITHUB_HOST])
-            .await?;
-        if !output.success() {
-            return None;
-        }
-
-        let user = std::str::from_utf8(&output.stdout).ok()?.trim();
-        if user.is_empty()
-            || user.starts_with('-')
-            || !user.bytes().all(|byte| byte.is_ascii_graphic())
+    async fn active_user(&self, ctx: &Context) -> Result<Option<String>> {
+        let output = match ctx
+            .command_execute(GH_CLI, &["config", "get", "user", "--host", GITHUB_HOST])
+            .await
         {
-            return None;
+            Ok(output) => output,
+            Err(error) => match io_error_kind(&error) {
+                // `gh` is not installed: there is no stored account to read.
+                Some(std::io::ErrorKind::NotFound) => return Ok(None),
+                // No typed I/O cause: the adapter does not run commands in this
+                // context, such as the no-op adapter installed by
+                // `Context::new()` and bare WASM runtimes. The slot stays
+                // absent instead of failing the chain.
+                None => return Ok(None),
+                // The adapter ran but could not spawn `gh`. Treating this as
+                // an absent account would silently select anonymous access.
+                Some(_) => return Err(unexpected_account_error()),
+            },
+        };
+
+        if !output.success() {
+            // GitHub CLI versions that report a missing `hosts.<host>.user`
+            // entry as an error use this message. Older versions exit zero
+            // with no output instead. Any other non-zero status means the
+            // configuration could not be read.
+            if command_reports_missing_user_key(&output) {
+                return Ok(None);
+            }
+            return Err(could_not_read_account_error());
         }
 
-        Some(user.to_string())
+        let user = match std::str::from_utf8(&output.stdout) {
+            Ok(user) => user.trim_end_matches(['\r', '\n']),
+            Err(_) => return Err(malformed_account_error()),
+        };
+        // Older GitHub CLI versions print nothing for a host with no stored
+        // account, so an empty success means the account is absent.
+        if user.is_empty() {
+            return Ok(None);
+        }
+        // The first-party command prints one stored account name followed by a
+        // newline. Any other successful output is malformed, not an absent
+        // account.
+        if user.starts_with('-') || !user.bytes().all(|byte| byte.is_ascii_graphic()) {
+            return Err(malformed_account_error());
+        }
+
+        Ok(Some(user.to_string()))
     }
 
     async fn token_for_user(
@@ -109,7 +144,7 @@ impl ProvideCredential for GhCliCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        let Some(user) = self.active_user(ctx).await else {
+        let Some(user) = self.active_user(ctx).await? else {
             return Ok(None);
         };
 
@@ -169,6 +204,49 @@ fn command_failed_with_unknown_flag(output: &CommandOutput, flag: &str) -> bool 
 fn command_failed_because_token_is_missing(output: &CommandOutput) -> bool {
     let stderr = String::from_utf8_lossy(&output.stderr);
     stderr.contains("no oauth token found")
+}
+
+/// Returns the kind of the typed I/O error that caused a command failure, if
+/// the adapter reports one.
+///
+/// The Tokio adapter wraps spawn failures in [`std::io::Error`], so a missing
+/// `gh` is a typed `NotFound` rather than a message. Custom adapters that do
+/// not report a typed I/O cause leave the failure unclassified.
+fn io_error_kind(error: &Error) -> Option<std::io::ErrorKind> {
+    let mut source = std::error::Error::source(error);
+    while let Some(cause) = source {
+        if let Some(io_error) = cause.downcast_ref::<std::io::Error>() {
+            return Some(io_error.kind());
+        }
+        source = cause.source();
+    }
+
+    None
+}
+
+/// Check whether `gh config get user` reported the `user` key as missing.
+///
+/// GitHub CLI versions that error on a missing key use
+/// `could not find key "user"`. Older versions exit zero with no output.
+fn command_reports_missing_user_key(output: &CommandOutput) -> bool {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stderr.contains("could not find key \"user\"")
+}
+
+fn could_not_read_account_error() -> Error {
+    Error::config_invalid(
+        "`gh config get user` could not read the stored GitHub.com account; run `gh auth status` to check the GitHub CLI configuration, or set an explicit token",
+    )
+}
+
+fn unexpected_account_error() -> Error {
+    Error::unexpected(
+        "`gh config get user` failed to run; check that the GitHub CLI is installed correctly, or set an explicit token",
+    )
+}
+
+fn malformed_account_error() -> Error {
+    Error::config_invalid("`gh config get user` returned an unusable account name")
 }
 
 fn stored_token_failure() -> Error {

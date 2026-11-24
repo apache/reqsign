@@ -71,9 +71,11 @@ unknown. If the stored token has expired, run `gh auth refresh`, then recreate
 the signer so it loads the new token.
 
 The default slots stop at the first error instead of silently selecting a
-different identity. A malformed environment token, malformed or failed
-stored-token discovery, or an invalid prepended or static provider fails
-signing. Only an absent credential reaches anonymous access.
+different identity. A malformed environment token, an invalid prepended or
+static provider, or a GitHub CLI error or malformed CLI output fails signing;
+the chain does not fall back to anonymous access. Only an absent credential
+reaches anonymous access: no command executor, a missing `gh` executable, no
+stored account, or an explicit `no oauth token found` response.
 
 With no token, the chain ends with anonymous access. Signing with an anonymous
 credential removes any existing `Authorization` header and leaves other headers

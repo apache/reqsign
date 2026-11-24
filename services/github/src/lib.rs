@@ -27,9 +27,12 @@
 //! discovery requires GitHub CLI 2.40.0 or newer.
 //!
 //! The default slots stop at the first error instead of silently selecting a
-//! different identity. A malformed environment token, malformed or failed
-//! stored-token discovery, or an invalid prepended or static provider fails
-//! signing. Only an absent credential reaches the explicit anonymous slot.
+//! different identity. A malformed environment token, an invalid prepended or
+//! static provider, or a GitHub CLI error or malformed CLI output fails
+//! signing; the chain does not fall back to anonymous access. Only an absent
+//! credential reaches the explicit anonymous slot: no command executor, a
+//! missing `gh` executable, no stored account, or an explicit
+//! `no oauth token found` response.
 //!
 //! `--no-refresh` keeps discovery read-only and is used on GitHub CLI 2.103.0
 //! and newer. Older supported versions do not refresh when printing a stored

@@ -45,6 +45,7 @@ struct RecordedCommand {
 enum MockCommandResult {
     Output(CommandOutput),
     AdapterError(String),
+    AdapterIoError(std::io::ErrorKind),
 }
 
 #[derive(Clone)]
@@ -110,8 +111,16 @@ impl CommandExecute for MockCommandExecute {
         {
             MockCommandResult::Output(output) => Ok(output),
             MockCommandResult::AdapterError(message) => Err(Error::unexpected(message)),
+            MockCommandResult::AdapterIoError(kind) => {
+                Err(Error::unexpected("fabricated command execution failure")
+                    .with_source(std::io::Error::new(kind, "SENTINEL_IO_SOURCE")))
+            }
         }
     }
+}
+
+fn missing_executable_result() -> MockCommandResult {
+    MockCommandResult::AdapterIoError(std::io::ErrorKind::NotFound)
 }
 
 fn user_result(user: &str) -> MockCommandResult {
@@ -384,12 +393,27 @@ async fn gh_cli_discovery_is_host_scoped_and_env_independent() -> Result<()> {
 
 #[tokio::test]
 async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()> {
+    // A bare context has no command executor, so CLI discovery does not
+    // participate at all.
+    let parts = sign_parts(
+        DefaultCredentialProvider::new(),
+        context(HashMap::new()),
+        request(),
+    )
+    .await?;
+    assert!(!parts.headers.contains_key(AUTHORIZATION));
+
     let cases = vec![
+        // An adapter that reports no typed I/O cause cannot run commands in
+        // this context, such as the no-op adapter installed by
+        // `Context::new()`. The slot stays absent.
         MockCommandExecute::adapter_error("SENTINEL_CONFIG_ADAPTER"),
-        MockCommandExecute::failure(1, b"SENTINEL_CONFIG_STDERR".to_vec()),
+        // `gh` is not installed: the typed spawn error is NotFound.
+        MockCommandExecute::sequence([missing_executable_result()]),
+        // Older GitHub CLI versions print nothing for a host without an
+        // account; newer versions report the missing key explicitly.
         MockCommandExecute::success(Vec::new()),
-        MockCommandExecute::sequence([user_result("--help")]),
-        MockCommandExecute::sequence([user_result("bad user")]),
+        MockCommandExecute::failure(1, b"could not find key \"user\"\n".to_vec()),
         MockCommandExecute::sequence([
             user_result("cli-user"),
             failure_result(
@@ -403,6 +427,105 @@ async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()>
         let ctx = context_with_command(HashMap::new(), command);
         let parts = sign_parts(DefaultCredentialProvider::new(), ctx, request()).await?;
         assert!(!parts.headers.contains_key(AUTHORIZATION));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn gh_cli_config_lookup_failure_is_reported_without_leaking() {
+    let cases = [
+        // Only NotFound means the executable is missing. A permission failure
+        // must not fall back to anonymous access.
+        (
+            MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
+                std::io::ErrorKind::PermissionDenied,
+            )]),
+            ErrorKind::Unexpected,
+        ),
+        // Any other non-zero status means the CLI configuration could not be
+        // read.
+        (
+            MockCommandExecute::failure(
+                1,
+                b"failed to read config SENTINEL_CONFIG_STDERR".to_vec(),
+            ),
+            ErrorKind::ConfigInvalid,
+        ),
+    ];
+
+    for (command, expected_kind) in cases {
+        let ctx = context_with_command(HashMap::new(), command);
+        let error = GhCliCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await
+            .expect_err("a config lookup failure must not become anonymous access");
+
+        assert_eq!(error.kind(), expected_kind);
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("SENTINEL_CONFIG_STDERR"));
+        assert!(!debug.contains("SENTINEL_IO_SOURCE"));
+    }
+}
+
+#[tokio::test]
+async fn gh_cli_malformed_active_user_is_reported_without_leaking() {
+    let cases = [
+        b"--help\n".to_vec(),
+        b"bad user\n".to_vec(),
+        b"first\nsecond\n".to_vec(),
+        b"nonutf8\xff".to_vec(),
+        b" \n".to_vec(),
+    ];
+
+    for stdout in cases {
+        let command = MockCommandExecute::sequence([MockCommandResult::Output(CommandOutput {
+            status: 0,
+            stdout: stdout.clone(),
+            stderr: Vec::new(),
+        })]);
+        let ctx = context_with_command(HashMap::new(), command);
+        let error = GhCliCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await
+            .expect_err("malformed account output must fail");
+
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("first"));
+        assert!(!debug.contains("second"));
+        assert!(!debug.contains("bad user"));
+        assert!(!debug.contains("nonutf8"));
+    }
+}
+
+#[tokio::test]
+async fn default_provider_rejects_config_lookup_failure_without_mutating_the_request() -> Result<()>
+{
+    let cases = [
+        MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
+            std::io::ErrorKind::PermissionDenied,
+        )]),
+        MockCommandExecute::failure(1, b"failed to read config SENTINEL_CONFIG_STDERR".to_vec()),
+        MockCommandExecute::sequence([user_result("--help")]),
+        MockCommandExecute::sequence([user_result("bad user")]),
+    ];
+
+    for command in cases {
+        let ctx = context_with_command(HashMap::new(), command);
+        let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+        let original = stale_request();
+        let mut parts = original.clone();
+
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("a config lookup failure must not become anonymous access");
+
+        assert!(!error.to_string().contains("SENTINEL_CONFIG"));
+        assert!(!format!("{error:?}").contains("SENTINEL_CONFIG"));
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+        assert_eq!(parts.headers[AUTHORIZATION], "Bearer stale-token-D4");
     }
     Ok(())
 }

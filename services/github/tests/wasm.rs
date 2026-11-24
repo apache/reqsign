@@ -17,10 +17,51 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use reqsign_core::{Context, Signer, StaticEnv};
+use reqsign_core::{CommandExecute, CommandOutput, Context, Error, Result, Signer, StaticEnv};
 use reqsign_github::{DefaultCredentialProvider, RequestSigner, StaticCredentialProvider};
 use std::collections::HashMap;
 use wasm_bindgen_test::*;
+
+/// A command adapter that reports no typed I/O cause, like the no-op adapter
+/// and the WASM `TokioCommandExecute`.
+#[derive(Debug)]
+struct UnavailableCommandExecute;
+
+impl CommandExecute for UnavailableCommandExecute {
+    async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+        Err(Error::unexpected("fabricated unavailable command adapter"))
+    }
+}
+
+/// A command adapter that reports a typed missing executable.
+#[derive(Debug)]
+struct MissingCommandExecute;
+
+impl CommandExecute for MissingCommandExecute {
+    async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+        Err(
+            Error::unexpected("fabricated spawn failure").with_source(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "fabricated",
+            )),
+        )
+    }
+}
+
+/// A command adapter that reports a typed execution failure.
+#[derive(Debug)]
+struct FailingCommandExecute;
+
+impl CommandExecute for FailingCommandExecute {
+    async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+        Err(
+            Error::unexpected("fabricated spawn failure").with_source(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "fabricated",
+            )),
+        )
+    }
+}
 
 #[wasm_bindgen_test]
 async fn env_token_signs_without_a_clock() {
@@ -95,4 +136,61 @@ async fn no_token_falls_back_to_anonymous_without_a_command_adapter() {
         .expect("anonymous GitHub signing must succeed");
 
     assert!(!parts.headers.contains_key(http::header::AUTHORIZATION));
+}
+
+#[wasm_bindgen_test]
+async fn unavailable_or_missing_command_adapter_falls_back_to_anonymous() {
+    for ctx in [
+        Context::new().with_command_execute(UnavailableCommandExecute),
+        Context::new().with_command_execute(MissingCommandExecute),
+    ] {
+        let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+        let mut parts = http::Request::get("https://api.github.com/repos/apache/reqsign")
+            .header(
+                http::header::AUTHORIZATION,
+                "Bearer stale-wasm-github-token",
+            )
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+
+        signer
+            .sign(&mut parts, None)
+            .await
+            .expect("an unavailable CLI must fall back to anonymous signing");
+
+        assert!(!parts.headers.contains_key(http::header::AUTHORIZATION));
+    }
+}
+
+#[wasm_bindgen_test]
+async fn failing_command_adapter_does_not_fall_back_to_anonymous() {
+    let signer = Signer::new(
+        Context::new().with_command_execute(FailingCommandExecute),
+        DefaultCredentialProvider::new(),
+        RequestSigner,
+    );
+    let original = http::Request::get("https://api.github.com/repos/apache/reqsign")
+        .header(
+            http::header::AUTHORIZATION,
+            "Bearer stale-wasm-github-token",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a typed execution failure must not become anonymous access");
+
+    assert_eq!(error.kind(), reqsign_core::ErrorKind::Unexpected);
+    assert_eq!(parts.headers, original.headers);
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        "Bearer stale-wasm-github-token"
+    );
 }

@@ -354,13 +354,18 @@ and newer; older supported versions do not refresh stored tokens, so the
 provider retries without the flag only after the CLI reports that specific flag
 as unknown. The default provider does not read `GH_ENTERPRISE_TOKEN` or
 `GITHUB_ENTERPRISE_TOKEN`, does not run a shell, and does not silently fall
-through to another identity when a configured default slot fails. A
-caller-supplied `ProvideCredentialChain` keeps that chain's documented error
-policy. Command output, including stderr, never appears in errors or `Debug`
-output. The explicit anonymous provider is the only supported fallback when no
-credential is found; signing with it removes any existing `Authorization`
-header, leaves other headers and the URI unchanged, and is subject to GitHub's
-unauthenticated rate limit.
+through to another identity when a configured default slot fails. A missing
+`gh` executable, a missing stored account, and an explicit `no oauth token
+found` response yield no credential from the CLI slot; another typed command
+execution failure, any other non-zero status, and malformed account or token
+output fail instead of selecting anonymous access. A command adapter that does
+not report a typed I/O cause leaves the slot absent. A caller-supplied
+`ProvideCredentialChain` keeps that chain's documented error policy. Command
+output, including stderr, never appears in errors or `Debug` output. The
+explicit anonymous provider is the only supported fallback when no credential
+is found; signing with it removes any existing `Authorization` header, leaves
+other headers and the URI unchanged, and is subject to GitHub's unauthenticated
+rate limit.
 
 The Cloudflare default credential provider reads only `CLOUDFLARE_API_TOKEN`
 through the context environment. It does not read `CLOUDFLARE_API_KEY` or
