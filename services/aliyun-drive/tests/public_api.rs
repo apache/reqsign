@@ -863,7 +863,7 @@ async fn missing_or_expired_credentials_fail_without_mutating_the_request() -> R
     let expired = Timestamp::now() - Duration::from_secs(1);
     let signer = Signer::new(
         Context::new(),
-        StaticCredentialProvider::with_expires_at(ACCESS_TOKEN, expired),
+        StaticCredentialProvider::new(ACCESS_TOKEN).with_expires_at(expired),
         RequestSigner,
     );
     let mut parts = request();
