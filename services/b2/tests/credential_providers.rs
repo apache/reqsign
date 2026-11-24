@@ -540,3 +540,45 @@ async fn with_chain_keeps_the_caller_error_policy() {
         parts.headers[http::header::AUTHORIZATION]
     );
 }
+
+#[tokio::test]
+async fn overflowing_signing_deadline_through_signer_rejects_finite_and_accepts_static_credentials()
+{
+    let mut request = http::Request::get(format!("{API_URL}/b2api/v4/b2_list_buckets"))
+        .header("x-caller", "value")
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+    let original = request.clone();
+
+    let finite = Credential::new(AUTHORIZATION_TOKEN, API_URL, DOWNLOAD_URL)
+        .with_expires_at(Timestamp::now() + Duration::from_secs(3_600));
+    let signer = Signer::new(
+        Context::new(),
+        StaticCredentialProvider::new(finite),
+        RequestSigner,
+    );
+    let error = signer
+        .sign(&mut request, Some(Duration::MAX))
+        .await
+        .expect_err("a finite credential must not satisfy an overflowing deadline");
+    assert_eq!(reqsign_core::ErrorKind::CredentialInvalid, error.kind());
+    assert_eq!(original.uri, request.uri);
+    assert_eq!(original.headers, request.headers);
+
+    let static_credential = Credential::new(AUTHORIZATION_TOKEN, API_URL, DOWNLOAD_URL);
+    let signer = Signer::new(
+        Context::new(),
+        StaticCredentialProvider::new(static_credential),
+        RequestSigner,
+    );
+    signer
+        .sign(&mut request, Some(Duration::MAX))
+        .await
+        .expect("a credential without expiry must sign an overflowing deadline");
+    assert_eq!(
+        AUTHORIZATION_TOKEN,
+        request.headers[http::header::AUTHORIZATION]
+    );
+}

@@ -175,6 +175,23 @@ impl Timestamp {
 
         Ok(Timestamp(ts))
     }
+
+    /// Add a duration, saturating at the maximum representable timestamp on overflow.
+    ///
+    /// The `Add<Duration>` implementation panics when the sum is out of range.
+    /// Use this method for caller-supplied durations, such as a signing
+    /// `expires_in`, where an arbitrarily large value must produce the strictest
+    /// representable deadline instead of a panic. Saturating upward cannot make a
+    /// credential that fails to cover the requested lifetime appear valid, and
+    /// representable results keep their exact nanosecond value.
+    pub fn saturating_add(self, rhs: Duration) -> Self {
+        match self.0.saturating_add(rhs) {
+            Ok(ts) => Self(ts),
+            // `std::time::Duration` has no calendar units, so jiff rejects the
+            // input only when it cannot be represented at all.
+            Err(_) => Self(jiff::Timestamp::MAX),
+        }
+    }
 }
 
 impl Add<Duration> for Timestamp {
@@ -284,5 +301,31 @@ mod tests {
         // Jiff 1.0.0 could parse this into a timestamp below its supported range.
         // https://github.com/BurntSushi/jiff/issues/714
         assert!("-009999-01-02T01:59:58.5Z".parse::<Timestamp>().is_err());
+    }
+
+    #[test]
+    fn saturating_add_matches_add_for_representable_durations() {
+        let base = test_time();
+
+        for duration in [
+            Duration::ZERO,
+            Duration::from_nanos(1),
+            Duration::from_millis(1_500),
+            Duration::from_secs(86_400),
+        ] {
+            assert_eq!(base.saturating_add(duration), base + duration);
+        }
+    }
+
+    #[test]
+    fn saturating_add_saturates_at_the_maximum_timestamp() {
+        let base = test_time();
+        let max: Timestamp = jiff::Timestamp::MAX
+            .to_string()
+            .parse()
+            .expect("jiff maximum timestamp must parse");
+
+        assert_eq!(base.saturating_add(Duration::MAX), max);
+        assert_eq!(base.saturating_add(Duration::from_secs(u64::MAX)), max);
     }
 }

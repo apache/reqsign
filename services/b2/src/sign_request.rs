@@ -18,7 +18,6 @@
 use std::time::Duration;
 
 use http::header;
-use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, Result, SignRequest, SigningCredential};
 
 use crate::credential::Credential;
@@ -55,7 +54,7 @@ impl SignRequest for RequestSigner {
             ));
         }
 
-        let required_until = Timestamp::now() + expires_in.unwrap_or_default();
+        let required_until = self.required_valid_until(credential, expires_in);
         if !credential.is_valid_at(required_until) {
             return Err(Error::credential_invalid(
                 "B2 authorization token expires before the requested operation deadline",
@@ -77,6 +76,7 @@ impl SignRequest for RequestSigner {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use reqsign_core::time::Timestamp;
 
     fn credential() -> Credential {
         Credential::new(
@@ -185,5 +185,74 @@ mod tests {
             .expect("missing credential must be a no-op");
 
         assert!(!parts.headers.contains_key(header::AUTHORIZATION));
+    }
+
+    #[tokio::test]
+    async fn subsecond_deadline_accepts_a_covering_credential() {
+        let signer = RequestSigner;
+        let context = Context::new();
+        let credential = credential().with_expires_at(Timestamp::now() + Duration::from_secs(60));
+        let mut parts =
+            http::Request::get("https://api001.backblazeb2.com/b2api/v4/b2_list_buckets")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+
+        signer
+            .sign_request(
+                &context,
+                &mut parts,
+                Some(&credential),
+                Some(Duration::from_millis(1_500)),
+            )
+            .await
+            .expect("a covering credential must sign a subsecond deadline");
+
+        assert!(parts.headers.contains_key(header::AUTHORIZATION));
+    }
+
+    #[tokio::test]
+    async fn duration_max_rejects_a_finite_credential_without_changing_the_request() {
+        let signer = RequestSigner;
+        let context = Context::new();
+        let credential =
+            credential().with_expires_at(Timestamp::now() + Duration::from_secs(3_600));
+        let mut parts =
+            http::Request::get("https://api001.backblazeb2.com/b2api/v4/b2_list_buckets")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+        let original = parts.clone();
+
+        let error = signer
+            .sign_request(&context, &mut parts, Some(&credential), Some(Duration::MAX))
+            .await
+            .expect_err("a finite credential must not satisfy an overflowing deadline");
+
+        assert_eq!(reqsign_core::ErrorKind::CredentialInvalid, error.kind());
+        assert_eq!(original.uri, parts.uri);
+        assert_eq!(original.headers, parts.headers);
+    }
+
+    #[tokio::test]
+    async fn duration_max_signs_a_credential_without_expiry() {
+        let signer = RequestSigner;
+        let context = Context::new();
+        let credential = credential();
+        let mut parts =
+            http::Request::get("https://api001.backblazeb2.com/b2api/v4/b2_list_buckets")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+
+        signer
+            .sign_request(&context, &mut parts, Some(&credential), Some(Duration::MAX))
+            .await
+            .expect("a credential without expiry must sign an overflowing deadline");
+
+        assert!(parts.headers.contains_key(header::AUTHORIZATION));
     }
 }

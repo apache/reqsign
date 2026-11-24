@@ -115,9 +115,11 @@ impl Credential {
 
     /// Set a relative expiration time for this credential.
     ///
-    /// The expiration is evaluated when this method is called.
+    /// The expiration is evaluated when this method is called. A duration that
+    /// would push the expiration past the maximum representable timestamp is
+    /// stored as that maximum instead of overflowing.
     pub fn with_expires_in(mut self, expires_in: Duration) -> Self {
-        self.expires_at = Some(Timestamp::now() + expires_in);
+        self.expires_at = Some(Timestamp::now().saturating_add(expires_in));
         self
     }
 
