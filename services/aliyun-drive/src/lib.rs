@@ -57,9 +57,10 @@
 //! A successful exchange returns an access token, its lifetime in `expires_in`,
 //! and a new single-use refresh token. A provider keeps only the latest refresh
 //! token in memory; clones share that state and serialize exchanges, so
-//! concurrent callers use the latest rotated token. A successful, parseable
-//! response commits a non-empty rotated token even when the accompanying access
-//! token or expiry is unusable, because the previous token was consumed.
+//! concurrent callers use the latest rotated token. A success response commits
+//! a non-empty rotated token as soon as it can be read, even when the
+//! accompanying fields are unusable or cannot be deserialized, because the
+//! previous token was consumed.
 //! Tokens are never persisted and Reqsign exposes no getter or persistence
 //! callback. After a successful exchange, restarting with the original
 //! configured refresh token may fail because that token was consumed. Restart
