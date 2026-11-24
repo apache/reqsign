@@ -355,11 +355,13 @@ provider retries without the flag only after the CLI reports that specific flag
 as unknown. The default provider does not read `GH_ENTERPRISE_TOKEN` or
 `GITHUB_ENTERPRISE_TOKEN`, does not run a shell, and does not silently fall
 through to another identity when a configured default slot fails. A missing
-`gh` executable, a missing stored account, and an explicit `no oauth token
-found` response yield no credential from the CLI slot; another typed command
-execution failure, any other non-zero status, and malformed account or token
-output fail instead of selecting anonymous access. A command adapter that does
-not report a typed I/O cause leaves the slot absent. A caller-supplied
+`gh` executable, a confirmed no-account response (`gh config get user` exiting
+non-zero with exactly `could not find key "user"` and no stdout), and an
+explicit `no oauth token found` response yield no credential from the CLI slot;
+another typed command execution failure, any other non-zero status, and
+malformed account or token output fail instead of selecting anonymous access.
+An empty or blank successful account lookup is malformed. A command adapter
+that does not report a typed I/O cause leaves the slot absent. A caller-supplied
 `ProvideCredentialChain` keeps that chain's documented error policy. Command
 output, including stderr, never appears in errors or `Debug` output. The
 explicit anonymous provider is the only supported fallback when no credential

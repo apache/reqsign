@@ -16,9 +16,12 @@ different identity. A malformed environment token, an invalid prepended or
 static provider, or a GitHub CLI error or malformed CLI output fails signing;
 the chain does not fall back to anonymous access. Only an absent credential
 reaches the explicit anonymous slot: no command executor, a missing `gh`
-executable, no stored account, or an explicit `no oauth token found` response.
-Add a `CommandExecute` adapter to the context to enable GitHub CLI discovery;
-without one, that slot yields no credential.
+executable, a confirmed no-account response (`gh config get user` exiting
+non-zero with exactly `could not find key "user"` and no stdout), or an
+explicit `no oauth token found` response. An empty or blank successful account
+lookup is malformed, not an absent account. Add a `CommandExecute` adapter to
+the context to enable GitHub CLI discovery; without one, that slot yields no
+credential.
 
 `--no-refresh` keeps discovery read-only and is used on GitHub CLI 2.103.0 and
 newer. Older supported versions do not refresh when printing a stored token, so

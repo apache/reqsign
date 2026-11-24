@@ -147,6 +147,18 @@ fn failure_result(status: i32, stderr: impl Into<Vec<u8>>) -> MockCommandResult 
     })
 }
 
+fn output_result(
+    status: i32,
+    stdout: impl Into<Vec<u8>>,
+    stderr: impl Into<Vec<u8>>,
+) -> MockCommandResult {
+    MockCommandResult::Output(CommandOutput {
+        status,
+        stdout: stdout.into(),
+        stderr: stderr.into(),
+    })
+}
+
 fn context(envs: HashMap<String, String>) -> Context {
     Context::new().with_env(StaticEnv {
         home_dir: None,
@@ -410,9 +422,8 @@ async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()>
         MockCommandExecute::adapter_error("SENTINEL_CONFIG_ADAPTER"),
         // `gh` is not installed: the typed spawn error is NotFound.
         MockCommandExecute::sequence([missing_executable_result()]),
-        // Older GitHub CLI versions print nothing for a host without an
-        // account; newer versions report the missing key explicitly.
-        MockCommandExecute::success(Vec::new()),
+        // GitHub CLI 2.40.0 and 2.103.3 confirm a host without a stored
+        // account with exit status 1, empty stdout, and this exact diagnostic.
         MockCommandExecute::failure(1, b"could not find key \"user\"\n".to_vec()),
         MockCommandExecute::sequence([
             user_result("cli-user"),
@@ -451,6 +462,33 @@ async fn gh_cli_config_lookup_failure_is_reported_without_leaking() {
             ),
             ErrorKind::ConfigInvalid,
         ),
+        // The missing-key diagnostic must match exactly; a wrapped or extended
+        // message is a failure.
+        (
+            MockCommandExecute::failure(
+                1,
+                b"could not find key \"user\" (SENTINEL_EXTRA)\n".to_vec(),
+            ),
+            ErrorKind::ConfigInvalid,
+        ),
+        // The confirmed diagnostic requires empty stdout.
+        (
+            MockCommandExecute::sequence([output_result(
+                1,
+                b"cli-user\n".to_vec(),
+                b"could not find key \"user\"\n".to_vec(),
+            )]),
+            ErrorKind::ConfigInvalid,
+        ),
+        // The confirmed diagnostic requires a non-zero exit status.
+        (
+            MockCommandExecute::sequence([output_result(
+                0,
+                Vec::new(),
+                b"could not find key \"user\"\n".to_vec(),
+            )]),
+            ErrorKind::ConfigInvalid,
+        ),
     ];
 
     for (command, expected_kind) in cases {
@@ -463,6 +501,7 @@ async fn gh_cli_config_lookup_failure_is_reported_without_leaking() {
         assert_eq!(error.kind(), expected_kind);
         let debug = format!("{error:?}");
         assert!(!debug.contains("SENTINEL_CONFIG_STDERR"));
+        assert!(!debug.contains("SENTINEL_EXTRA"));
         assert!(!debug.contains("SENTINEL_IO_SOURCE"));
     }
 }
@@ -470,11 +509,13 @@ async fn gh_cli_config_lookup_failure_is_reported_without_leaking() {
 #[tokio::test]
 async fn gh_cli_malformed_active_user_is_reported_without_leaking() {
     let cases = [
+        Vec::new(),
+        b"\n".to_vec(),
+        b" \n".to_vec(),
         b"--help\n".to_vec(),
         b"bad user\n".to_vec(),
         b"first\nsecond\n".to_vec(),
         b"nonutf8\xff".to_vec(),
-        b" \n".to_vec(),
     ];
 
     for stdout in cases {
@@ -506,6 +547,8 @@ async fn default_provider_rejects_config_lookup_failure_without_mutating_the_req
             std::io::ErrorKind::PermissionDenied,
         )]),
         MockCommandExecute::failure(1, b"failed to read config SENTINEL_CONFIG_STDERR".to_vec()),
+        MockCommandExecute::failure(1, b"could not find key \"user\" (extra)".to_vec()),
+        MockCommandExecute::success(Vec::new()),
         MockCommandExecute::sequence([user_result("--help")]),
         MockCommandExecute::sequence([user_result("bad user")]),
     ];

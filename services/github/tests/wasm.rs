@@ -63,6 +63,34 @@ impl CommandExecute for FailingCommandExecute {
     }
 }
 
+/// A command adapter that confirms that no account is stored.
+#[derive(Debug)]
+struct MissingAccountCommandExecute;
+
+impl CommandExecute for MissingAccountCommandExecute {
+    async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+        Ok(CommandOutput {
+            status: 1,
+            stdout: Vec::new(),
+            stderr: b"could not find key \"user\"\n".to_vec(),
+        })
+    }
+}
+
+/// A command adapter that reports a successful but unusable account lookup.
+#[derive(Debug)]
+struct MalformedAccountCommandExecute;
+
+impl CommandExecute for MalformedAccountCommandExecute {
+    async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
+        Ok(CommandOutput {
+            status: 0,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+}
+
 #[wasm_bindgen_test]
 async fn env_token_signs_without_a_clock() {
     let context = Context::new().with_env(StaticEnv {
@@ -188,6 +216,62 @@ async fn failing_command_adapter_does_not_fall_back_to_anonymous() {
         .expect_err("a typed execution failure must not become anonymous access");
 
     assert_eq!(error.kind(), reqsign_core::ErrorKind::Unexpected);
+    assert_eq!(parts.headers, original.headers);
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        "Bearer stale-wasm-github-token"
+    );
+}
+
+#[wasm_bindgen_test]
+async fn confirmed_missing_account_falls_back_to_anonymous() {
+    let signer = Signer::new(
+        Context::new().with_command_execute(MissingAccountCommandExecute),
+        DefaultCredentialProvider::new(),
+        RequestSigner,
+    );
+    let mut parts = http::Request::get("https://api.github.com/repos/apache/reqsign")
+        .header(
+            http::header::AUTHORIZATION,
+            "Bearer stale-wasm-github-token",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+    signer
+        .sign(&mut parts, None)
+        .await
+        .expect("a confirmed missing account must reach anonymous signing");
+
+    assert!(!parts.headers.contains_key(http::header::AUTHORIZATION));
+}
+
+#[wasm_bindgen_test]
+async fn malformed_account_success_does_not_fall_back() {
+    let signer = Signer::new(
+        Context::new().with_command_execute(MalformedAccountCommandExecute),
+        DefaultCredentialProvider::new(),
+        RequestSigner,
+    );
+    let original = http::Request::get("https://api.github.com/repos/apache/reqsign")
+        .header(
+            http::header::AUTHORIZATION,
+            "Bearer stale-wasm-github-token",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("an empty successful account lookup must not become anonymous access");
+
+    assert_eq!(error.kind(), reqsign_core::ErrorKind::ConfigInvalid);
     assert_eq!(parts.headers, original.headers);
     assert_eq!(
         parts.headers[http::header::AUTHORIZATION],

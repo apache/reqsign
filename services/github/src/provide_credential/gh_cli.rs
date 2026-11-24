@@ -52,18 +52,19 @@ pub(crate) const GH_CLI_MIN_VERSION: &str = "2.40.0";
 ///
 /// The initial `gh config get user` lookup distinguishes an absent account
 /// from a failure. A context without a command executor, a command adapter
-/// that does not report a typed I/O cause, a missing `gh` executable, a
-/// success without output on older GitHub CLI versions, and the explicit
-/// missing-`user`-key response on newer versions all yield no credential and
-/// permit anonymous fallback. A typed command execution failure other than a
-/// missing executable, a non-zero exit status other than the missing `user`
-/// key, and malformed account output yield a redacted error instead of
-/// silently falling back. After an active user is found, only an explicit
-/// `no oauth token found` response yields no credential. Command execution
-/// errors, empty or whitespace-only successful stdout, malformed output, and
-/// other stored-token failures such as an expired or revoked token yield a
-/// redacted error. Errors never contain the token, the output, or the CLI's
-/// stderr.
+/// that does not report a typed I/O cause, a missing `gh` executable, and the
+/// confirmed absent-account response all yield no credential and permit
+/// anonymous fallback. GitHub CLI 2.40.0 and 2.103.3 report a host without a
+/// stored account with exit status 1, empty stdout, and exactly the stderr
+/// diagnostic `could not find key "user"`; only that response is the absent
+/// account. A typed command execution failure other than a missing executable,
+/// any other non-zero exit status, and empty, blank, or otherwise malformed
+/// successful output yield a redacted error instead of silently falling back.
+/// After an active user is found, only an explicit `no oauth token found`
+/// response yields no credential. Command execution errors, empty or
+/// whitespace-only successful stdout, malformed output, and other stored-token
+/// failures such as an expired or revoked token yield a redacted error. Errors
+/// never contain the token, the output, or the CLI's stderr.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GhCliCredentialProvider;
 
@@ -94,11 +95,10 @@ impl GhCliCredentialProvider {
         };
 
         if !output.success() {
-            // GitHub CLI versions that report a missing `hosts.<host>.user`
-            // entry as an error use this message. Older versions exit zero
-            // with no output instead. Any other non-zero status means the
+            // GitHub CLI 2.40.0 and 2.103.3 both report a host without a stored
+            // account with this exact response. Any other failure means the
             // configuration could not be read.
-            if command_reports_missing_user_key(&output) {
+            if command_confirms_missing_user(&output) {
                 return Ok(None);
             }
             return Err(could_not_read_account_error());
@@ -108,15 +108,13 @@ impl GhCliCredentialProvider {
             Ok(user) => user.trim_end_matches(['\r', '\n']),
             Err(_) => return Err(malformed_account_error()),
         };
-        // Older GitHub CLI versions print nothing for a host with no stored
-        // account, so an empty success means the account is absent.
-        if user.is_empty() {
-            return Ok(None);
-        }
         // The first-party command prints one stored account name followed by a
-        // newline. Any other successful output is malformed, not an absent
-        // account.
-        if user.starts_with('-') || !user.bytes().all(|byte| byte.is_ascii_graphic()) {
+        // newline. An empty, blank, or otherwise unusable success is malformed;
+        // a missing account is only the confirmed non-zero response above.
+        if user.is_empty()
+            || user.starts_with('-')
+            || !user.bytes().all(|byte| byte.is_ascii_graphic())
+        {
             return Err(malformed_account_error());
         }
 
@@ -224,13 +222,19 @@ fn io_error_kind(error: &Error) -> Option<std::io::ErrorKind> {
     None
 }
 
-/// Check whether `gh config get user` reported the `user` key as missing.
+/// Check whether `gh config get user` confirmed that no account is stored.
 ///
-/// GitHub CLI versions that error on a missing key use
-/// `could not find key "user"`. Older versions exit zero with no output.
-fn command_reports_missing_user_key(output: &CommandOutput) -> bool {
+/// GitHub CLI 2.40.0 and 2.103.3 both report a host without a stored account
+/// with exit status 1, empty stdout, and exactly this stderr diagnostic. A
+/// different status, output, or diagnostic is a failure, not an absent
+/// account.
+fn command_confirms_missing_user(output: &CommandOutput) -> bool {
+    if output.success() || !output.stdout.is_empty() {
+        return false;
+    }
+
     let stderr = String::from_utf8_lossy(&output.stderr);
-    stderr.contains("could not find key \"user\"")
+    stderr.trim_end_matches(['\r', '\n']) == "could not find key \"user\""
 }
 
 fn could_not_read_account_error() -> Error {

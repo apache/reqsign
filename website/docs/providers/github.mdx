@@ -74,8 +74,11 @@ The default slots stop at the first error instead of silently selecting a
 different identity. A malformed environment token, an invalid prepended or
 static provider, or a GitHub CLI error or malformed CLI output fails signing;
 the chain does not fall back to anonymous access. Only an absent credential
-reaches anonymous access: no command executor, a missing `gh` executable, no
-stored account, or an explicit `no oauth token found` response.
+reaches anonymous access: no command executor, a missing `gh` executable, a
+confirmed no-account response (`gh config get user` exiting non-zero with
+exactly `could not find key "user"` and no stdout), or an explicit `no oauth
+token found` response. An empty or blank successful account lookup is
+malformed, not an absent account.
 
 With no token, the chain ends with anonymous access. Signing with an anonymous
 credential removes any existing `Authorization` header and leaves other headers
