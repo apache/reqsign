@@ -20,6 +20,11 @@ the caller.
 > instead of falling back. See
 > [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
 
+On `wasm32-unknown-unknown`, this crate enables Jiff's `js` feature because the
+default signer reads the current time for the `Date` header. A wasm-bindgen
+JavaScript host is required; a signer configured with `with_time` needs no
+clock.
+
 ## Quick Start
 
 ```rust,no_run

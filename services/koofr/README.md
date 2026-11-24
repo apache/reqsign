@@ -40,6 +40,9 @@ replaces the `Signer` or installs a provider/context that starts a new cache.
 Koofr rejecting the token does not invalidate the cache automatically; the
 caller must replace the signer or its credential cache.
 
+On `wasm32-unknown-unknown`, signing needs no JavaScript clock. `expires_in` is
+ignored because Koofr's exchange does not define a token lifetime.
+
 ## No ambient discovery
 
 Koofr's first-party SDK repositories use `KOOFR_*` variables only in their own
