@@ -90,7 +90,7 @@ pub use provide_credential::{
 mod sign_request;
 pub use sign_request::RequestSigner;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn test_context() -> reqsign_core::Context {
     reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
 }

@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 

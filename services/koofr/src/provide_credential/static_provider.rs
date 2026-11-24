@@ -57,6 +57,7 @@ impl ProvideCredential for StaticCredentialProvider {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn returns_configured_token() {
         let provider = StaticCredentialProvider::new("fabricated-token");
@@ -69,6 +70,7 @@ mod tests {
         assert_eq!("fabricated-token", credential.token());
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn rejects_invalid_token_before_signer_cache() {
         for token in ["", " ", "fabricated token", "fabricated\t token"] {
