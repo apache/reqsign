@@ -60,7 +60,9 @@ The refresh provider sends the client ID and secret as an RFC 6749 form body.
 It expects Dropbox to return `expires_in`; a response without an expiration is
 rejected instead of being cached as a token with an unknown lifetime.
 Refresh-token rotation is serialized per shared provider, and access-token
-caching belongs to `reqsign_core::Signer`.
+caching belongs to `reqsign_core::Signer`. The default source and prepended
+providers fail closed: a failed explicit refresh or an unusable explicit token
+returns an error instead of falling through to `DBXCLI_ACCESS_TOKEN`.
 
 On `wasm32-unknown-unknown`, this crate enables Jiff's `js` feature. Runtime
 signing or refresh requires a wasm-bindgen JavaScript host such as a browser or
