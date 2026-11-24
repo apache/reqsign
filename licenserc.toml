@@ -19,6 +19,12 @@
 builtin = "Apache-2.0-ASF"
 
 [files]
-includes = ["**/*.rs", "**/*.yml", "**/*.yaml", "**/*.toml"]
+includes = ["**/*.rs", "**/*.yml", "**/*.yaml", "**/*.toml", "docs/**/*.md"]
 # Generated files cannot carry license headers.
 excludes = ["website/pnpm-lock.yaml"]
+
+# Markdown has no built-in rule. Without one, selected docs are reported as
+# unsupported and their headers are not checked.
+[[rules]]
+extensions = ["md"]
+style_out = "xml"

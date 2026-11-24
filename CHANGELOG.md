@@ -60,6 +60,10 @@ through the `Context`, passes the `Context` explicitly to facade
   feature `http-message-signatures`.
 - Shared OAuth 2.0 refresh grants and OpenStack static-token credentials and
   Swift TempURL presigning.
+- `Signer::credential_for` and `Signer::sign_with_credential` for services whose
+  credential carries routing metadata. The caller can load the credential
+  before building the request URI and sign with that same credential, without a
+  refresh in between changing it.
 - Optional MD5 and HMAC-SHA512 provider operations.
 - Opt-in IMDSv1 fallback for AWS credentials, and AssumeRole providers that
   honor STS endpoint settings.
@@ -73,6 +77,12 @@ through the `Context`, passes the `Context` explicitly to facade
   established service crate, `reqsign-file-read-tokio`, and
   `reqsign-command-execute-tokio`. `reqsign-http-send-reqwest` moves to
   `5.0.0`, its own line offset from the core major.
+
+### Fixed
+
+- `reqsign-azure-storage` accepts SAS tokens with a leading `?`. SAS values
+  copied from a full URL now sign the same query text as values without the
+  delimiter.
 
 ### Carried over from the v0.20.9 release
 

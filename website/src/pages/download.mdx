@@ -43,8 +43,8 @@ curl -O https://downloads.apache.org/reqsign/KEYS
 gpg --import KEYS
 
 # Verify the signature and checksum of a downloaded artifact:
-gpg --verify apache-reqsign-X.Y.Z-src.tar.gz.asc
-sha512sum -c apache-reqsign-X.Y.Z-src.tar.gz.sha512
+gpg --verify apache-reqsign-X.Y.Z.tar.gz.asc
+sha512sum -c apache-reqsign-X.Y.Z.tar.gz.sha512
 ```
 
 See the [ASF release verification guide](https://www.apache.org/dyn/closer.cgi#verify)
