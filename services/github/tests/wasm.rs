@@ -122,11 +122,11 @@ impl CommandExecute for FixedOutputCommandExecute {
 /// A command adapter that returns a fixed sequence of outputs.
 #[derive(Debug)]
 struct SequenceCommandExecute {
-    outputs: std::sync::Mutex<std::collections::VecDeque<CommandOutput>>,
+    outputs: std::sync::Mutex<std::collections::VecDeque<Result<CommandOutput>>>,
 }
 
 impl SequenceCommandExecute {
-    fn new(outputs: impl IntoIterator<Item = CommandOutput>) -> Self {
+    fn new(outputs: impl IntoIterator<Item = Result<CommandOutput>>) -> Self {
         Self {
             outputs: std::sync::Mutex::new(outputs.into_iter().collect()),
         }
@@ -135,12 +135,11 @@ impl SequenceCommandExecute {
 
 impl CommandExecute for SequenceCommandExecute {
     async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
-        Ok(self
-            .outputs
+        self.outputs
             .lock()
             .expect("output lock")
             .pop_front()
-            .expect("mock output must exist"))
+            .expect("mock output must exist")
     }
 }
 
@@ -339,6 +338,50 @@ async fn malformed_account_success_does_not_fall_back() {
 }
 
 #[wasm_bindgen_test]
+async fn command_unavailable_during_token_lookup_does_not_fall_back() {
+    // The same marker permits anonymous access during the account lookup but
+    // must not hide a failure while the stored token is read.
+    let command = SequenceCommandExecute::new([
+        Ok(CommandOutput {
+            status: 0,
+            stdout: b"cli-user\n".to_vec(),
+            stderr: Vec::new(),
+        }),
+        Err(Error::command_unavailable(
+            "fabricated token lookup unavailable",
+        )),
+    ]);
+    let signer = Signer::new(
+        Context::new().with_command_execute(command),
+        DefaultCredentialProvider::new(),
+        RequestSigner,
+    );
+    let original = http::Request::get("https://api.github.com/repos/apache/reqsign")
+        .header(
+            http::header::AUTHORIZATION,
+            "Bearer stale-wasm-github-token",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a token-stage unavailable command must not become anonymous access");
+
+    assert_eq!(error.kind(), reqsign_core::ErrorKind::CredentialInvalid);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        "Bearer stale-wasm-github-token"
+    );
+}
+
+#[wasm_bindgen_test]
 async fn supported_account_names_sign_with_the_stored_token() {
     // Ordinary logins keep their mixed case and legacy forms, and managed
     // names append the enterprise shortcode; the setup user form fits the same
@@ -352,16 +395,16 @@ async fn supported_account_names_sign_with_the_stored_token() {
         "octo_admin",
     ] {
         let command = SequenceCommandExecute::new([
-            CommandOutput {
+            Ok(CommandOutput {
                 status: 0,
                 stdout: format!("{name}\n").into_bytes(),
                 stderr: Vec::new(),
-            },
-            CommandOutput {
+            }),
+            Ok(CommandOutput {
                 status: 0,
                 stdout: b"wasm-cli-token\n".to_vec(),
                 stderr: Vec::new(),
-            },
+            }),
         ]);
         let signer = Signer::new(
             Context::new().with_command_execute(command),

@@ -447,6 +447,29 @@ async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()>
 }
 
 #[tokio::test]
+async fn gh_cli_command_unavailable_during_token_lookup_is_reported() {
+    // The same marker permits anonymous access during the account lookup but
+    // must not hide a failure while the stored token is read.
+    let command =
+        MockCommandExecute::sequence([user_result("cli-user"), command_unavailable_result()]);
+    let ctx = context_with_command(HashMap::new(), command);
+    let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+    let original = stale_request();
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a token-stage unavailable command must not become anonymous access");
+
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    assert!(error.to_string().contains("`gh auth token`"));
+    assert!(!format!("{error:?}").contains("SENTINEL_UNAVAILABLE_COMMAND"));
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+}
+
+#[tokio::test]
 async fn gh_cli_config_lookup_failure_is_reported_without_leaking() {
     let cases = [
         // An arbitrary adapter failure without a source is a failure, not an

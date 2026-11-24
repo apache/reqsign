@@ -37,7 +37,10 @@
 //! `could not find key "user"` on stderr with no stdout), or an explicit
 //! `no oauth token found` response. Any other command execution failure,
 //! including a `NotFound` source inside a custom adapter's error, fails
-//! signing. A successful account lookup that is not a usable GitHub account
+//! signing. The command-unavailable marker permits anonymous fallback only
+//! during this account lookup; a failure while reading the stored token,
+//! including an unavailable executor, still fails signing. A successful
+//! account lookup that is not a usable GitHub account
 //! name is malformed, not an absent account. Ordinary logins accept legacy accounts
 //! such as `A-` and `john--doe`; current registration rules are not used as a
 //! validity check, so they only need to look like a login: ASCII letters,

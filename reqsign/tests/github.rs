@@ -307,3 +307,39 @@ async fn facade_unknown_adapter_failures_do_not_fall_back_or_cache_anonymous() -
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn facade_token_stage_unavailable_fails_and_retries_without_anonymous() -> Result<()> {
+    let command = MockCommandExecute::sequence([
+        cli_user(),
+        MockCommandResult::CommandUnavailable("fabricated token-stage unavailable".to_string()),
+        cli_user(),
+        cli_token(),
+    ]);
+    let signer =
+        reqsign::github::default_signer(context(HashMap::new()).with_command_execute(command));
+    let original = stale_request();
+
+    let mut parts = original.clone();
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a token-stage unavailable command must not become anonymous access");
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        "Bearer stale-facade-token"
+    );
+
+    // The failed token read must not install or cache an anonymous credential.
+    let mut retry = original.clone();
+    signer.sign(&mut retry, None).await?;
+    assert_eq!(
+        retry.headers[http::header::AUTHORIZATION],
+        "Bearer cli-token"
+    );
+    assert_eq!(retry.uri, original.uri);
+    Ok(())
+}

@@ -89,7 +89,9 @@ impl Error {
     /// failed without inspecting error sources or matching text.
     ///
     /// This marker is specific to command execution. File and HTTP adapters do
-    /// not set it.
+    /// not set it. A consumer decides where unavailability is acceptable: it
+    /// may treat an optional command as absent, but a required command that
+    /// reports this marker must still fail.
     pub fn command_unavailable(message: impl Into<String>) -> Self {
         Self {
             command_unavailable: true,

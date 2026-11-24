@@ -362,8 +362,10 @@ exactly `could not find key "user"` on stderr with no stdout), and an
 explicit `no oauth token found` response yield no credential from the CLI slot;
 any other command execution failure, including a `NotFound` source inside a
 custom adapter's error, any other exit status, and malformed account or token
-output fail instead of selecting anonymous access. Ordinary logins accept
-legacy accounts such as `A-` and
+output fail instead of selecting anonymous access. The command-unavailable
+marker permits anonymous fallback only during this account lookup; a
+token-stage failure, including unavailability, still fails. Ordinary logins
+accept legacy accounts such as `A-` and
 `john--doe`; current registration rules are not used as a validity check, so
 they only need to look like a login: ASCII letters, digits, and hyphens, not
 starting with a hyphen, with at least one letter or digit. An enterprise

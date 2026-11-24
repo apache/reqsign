@@ -62,7 +62,8 @@ pub(crate) const GH_CLI_MIN_VERSION: &str = "2.40.0";
 /// account. Every other command execution failure, including a `NotFound`
 /// source inside a custom adapter's error, any other exit status, and
 /// successful output that is not a usable GitHub account name yield a redacted
-/// error instead of silently falling back.
+/// error instead of silently falling back. The command-unavailable marker
+/// permits anonymous fallback only during this account lookup.
 /// Usable names are ordinary GitHub.com logins and enterprise managed user
 /// names. Ordinary logins accept legacy accounts such as `A-` and
 /// `john--doe`, so current registration rules are not used as a validity
@@ -73,8 +74,10 @@ pub(crate) const GH_CLI_MIN_VERSION: &str = "2.40.0";
 /// for example `mona-cat_octo`); the normalized part has no leading, trailing,
 /// or consecutive dashes, the total is at most 39 characters, and the setup
 /// user's `octo_admin` form fits the same shape. Letter casing is preserved.
-/// After an active user is found, only an explicit `no oauth token found`
-/// response yields no credential. Command execution errors, empty or
+/// After an active user is found, the marker no longer permits anonymous
+/// fallback: only an explicit `no oauth token found` response yields no
+/// credential, and a token-stage failure, including an unavailable executor,
+/// returns a redacted credential error. Command execution errors, empty or
 /// whitespace-only successful stdout, malformed output, and other stored-token
 /// failures such as an expired or revoked token yield a redacted error. Errors
 /// never contain the token, the output, or the CLI's stderr.
