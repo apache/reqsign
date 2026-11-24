@@ -261,10 +261,8 @@ async fn static_provider_signs_without_network_and_rejects_expired_tokens() -> R
         "Bearer static-token-A0"
     );
 
-    let expired = StaticCredentialProvider::with_expires_at(
-        STATIC_TOKEN,
-        Timestamp::now() - Duration::from_secs(1),
-    );
+    let expired = StaticCredentialProvider::new(STATIC_TOKEN)
+        .with_expires_at(Timestamp::now() - Duration::from_secs(1));
     let signer = Signer::new(context, expired, RequestSigner);
     let mut parts = request();
     let original = parts.clone();

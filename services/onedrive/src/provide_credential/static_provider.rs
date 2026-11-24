@@ -48,12 +48,10 @@ impl StaticCredentialProvider {
         }
     }
 
-    /// Create a provider from an access token with a known absolute expiration.
-    pub fn with_expires_at(access_token: impl Into<String>, expires_at: Timestamp) -> Self {
-        Self {
-            access_token: access_token.into(),
-            expires_at: Some(expires_at),
-        }
+    /// Set the absolute expiration time reported with the token.
+    pub fn with_expires_at(mut self, expires_at: Timestamp) -> Self {
+        self.expires_at = Some(expires_at);
+        self
     }
 }
 
