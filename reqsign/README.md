@@ -51,11 +51,15 @@ input, not a universal switch between header and query authentication.
 
 ## Quick Start
 
-Add `reqsign` to your `Cargo.toml`:
+Add `reqsign` to your `Cargo.toml`. The example also needs `anyhow`, `http`,
+and `tokio`:
 
 ```toml
 [dependencies]
 reqsign = { version = "0.21", features = ["aws"] }
+anyhow = "1"
+http = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 By default, this includes `default-context` (a ready-to-use context using
@@ -71,6 +75,9 @@ To use specific services only:
 ```toml
 [dependencies]
 reqsign = { version = "0.21", default-features = false, features = ["aws", "default-context", "default-crypto"] }
+anyhow = "1"
+http = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
 ## Examples
@@ -109,7 +116,18 @@ async fn main() -> Result<()> {
 
 ### Option 2: Custom Assembly
 
-For more control, you can manually assemble the signer components:
+For more control, you can manually assemble the signer components. This
+example also uses the native context adapters directly:
+
+```toml
+[dependencies]
+reqsign = { version = "0.21", features = ["aws"] }
+reqsign-file-read-tokio = "4"
+reqsign-http-send-reqwest = "5"
+anyhow = "1"
+http = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
 
 ```rust,ignore
 use anyhow::Result;
@@ -308,6 +326,6 @@ jiff = { version = "1.0.1", features = ["js"] }
 ```
 
 The default features enabled above include `default-context` and
-`default-crypto`. Jiff's `js` clock reads `js_sys::Date`, so it needs a
-wasm-bindgen JavaScript host such as a browser or Node; a bare WASM runtime
-without one panics in `Timestamp::now()`.
+`default-crypto`. Jiff's `js` clock reads `js_sys::Date` through wasm-bindgen
+JS host imports, so it needs a JavaScript host such as a browser or Node; a
+bare WASM runtime without those imports panics in `Timestamp::now()`.
