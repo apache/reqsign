@@ -60,10 +60,11 @@ use crate::constants::{DEFAULT_TOKEN_ENDPOINT, USER_AGENT};
 /// performs no implicit retry.
 ///
 /// The `expires_in` field is required. The access token's absolute expiration is
-/// derived from the time the request started. A valid, parseable response
-/// commits a non-empty rotated refresh token before the access token and expiry
-/// are validated, because the previous refresh token is single-use even when the
-/// rest of the response is unusable.
+/// derived from the time the request started. A success response commits a
+/// non-empty rotated refresh token as soon as it can be read, before the
+/// remaining fields are validated or reported as unparseable, because the
+/// previous refresh token is single-use even when the rest of the response is
+/// unusable.
 #[derive(Clone)]
 pub struct RefreshCredentialProvider {
     token_endpoint: String,
@@ -168,8 +169,22 @@ impl RefreshCredentialProvider {
             return Err(token_exchange_error(response.status(), response.body()));
         }
 
-        let response: TokenResponse = serde_json::from_slice(response.body())
-            .map_err(|_| Error::unexpected("failed to parse Aliyun Drive token response"))?;
+        let body = response.body();
+        let response: TokenResponse = match serde_json::from_slice(body) {
+            Ok(response) => response,
+            Err(_) => {
+                // Aliyun Drive consumes the previous refresh token before it
+                // answers. Commit a rotated token that can still be read so a
+                // malformed secondary field cannot strand local state on the
+                // consumed token, then report the parse failure.
+                if let Some(rotated_refresh_token) = extract_rotated_refresh_token(body) {
+                    *current_refresh_token = rotated_refresh_token;
+                }
+                return Err(Error::unexpected(
+                    "failed to parse Aliyun Drive token response",
+                ));
+            }
+        };
 
         let rotated_refresh_token = response
             .refresh_token
@@ -236,6 +251,21 @@ struct TokenResponse {
     expires_in: Option<u64>,
     #[serde(default)]
     refresh_token: Option<String>,
+}
+
+/// Extract a rotated refresh token from a body that does not deserialize into
+/// [`TokenResponse`].
+///
+/// Only `refresh_token` is read, so an unexpected type in any other field
+/// cannot block the extraction. Returns `None` when the body is not JSON or
+/// carries no non-empty `refresh_token` string.
+fn extract_rotated_refresh_token(body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()?
+        .get("refresh_token")?
+        .as_str()
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned)
 }
 
 #[derive(Deserialize)]

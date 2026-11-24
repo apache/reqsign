@@ -483,6 +483,45 @@ async fn successful_response_rotates_the_token_even_when_expiry_is_missing() -> 
 }
 
 #[tokio::test]
+async fn malformed_secondary_fields_still_commit_the_rotated_refresh_token() -> Result<()> {
+    // `expires_in` has the wrong JSON type, so strict deserialization fails.
+    // Aliyun Drive has already consumed the previous single-use refresh token
+    // by then, so the parseable rotated token must be committed before the
+    // parse failure is reported.
+    let mock = MockHttpSend::immediate([
+        error_response(
+            StatusCode::OK,
+            r#"{"access_token":"fake-access-token-B2","token_type":"Bearer","expires_in":"3600","refresh_token":"fake-refresh-token-A2"}"#,
+        ),
+        token_response(
+            "fake-access-token-B3",
+            "Bearer",
+            Some(3600),
+            Some("fake-refresh-token-A4"),
+        ),
+    ]);
+    let ctx = Context::new().with_http_send(mock.clone());
+    let provider = provider();
+
+    let error = provider
+        .provide_credential(&ctx)
+        .await
+        .expect_err("a string expires_in must fail the strict parse");
+    assert_eq!(error.kind(), ErrorKind::Unexpected);
+
+    provider
+        .provide_credential(&ctx)
+        .await?
+        .expect("the next refresh must succeed");
+    assert_eq!(
+        decoded_json(&mock.requests()[1].body)["refresh_token"],
+        "fake-refresh-token-A2",
+        "the consumed refresh token must be replaced before the parse failure is reported"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn missing_rotated_refresh_token_is_rejected_without_replacing_it() -> Result<()> {
     let mock = MockHttpSend::immediate([
         token_response(ACCESS_TOKEN, "Bearer", Some(3600), None),
@@ -510,6 +549,38 @@ async fn missing_rotated_refresh_token_is_rejected_without_replacing_it() -> Res
         decoded_json(&mock.requests()[1].body)["refresh_token"],
         REFRESH_TOKEN,
         "an unusable response must not replace the stored token"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn unparseable_response_does_not_replace_the_stored_refresh_token() -> Result<()> {
+    let mock = MockHttpSend::immediate([
+        error_response(StatusCode::OK, r#"{"access_token":"#),
+        token_response(
+            "fake-access-token-B2",
+            "Bearer",
+            Some(3600),
+            Some("fake-refresh-token-A3"),
+        ),
+    ]);
+    let ctx = Context::new().with_http_send(mock.clone());
+    let provider = provider();
+
+    let error = provider
+        .provide_credential(&ctx)
+        .await
+        .expect_err("unparseable JSON must fail");
+    assert_eq!(error.kind(), ErrorKind::Unexpected);
+
+    provider
+        .provide_credential(&ctx)
+        .await?
+        .expect("the next refresh must succeed");
+    assert_eq!(
+        decoded_json(&mock.requests()[1].body)["refresh_token"],
+        REFRESH_TOKEN,
+        "an unparseable response must not replace the stored token"
     );
     Ok(())
 }
