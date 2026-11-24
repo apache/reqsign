@@ -51,15 +51,18 @@ pub(crate) const GH_CLI_MIN_VERSION: &str = "2.40.0";
 /// for account and host selection.
 ///
 /// The initial `gh config get user` lookup distinguishes an absent account
-/// from a failure. A context without a command executor, a command adapter
-/// that does not report a typed I/O cause, a missing `gh` executable, and the
-/// confirmed absent-account response all yield no credential and permit
+/// from a failure. Command executors report an unavailable operation through
+/// [`Error::command_unavailable`]: the no-op executor installed by
+/// `Context::new()`, an executor that does not support the target, and an
+/// executor that confirms the requested program cannot be spawned. That marker
+/// and the confirmed absent-account response yield no credential and permit
 /// anonymous fallback. GitHub CLI 2.40.0 and 2.103.3 report a host without a
 /// stored account with exit status 1, empty stdout, and exactly the stderr
 /// diagnostic `could not find key "user"`; only that response is the absent
-/// account. A typed command execution failure other than a missing executable,
-/// any other exit status, and successful output that is not a usable GitHub
-/// account name yield a redacted error instead of silently falling back.
+/// account. Every other command execution failure, including a `NotFound`
+/// source inside a custom adapter's error, any other exit status, and
+/// successful output that is not a usable GitHub account name yield a redacted
+/// error instead of silently falling back.
 /// Usable names are ordinary GitHub.com logins and enterprise managed user
 /// names. Ordinary logins accept legacy accounts such as `A-` and
 /// `john--doe`, so current registration rules are not used as a validity
@@ -90,18 +93,15 @@ impl GhCliCredentialProvider {
             .await
         {
             Ok(output) => output,
-            Err(error) => match io_error_kind(&error) {
-                // `gh` is not installed: there is no stored account to read.
-                Some(std::io::ErrorKind::NotFound) => return Ok(None),
-                // No typed I/O cause: the adapter does not run commands in this
-                // context, such as the no-op adapter installed by
-                // `Context::new()` and bare WASM runtimes. The slot stays
-                // absent instead of failing the chain.
-                None => return Ok(None),
-                // The adapter ran but could not spawn `gh`. Treating this as
-                // an absent account would silently select anonymous access.
-                Some(_) => return Err(unexpected_account_error()),
-            },
+            // The executor reports that it cannot run commands here: no
+            // executor configured, an unsupported target, or a confirmed
+            // cannot-spawn program. The slot stays absent.
+            Err(error) if error.is_command_unavailable() => return Ok(None),
+            // Any other executor failure is a real execution failure,
+            // including ambiguous or nested `NotFound` causes from custom
+            // adapters. Treating it as an absent account would silently select
+            // anonymous access.
+            Err(_) => return Err(unexpected_account_error()),
         };
 
         if !output.success() {
@@ -210,24 +210,6 @@ fn command_failed_with_unknown_flag(output: &CommandOutput, flag: &str) -> bool 
 fn command_failed_because_token_is_missing(output: &CommandOutput) -> bool {
     let stderr = String::from_utf8_lossy(&output.stderr);
     stderr.contains("no oauth token found")
-}
-
-/// Returns the kind of the typed I/O error that caused a command failure, if
-/// the adapter reports one.
-///
-/// The Tokio adapter wraps spawn failures in [`std::io::Error`], so a missing
-/// `gh` is a typed `NotFound` rather than a message. Custom adapters that do
-/// not report a typed I/O cause leave the failure unclassified.
-fn io_error_kind(error: &Error) -> Option<std::io::ErrorKind> {
-    let mut source = std::error::Error::source(error);
-    while let Some(cause) = source {
-        if let Some(io_error) = cause.downcast_ref::<std::io::Error>() {
-            return Some(io_error.kind());
-        }
-        source = cause.source();
-    }
-
-    None
 }
 
 /// Check whether `gh config get user` confirmed that no account is stored.

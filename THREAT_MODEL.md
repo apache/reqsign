@@ -354,21 +354,23 @@ and newer; older supported versions do not refresh stored tokens, so the
 provider retries without the flag only after the CLI reports that specific flag
 as unknown. The default provider does not read `GH_ENTERPRISE_TOKEN` or
 `GITHUB_ENTERPRISE_TOKEN`, does not run a shell, and does not silently fall
-through to another identity when a configured default slot fails. A missing
-`gh` executable, a confirmed no-account response (`gh config get user` exiting
-with status 1 and exactly `could not find key "user"` on stderr with no
-stdout), and an explicit `no oauth token found` response yield no credential
-from the CLI slot; another typed command execution failure, any other exit
-status, and malformed account or token output fail instead of selecting
-anonymous access. Ordinary logins accept legacy accounts such as `A-` and
+through to another identity when a configured default slot fails. A command
+executor that reports command execution as unavailable (no executor
+configured, an unsupported target, or a confirmed cannot-spawn program), a
+confirmed no-account response (`gh config get user` exiting with status 1 and
+exactly `could not find key "user"` on stderr with no stdout), and an
+explicit `no oauth token found` response yield no credential from the CLI slot;
+any other command execution failure, including a `NotFound` source inside a
+custom adapter's error, any other exit status, and malformed account or token
+output fail instead of selecting anonymous access. Ordinary logins accept
+legacy accounts such as `A-` and
 `john--doe`; current registration rules are not used as a validity check, so
 they only need to look like a login: ASCII letters, digits, and hyphens, not
 starting with a hyphen, with at least one letter or digit. An enterprise
 managed user name appends `_` and the three-to-eight character alphanumeric
 shortcode to a normalized username that has no leading, trailing, or
 consecutive dashes, is at most 39 characters in total, and includes the setup
-user's `octo_admin` form. A command adapter
-that does not report a typed I/O cause leaves the slot absent. A caller-supplied
+user's `octo_admin` form. A caller-supplied
 `ProvideCredentialChain` keeps that chain's documented error policy. Command
 output, including stderr, never appears in errors or `Debug` output. The
 explicit anonymous provider is the only supported fallback when no credential

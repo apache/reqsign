@@ -34,4 +34,5 @@ reqsign-core = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+reqsign-command-execute-tokio = { workspace = true }
 wasm-bindgen-test = { version = "0.3" }

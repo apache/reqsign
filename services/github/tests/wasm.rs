@@ -22,22 +22,25 @@ use reqsign_github::{DefaultCredentialProvider, RequestSigner, StaticCredentialP
 use std::collections::HashMap;
 use wasm_bindgen_test::*;
 
-/// A command adapter that reports no typed I/O cause, like the no-op adapter
-/// and the WASM `TokioCommandExecute`.
+/// A command adapter that explicitly reports the command as unavailable, like
+/// the no-op adapter and the WASM `TokioCommandExecute`.
 #[derive(Debug)]
 struct UnavailableCommandExecute;
 
 impl CommandExecute for UnavailableCommandExecute {
     async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
-        Err(Error::unexpected("fabricated unavailable command adapter"))
+        Err(Error::command_unavailable(
+            "fabricated unavailable command adapter",
+        ))
     }
 }
 
-/// A command adapter that reports a typed missing executable.
+/// A command adapter that fails with a raw `NotFound` I/O source. That is an
+/// adapter failure, not the typed command-unavailable marker.
 #[derive(Debug)]
-struct MissingCommandExecute;
+struct RawNotFoundCommandExecute;
 
-impl CommandExecute for MissingCommandExecute {
+impl CommandExecute for RawNotFoundCommandExecute {
     async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
         Err(
             Error::unexpected("fabricated spawn failure").with_source(std::io::Error::new(
@@ -217,10 +220,14 @@ async fn no_token_falls_back_to_anonymous_without_a_command_adapter() {
 }
 
 #[wasm_bindgen_test]
-async fn unavailable_or_missing_command_adapter_falls_back_to_anonymous() {
+async fn command_unavailable_falls_back_to_anonymous() {
     for ctx in [
+        // The real no-op executor on a bare context.
+        Context::new(),
+        // A custom executor that explicitly reports the command as unavailable.
         Context::new().with_command_execute(UnavailableCommandExecute),
-        Context::new().with_command_execute(MissingCommandExecute),
+        // The real WASM Tokio executor reports the command as unavailable.
+        Context::new().with_command_execute(reqsign_command_execute_tokio::TokioCommandExecute),
     ] {
         let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
         let mut parts = http::Request::get("https://api.github.com/repos/apache/reqsign")
@@ -243,34 +250,36 @@ async fn unavailable_or_missing_command_adapter_falls_back_to_anonymous() {
 }
 
 #[wasm_bindgen_test]
-async fn failing_command_adapter_does_not_fall_back_to_anonymous() {
-    let signer = Signer::new(
+async fn unknown_adapter_failures_do_not_fall_back_to_anonymous() {
+    for ctx in [
+        Context::new().with_command_execute(RawNotFoundCommandExecute),
         Context::new().with_command_execute(FailingCommandExecute),
-        DefaultCredentialProvider::new(),
-        RequestSigner,
-    );
-    let original = http::Request::get("https://api.github.com/repos/apache/reqsign")
-        .header(
-            http::header::AUTHORIZATION,
-            "Bearer stale-wasm-github-token",
-        )
-        .body(())
-        .expect("request must build")
-        .into_parts()
-        .0;
-    let mut parts = original.clone();
+    ] {
+        let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+        let original = http::Request::get("https://api.github.com/repos/apache/reqsign")
+            .header(
+                http::header::AUTHORIZATION,
+                "Bearer stale-wasm-github-token",
+            )
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+        let mut parts = original.clone();
 
-    let error = signer
-        .sign(&mut parts, None)
-        .await
-        .expect_err("a typed execution failure must not become anonymous access");
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("an unmarked execution failure must not become anonymous access");
 
-    assert_eq!(error.kind(), reqsign_core::ErrorKind::Unexpected);
-    assert_eq!(parts.headers, original.headers);
-    assert_eq!(
-        parts.headers[http::header::AUTHORIZATION],
-        "Bearer stale-wasm-github-token"
-    );
+        assert_eq!(error.kind(), reqsign_core::ErrorKind::Unexpected);
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+        assert_eq!(
+            parts.headers[http::header::AUTHORIZATION],
+            "Bearer stale-wasm-github-token"
+        );
+    }
 }
 
 #[wasm_bindgen_test]

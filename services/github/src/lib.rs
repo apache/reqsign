@@ -30,12 +30,15 @@
 //! different identity. A malformed environment token, an invalid prepended or
 //! static provider, or a GitHub CLI error or malformed CLI output fails
 //! signing; the chain does not fall back to anonymous access. Only an absent
-//! credential reaches the explicit anonymous slot: no command executor, a
-//! missing `gh` executable, a confirmed no-account response (`gh config get
-//! user` exiting with status 1 and exactly `could not find key "user"` on
-//! stderr with no stdout), or an explicit `no oauth token found` response. A
-//! successful account lookup that is not a usable GitHub account name is
-//! malformed, not an absent account. Ordinary logins accept legacy accounts
+//! credential reaches the explicit anonymous slot: a command executor that
+//! reports command execution as unavailable (no executor configured, an
+//! unsupported target, or a confirmed cannot-spawn program), a confirmed
+//! no-account response (`gh config get user` exiting with status 1 and exactly
+//! `could not find key "user"` on stderr with no stdout), or an explicit
+//! `no oauth token found` response. Any other command execution failure,
+//! including a `NotFound` source inside a custom adapter's error, fails
+//! signing. A successful account lookup that is not a usable GitHub account
+//! name is malformed, not an absent account. Ordinary logins accept legacy accounts
 //! such as `A-` and `john--doe`; current registration rules are not used as a
 //! validity check, so they only need to look like a login: ASCII letters,
 //! digits, and hyphens, not starting with a hyphen, with at least one letter

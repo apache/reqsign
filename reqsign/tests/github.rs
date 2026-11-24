@@ -21,13 +21,21 @@ use reqsign::github::{
     AnonymousCredentialProvider, DefaultCredentialProvider, GhCliCredentialProvider,
     StaticCredentialProvider,
 };
-use reqsign::{CommandExecute, CommandOutput, Context, ErrorKind, Result, StaticEnv};
+use reqsign::{CommandExecute, CommandOutput, Context, Error, ErrorKind, Result, StaticEnv};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex as StdMutex};
 
 #[derive(Clone)]
+enum MockCommandResult {
+    Output(CommandOutput),
+    AdapterError(String),
+    RawNotFoundSource,
+    CommandUnavailable(String),
+}
+
+#[derive(Clone)]
 struct MockCommandExecute {
-    results: Arc<StdMutex<VecDeque<CommandOutput>>>,
+    results: Arc<StdMutex<VecDeque<MockCommandResult>>>,
 }
 
 impl std::fmt::Debug for MockCommandExecute {
@@ -37,7 +45,7 @@ impl std::fmt::Debug for MockCommandExecute {
 }
 
 impl MockCommandExecute {
-    fn sequence(results: impl IntoIterator<Item = CommandOutput>) -> Self {
+    fn sequence(results: impl IntoIterator<Item = MockCommandResult>) -> Self {
         Self {
             results: Arc::new(StdMutex::new(results.into_iter().collect())),
         }
@@ -46,12 +54,26 @@ impl MockCommandExecute {
 
 impl CommandExecute for MockCommandExecute {
     async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
-        Ok(self
+        match self
             .results
             .lock()
             .expect("result lock")
             .pop_front()
-            .expect("mock result must exist"))
+            .expect("mock result must exist")
+        {
+            MockCommandResult::Output(output) => Ok(output),
+            MockCommandResult::AdapterError(message) => Err(Error::unexpected(message)),
+            MockCommandResult::RawNotFoundSource => Err(Error::unexpected(
+                "fabricated command execution failure",
+            )
+            .with_source(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "SENTINEL_FACADE_IO_SOURCE",
+            ))),
+            MockCommandResult::CommandUnavailable(message) => {
+                Err(Error::command_unavailable(message))
+            }
+        }
     }
 }
 
@@ -134,16 +156,16 @@ async fn facade_anonymous_signing_removes_stale_authorization() -> Result<()> {
 #[tokio::test]
 async fn facade_default_signer_rejects_malformed_cli_output() -> Result<()> {
     let command = MockCommandExecute::sequence([
-        CommandOutput {
+        MockCommandResult::Output(CommandOutput {
             status: 0,
             stdout: b"facade-cli-user\n".to_vec(),
             stderr: Vec::new(),
-        },
-        CommandOutput {
+        }),
+        MockCommandResult::Output(CommandOutput {
             status: 0,
             stdout: b"first\nsecond".to_vec(),
             stderr: Vec::new(),
-        },
+        }),
     ]);
     let signer =
         reqsign::github::default_signer(context(HashMap::new()).with_command_execute(command));
@@ -202,5 +224,86 @@ async fn facade_no_anonymous_fails_without_mutating_the_request() -> Result<()> 
     assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
     assert_eq!(parts.uri, original.uri);
     assert_eq!(parts.headers, original.headers);
+    Ok(())
+}
+
+fn output(
+    status: i32,
+    stdout: impl Into<Vec<u8>>,
+    stderr: impl Into<Vec<u8>>,
+) -> MockCommandResult {
+    MockCommandResult::Output(CommandOutput {
+        status,
+        stdout: stdout.into(),
+        stderr: stderr.into(),
+    })
+}
+
+fn cli_user() -> MockCommandResult {
+    output(0, b"cli-user\n", Vec::new())
+}
+
+fn cli_token() -> MockCommandResult {
+    output(0, b"cli-token\n", Vec::new())
+}
+
+#[tokio::test]
+async fn facade_command_unavailable_falls_back_to_anonymous() -> Result<()> {
+    let command = MockCommandExecute::sequence([MockCommandResult::CommandUnavailable(
+        "fabricated unavailable command executor".to_string(),
+    )]);
+    let signer =
+        reqsign::github::default_signer(context(HashMap::new()).with_command_execute(command));
+    let original = stale_request();
+    let mut parts = original.clone();
+
+    signer.sign(&mut parts, None).await?;
+
+    assert!(!parts.headers.contains_key(http::header::AUTHORIZATION));
+    assert_eq!(parts.uri, original.uri);
+    Ok(())
+}
+
+#[tokio::test]
+async fn facade_unknown_adapter_failures_do_not_fall_back_or_cache_anonymous() -> Result<()> {
+    let failures = [
+        // An arbitrary adapter failure is not an absent account.
+        MockCommandResult::AdapterError("SENTINEL_FACADE_ADAPTER".to_string()),
+        // A raw or nested `NotFound` source from a custom adapter is
+        // ambiguous, not the typed command-unavailable marker.
+        MockCommandResult::RawNotFoundSource,
+    ];
+
+    for failure in failures {
+        let command = MockCommandExecute::sequence([failure, cli_user(), cli_token()]);
+        let signer =
+            reqsign::github::default_signer(context(HashMap::new()).with_command_execute(command));
+        let original = stale_request();
+
+        let mut parts = original.clone();
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("an unmarked adapter failure must not become anonymous access");
+        assert_eq!(error.kind(), ErrorKind::Unexpected);
+        assert!(!error.to_string().contains("SENTINEL"));
+        assert!(!format!("{error:?}").contains("SENTINEL"));
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+        assert_eq!(
+            parts.headers[http::header::AUTHORIZATION],
+            "Bearer stale-facade-token"
+        );
+
+        // The failed sign must not install or cache an anonymous credential:
+        // a retry consults the provider again and uses the stored token.
+        let mut retry = original.clone();
+        signer.sign(&mut retry, None).await?;
+        assert_eq!(
+            retry.headers[http::header::AUTHORIZATION],
+            "Bearer cli-token"
+        );
+        assert_eq!(retry.uri, original.uri);
+    }
     Ok(())
 }

@@ -481,13 +481,15 @@ impl Env for NoopEnv {
 
 /// NoopCommandExecute is a no-op implementation that always returns an error.
 ///
-/// This is used when no command executor is configured.
+/// This is used when no command executor is configured. The error carries the
+/// command-unavailable marker, so command providers can distinguish a missing
+/// executor from an executor that ran and failed.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct NoopCommandExecute;
 
 impl CommandExecute for NoopCommandExecute {
     async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
-        Err(Error::unexpected(
+        Err(Error::command_unavailable(
             "command execution not supported: no command executor configured",
         ))
     }
@@ -574,5 +576,37 @@ mod windows {
             assert_ne!(home_dir_inner().as_ref().map(Deref::deref), Some(home));
             assert_eq!(home_dir_inner().as_ref().map(Deref::deref), Some(home));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn noop_command_executor_reports_command_unavailable() {
+        let ctx = Context::new();
+
+        let error = futures::executor::block_on(ctx.command_execute("fabricated-program", &[]))
+            .expect_err("no-op command execution must fail");
+
+        assert!(error.is_command_unavailable());
+        assert_eq!(error.kind(), crate::ErrorKind::Unexpected);
+    }
+
+    #[test]
+    fn noop_file_and_http_do_not_report_command_unavailable() {
+        let ctx = Context::new();
+
+        let error = futures::executor::block_on(ctx.file_read("fabricated-path"))
+            .expect_err("no-op file read must fail");
+        assert!(!error.is_command_unavailable());
+
+        let request = http::Request::get("https://example.com")
+            .body(Bytes::new())
+            .expect("request must build");
+        let error = futures::executor::block_on(ctx.http_send(request))
+            .expect_err("no-op HTTP send must fail");
+        assert!(!error.is_command_unavailable());
     }
 }

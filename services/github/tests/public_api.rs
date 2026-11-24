@@ -46,6 +46,7 @@ enum MockCommandResult {
     Output(CommandOutput),
     AdapterError(String),
     AdapterIoError(std::io::ErrorKind),
+    CommandUnavailable(String),
 }
 
 #[derive(Clone)]
@@ -115,12 +116,15 @@ impl CommandExecute for MockCommandExecute {
                 Err(Error::unexpected("fabricated command execution failure")
                     .with_source(std::io::Error::new(kind, "SENTINEL_IO_SOURCE")))
             }
+            MockCommandResult::CommandUnavailable(message) => {
+                Err(Error::command_unavailable(message))
+            }
         }
     }
 }
 
-fn missing_executable_result() -> MockCommandResult {
-    MockCommandResult::AdapterIoError(std::io::ErrorKind::NotFound)
+fn command_unavailable_result() -> MockCommandResult {
+    MockCommandResult::CommandUnavailable("SENTINEL_UNAVAILABLE_COMMAND".to_string())
 }
 
 fn user_result(user: &str) -> MockCommandResult {
@@ -416,12 +420,10 @@ async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()>
     assert!(!parts.headers.contains_key(AUTHORIZATION));
 
     let cases = vec![
-        // An adapter that reports no typed I/O cause cannot run commands in
-        // this context, such as the no-op adapter installed by
+        // A command executor that reports the operation as unavailable cannot
+        // run commands in this context, such as the no-op adapter installed by
         // `Context::new()`. The slot stays absent.
-        MockCommandExecute::adapter_error("SENTINEL_CONFIG_ADAPTER"),
-        // `gh` is not installed: the typed spawn error is NotFound.
-        MockCommandExecute::sequence([missing_executable_result()]),
+        MockCommandExecute::sequence([command_unavailable_result()]),
         // GitHub CLI 2.40.0 and 2.103.3 confirm a host without a stored
         // account with exit status 1, empty stdout, and this exact diagnostic.
         MockCommandExecute::failure(1, b"could not find key \"user\"\n".to_vec()),
@@ -447,8 +449,21 @@ async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()>
 #[tokio::test]
 async fn gh_cli_config_lookup_failure_is_reported_without_leaking() {
     let cases = [
-        // Only NotFound means the executable is missing. A permission failure
-        // must not fall back to anonymous access.
+        // An arbitrary adapter failure without a source is a failure, not an
+        // absent account.
+        (
+            MockCommandExecute::adapter_error("SENTINEL_CONFIG_ADAPTER"),
+            ErrorKind::Unexpected,
+        ),
+        // A raw or nested `NotFound` inside a custom adapter error is
+        // ambiguous and must not be treated as the command-unavailable marker.
+        (
+            MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
+                std::io::ErrorKind::NotFound,
+            )]),
+            ErrorKind::Unexpected,
+        ),
+        // A permission failure must not fall back to anonymous access.
         (
             MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
                 std::io::ErrorKind::PermissionDenied,
@@ -668,6 +683,10 @@ async fn gh_cli_rejects_unsupported_account_names() {
 async fn default_provider_rejects_config_lookup_failure_without_mutating_the_request() -> Result<()>
 {
     let cases = [
+        MockCommandExecute::adapter_error("SENTINEL_CONFIG_ADAPTER"),
+        MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
+            std::io::ErrorKind::NotFound,
+        )]),
         MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
             std::io::ErrorKind::PermissionDenied,
         )]),
@@ -694,6 +713,7 @@ async fn default_provider_rejects_config_lookup_failure_without_mutating_the_req
 
         assert!(!error.to_string().contains("SENTINEL_CONFIG"));
         assert!(!format!("{error:?}").contains("SENTINEL_CONFIG"));
+        assert!(!format!("{error:?}").contains("SENTINEL_IO_SOURCE"));
         assert_eq!(parts.uri, original.uri);
         assert_eq!(parts.headers, original.headers);
         assert_eq!(parts.headers[AUTHORIZATION], "Bearer stale-token-D4");

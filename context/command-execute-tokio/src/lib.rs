@@ -99,8 +99,17 @@ impl CommandExecute for TokioCommandExecute {
             .stderr(Stdio::piped())
             .output()
             .await
-            .map_err(|e| {
-                Error::unexpected(format!("failed to execute command '{program}'")).with_source(e)
+            .map_err(|error| {
+                // A missing program is the only spawn failure that confirms
+                // command execution is unavailable here. Every other spawn
+                // failure is an execution failure and stays unmarked.
+                if error.kind() == std::io::ErrorKind::NotFound {
+                    Error::command_unavailable(format!("failed to execute command '{program}'"))
+                        .with_source(error)
+                } else {
+                    Error::unexpected(format!("failed to execute command '{program}'"))
+                        .with_source(error)
+                }
             })?;
 
         Ok(CommandOutput {
@@ -114,7 +123,7 @@ impl CommandExecute for TokioCommandExecute {
 #[cfg(target_family = "wasm")]
 impl CommandExecute for TokioCommandExecute {
     async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
-        Err(Error::unexpected(
+        Err(Error::command_unavailable(
             "TokioCommandExecute is unsupported on wasm targets",
         ))
     }
@@ -142,6 +151,33 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_missing_command_reports_command_unavailable() {
+        let executor = TokioCommandExecute;
+        let error = executor
+            .command_execute("nonexistent_command_xyz", &[])
+            .await
+            .expect_err("a missing command must fail");
+
+        assert!(error.is_command_unavailable());
+        assert_eq!(error.kind(), reqsign_core::ErrorKind::Unexpected);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_execution_failure_is_not_command_unavailable() {
+        let executor = TokioCommandExecute;
+        // A directory exists but cannot be executed, so the spawn fails with a
+        // kind other than `NotFound`.
+        let error = executor
+            .command_execute("/", &[])
+            .await
+            .expect_err("an executable directory is not a program");
+
+        assert!(!error.is_command_unavailable());
+        assert_eq!(error.kind(), reqsign_core::ErrorKind::Unexpected);
     }
 
     #[tokio::test]
