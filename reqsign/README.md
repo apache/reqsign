@@ -252,7 +252,7 @@ let signer = seafile::default_signer(ctx.clone());
 ## Feature Flags
 
 - `default`: Enables `default-context` and `default-crypto`
-- `default-context`: Provides a default context implementation: `ReqwestHttpSend` on every target, plus `TokioFileRead` and `TokioCommandExecute` on native targets
+- `default-context`: Provides a default context implementation: `ReqwestHttpSend` and `OsEnv` on every target, plus `TokioFileRead` and `TokioCommandExecute` on native targets
 - `default-crypto`: Re-exports `RustCryptoProvider`; `default_context()` binds it when no process-wide provider is installed
 - `aliyun`: Enable Aliyun OSS support
 - `aliyun-drive`: Enable Aliyun Drive Open Platform support
@@ -291,15 +291,23 @@ for the provider list and clock requirements.
 
 `default-context` and `default-crypto` are supported on WASM.
 `default_context()` wires `ReqwestHttpSend` and `OsEnv` and, with
-`default-crypto`, binds RustCrypto; file reading and command execution have no
-browser equivalent and fail when a credential source needs them. Prefer static
-or externally injected credentials, since file- and CLI-based credential
-sources cannot run in a browser.
+`default-crypto`, binds RustCrypto. File reading and command execution have no
+browser equivalent and fail when a credential source needs them; `OsEnv` reads
+no variables on WASM because there is no process environment, so prefer static
+or externally injected credentials.
 
-Example for WASM:
+AWS signing stamps each request with `Timestamp::now()`. A WASM build must
+enable Jiff's JavaScript clock in the application for that to work:
+
 ```toml
 [dependencies]
 reqsign = { version = "0.21", features = ["aws"] }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+jiff = { version = "1.0.1", features = ["js"] }
 ```
 
-The default features include `default-context` and `default-crypto`.
+The default features enabled above include `default-context` and
+`default-crypto`. Jiff's `js` clock reads `js_sys::Date`, so it needs a
+wasm-bindgen JavaScript host such as a browser or Node; a bare WASM runtime
+without one panics in `Timestamp::now()`.

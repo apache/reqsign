@@ -128,7 +128,19 @@ futures that are `MaybeSend` — `Send` on native targets, relaxed on WASM.
 
 There is no filesystem and no OS environment in a browser, so provide what
 your credential sources and signer actually need — HTTP plus a
-`CryptoProvider` for signing:
+`CryptoProvider` for signing. AWS signing also stamps `Timestamp::now()`, so
+the application must enable Jiff's JavaScript clock and run on a wasm-bindgen
+host such as a browser or Node:
+
+```toml
+[dependencies]
+reqsign = { version = "0.21", features = ["aws"] }
+bytes = "1"
+http = "1"
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+jiff = { version = "1.0.1", features = ["js"] }
+```
 
 ```rust
 use bytes::Bytes;
@@ -155,6 +167,10 @@ let signer = Signer::new(
     RequestSigner::new("s3", "us-east-1"),
 );
 ```
+
+The facade's `default_context()` already wires `ReqwestHttpSend` and `OsEnv`
+on WASM; this assembly replaces the HTTP adapter with one built on the
+browser's `fetch()`.
 
 Static or externally-injected credentials are the norm on WASM — chains that
 read files or metadata endpoints have nothing to read in a browser.
