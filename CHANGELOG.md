@@ -35,8 +35,9 @@ through the `Context`, passes the `Context` explicitly to facade
   service feature is enabled.
 - **`Signer::with_context` isolates the credential cache** instead of reusing
   the previous context's cached credential, because a different context can
-  resolve a different identity. Use `with_request_signer` or
-  `with_credential_granter` to keep the cache.
+  resolve a different identity. To replace only the signing or granting
+  operation and keep the cache, use `Signer::with_request_signer` or
+  `Granter::with_credential_granter`.
 - **OBS and TOS `Credential` gained `expires_at`**, which breaks struct-literal
   construction. Use `Credential::new` plus `with_expires_at` (and
   `with_session_token` for TOS).
@@ -45,8 +46,11 @@ through the `Context`, passes the `Context` explicitly to facade
 
 - Crypto backend crates `reqsign-crypto-rustcrypto` (workspace member,
   `wasm32-unknown-unknown` for its supported subset) and
-  `reqsign-crypto-boring` (native-only, excluded from the main workspace,
-  optional `fips` feature), both `1.0.0`.
+  `reqsign-crypto-boring` (native-only, excluded from the main workspace and
+  the workspace publish plan, optional `fips` feature), both `1.0.0`.
+  `reqsign-crypto-boring` is included in the source release; it is not
+  published to crates.io by this release, and publishing it requires a
+  separate decision.
 - Provider crates and facade features, all first release at `1.0.0`:
   `reqsign-aliyun-drive`, `reqsign-b2` (facade feature `b2`),
   `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`,
@@ -70,12 +74,10 @@ through the `Context`, passes the `Context` explicitly to facade
   `reqsign-command-execute-tokio`. `reqsign-http-send-reqwest` moves to
   `5.0.0`, its own line offset from the core major.
 
-### Carried over from the v0.20.9 release candidate
+### Carried over from the v0.20.9 release
 
-The 0.21 source also contains the changes prepared for v0.20.9, which had not
-reached crates.io when this release was prepared. If the v0.20.9 vote completes
-first, these reach users there and this section only records that 0.21 includes
-them:
+The 0.21 source also contains the changes released in v0.20.9. Callers
+upgrading from 0.20.8 or earlier receive them from either release:
 
 - AWS SSO-backed assume-role profile chains, S3 Express session-token selection
   by service, and configurable SigV4 canonical URI encoding.
@@ -110,7 +112,7 @@ them:
 | `reqsign-tencent-cos` | 4.0.0 |
 | `reqsign-volcengine-tos` | 4.0.0 |
 | `reqsign-crypto-rustcrypto` | 1.0.0 |
-| `reqsign-crypto-boring` | 1.0.0 (published outside the workspace) |
+| `reqsign-crypto-boring` | 1.0.0 (source release only) |
 | `reqsign-aliyun-drive` | 1.0.0 |
 | `reqsign-b2` | 1.0.0 |
 | `reqsign-baidu-netdisk` | 1.0.0 |

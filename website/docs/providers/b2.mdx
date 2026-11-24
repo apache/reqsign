@@ -40,15 +40,24 @@ use reqsign::{b2, default_context};
 let ctx = default_context();
 let signer = b2::default_signer(ctx);
 
+// Load the credential first: api_url belongs to the application key and
+// selects the account's endpoint.
+let credential = signer.credential_for(None).await?;
+let uri = format!(
+    "{}/b2api/v4/b2_list_buckets?accountId=account-id",
+    credential.api_url
+);
+
 let mut req = http::Request::builder()
     .method(http::Method::GET)
-    .uri("https://api001.backblazeb2.com/b2api/v4/b2_list_buckets?accountId=account-id")
+    .uri(uri)
     .body(())?
     .into_parts()
     .0;
 
-// Sign in place, then send with the HTTP client you already use.
-signer.sign(&mut req, None).await?;
+// Sign with the same credential that produced api_url, then send with the
+// HTTP client you already use.
+signer.sign_with_credential(&mut req, &credential, None).await?;
 ```
 
 The default chain exchanges `B2_APPLICATION_KEY_ID` and `B2_APPLICATION_KEY`

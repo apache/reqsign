@@ -5,7 +5,10 @@ Backblaze B2 Native API authentication for reqsign.
 The crate exchanges a B2 application key for a Native API authorization token
 with [`b2_authorize_account`](https://www.backblaze.com/apidocs/b2-authorize-account),
 keeps the returned Native API and download base URLs on the credential, and signs
-requests with the required `Authorization` header.
+requests with the required `Authorization` header. Because those base URLs
+belong to the credential, `Signer::credential_for` and
+`Signer::sign_with_credential` let callers build the request URI from the
+credential and sign with that same credential.
 
 ## Quick Start
 
@@ -14,7 +17,7 @@ use reqsign_b2::{DefaultCredentialProvider, RequestSigner};
 use reqsign_core::{Context, OsEnv, Result, Signer};
 use reqsign_http_send_reqwest::ReqwestHttpSend;
 
-# async fn main() -> Result<()> {
+# async fn example() -> Result<()> {
 let context = Context::new()
     .with_http_send(ReqwestHttpSend::default())
     .with_env(OsEnv);
@@ -25,15 +28,18 @@ let signer = Signer::new(
     RequestSigner,
 );
 
-let mut request = http::Request::get(
-    "https://api001.backblazeb2.com/b2api/v4/b2_list_buckets?accountId=account-id",
-)
-.body(())
-.unwrap()
-.into_parts()
-.0;
+// Load the credential first: api_url belongs to the application key and
+// selects the account's endpoint.
+let credential = signer.credential_for(None).await?;
+let uri = format!(
+    "{}/b2api/v4/b2_list_buckets?accountId=account-id",
+    credential.api_url
+);
 
-signer.sign(&mut request, None).await?;
+let mut request = http::Request::get(uri).body(()).unwrap().into_parts().0;
+
+// Sign with the same credential that supplied api_url.
+signer.sign_with_credential(&mut request, &credential, None).await?;
 # Ok(())
 # }
 ```
