@@ -287,9 +287,9 @@ gpg --import KEYS
 
 # Verify the signature and checksum of a downloaded artifact:
 
-gpg --verify apache-reqsign-X.Y.Z-src.tar.gz.asc
+gpg --verify apache-reqsign-X.Y.Z.tar.gz.asc
 
-sha512sum -c apache-reqsign-X.Y.Z-src.tar.gz.sha512
+sha512sum -c apache-reqsign-X.Y.Z.tar.gz.sha512
 
 
 ```
@@ -1407,17 +1407,19 @@ Slots you do not provide stay as no-op stubs that error when used — a credenti
 Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
 
 * `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, Koofr, OneDrive, Upyun, Yandex Disk, Seafile**(facade features `aws`, `aws-v4a`, `azure`, `github`, `aliyun`,`aliyun-drive`, `b2`, `baidu-netdisk`, `cloudflare`, `vercel`, `tencent`,`dropbox`, `koofr`, `onedrive`, `oauth2`, `upyun`, `yandex-disk`, `seafile`)
+* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, HTTP Message Signatures, Koofr, OneDrive, Upyun, Yandex Disk, Seafile**(facade features `aws`, `aws-v4a`, `azure`, `github`,`http-message-signatures`, `aliyun`, `aliyun-drive`, `b2`, `baidu-netdisk`,`cloudflare`, `vercel`, `tencent`, `dropbox`, `koofr`, `onedrive`, `oauth2`,`upyun`, `yandex-disk`, `seafile`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock. GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in bare WASM runtimes.
 
 Cloudflare and Vercel environment, static, and header signing need no JavaScript clock.
 
-Yandex Disk static credentials without an expiry and header signing need no JavaScript clock. Baidu Netdisk static query signing also needs no JavaScript clock. Seafile signing also needs no JavaScript clock.
+Yandex Disk static credentials without an expiry and header signing need no JavaScript clock. Baidu Netdisk static query signing also needs no JavaScript clock. Seafile signing also needs no JavaScript clock. HTTP Message Signatures signing needs a JavaScript clock and therefore a wasm-bindgen host.
+
+These clock notes cover the named paths only and are not an exhaustive inventory: a compile-tested provider not named here may still read the clock on some runtime paths.
 
 The [provider matrix](/docs/providers/) marks WASM status per provider; treat providers outside this set as unsupported there until the catalog says otherwise.
 
-The OAuth 2.0, Dropbox, Aliyun Drive, and OneDrive paths enable Jiff's `js`feature for `wasm32-unknown-unknown`. Their public signing and refresh entry points read the clock from a wasm-bindgen JavaScript host such as a browser or Node. A bare WASM runtime without a JavaScript clock can compile the crates but is not a supported runtime; calling `Timestamp::now` traps there. CI exercises the public Dropbox signing, OAuth2 mock-refresh, Aliyun Drive static and refresh, and OneDrive signing and refresh paths under `wasm-bindgen-test` in Node.
+The HTTP Message Signatures, OAuth 2.0, Dropbox, Aliyun Drive, and OneDrive paths enable Jiff's `js` feature for `wasm32-unknown-unknown`. Their public signing and refresh entry points read the clock from a wasm-bindgen JavaScript host such as a browser or Node. A bare WASM runtime without a JavaScript clock can compile the crates but is not a supported runtime; calling `Timestamp::now`traps there. CI exercises the public HTTP Message Signatures HMAC signing, Dropbox signing, OAuth2 mock-refresh, Aliyun Drive static and refresh, and OneDrive signing and refresh paths under `wasm-bindgen-test` in Node.
 
 ```
 
@@ -2699,6 +2701,8 @@ signer.sign(&mut req, None).await?;
 
 The default chain exchanges `B2_APPLICATION_KEY_ID` and `B2_APPLICATION_KEY`for a Native API authorization token with the documented v4`b2_authorize_account` endpoint. The credential carries the authorization token, the Native API and download base URLs, and the earlier of the 24-hour token limit and the application key expiration timestamp. `Signer` caches and refreshes it.
 
+The default source and prepended providers fail closed: a provider error is returned to the caller instead of falling through, so a retryable`b2_authorize_account` failure stays retryable.
+
 Use `AccountAuthorizationCredentialProvider` for an explicit application key, or`StaticCredentialProvider` when the caller already obtained the token and base URLs. Key capabilities and bucket or prefix restrictions are enforced by B2 and remain server-side.
 
 The signer covers Native API requests authorized by the account token. Creating upload URLs, requesting download authorization, and using the S3-compatible API remain the caller's responsibility.
@@ -3021,7 +3025,7 @@ let signer = default_signer(ctx).with_credential_provider(provider);
 
 ```
 
-The refresh provider sends the client ID and secret in the RFC 6749 form body and uses Dropbox's fixed token endpoint unless the caller explicitly replaces it with another trusted HTTPS endpoint. It rejects a successful token response that omits `expires_in`, because Dropbox access tokens are expected to expire and an unknown lifetime must not be cached as permanent.
+The refresh provider sends the client ID and secret in the RFC 6749 form body and uses Dropbox's fixed token endpoint unless the caller explicitly replaces it with another trusted HTTPS endpoint. It rejects a successful token response that omits `expires_in`, because Dropbox access tokens are expected to expire and an unknown lifetime must not be cached as permanent. The default source and prepended providers fail closed: a failed explicit refresh or an unusable explicit token returns an error instead of falling through to`DBXCLI_ACCESS_TOKEN`.
 
 Dropbox uses header authentication only. Signing adds a sensitive`Authorization: Bearer` header and rejects `expires_in`; it never modifies the URI or other headers. Refresh-token rotation is serialized per shared provider, and the access-token cache belongs to `Signer`.
 
@@ -4189,9 +4193,9 @@ signer.sign(&mut req, None).await?;
 
 ```
 
-The default chain selects the session for `bucket` from the Upyun CLI (`upx`) configuration at `~/.upx.cfg`. A matching current session is preferred, then the first session for that bucket. The discovered credential is scoped to that bucket: every signature requires the first segment of the request's wire path to exactly equal it, including when a cached credential is reused. This is a local check of the request target and does not assume server-side path rewriting. The file has no account or endpoint scope beyond the bucket. Install`StaticCredentialProvider` directly, or push it in front of the default chain, when credentials come from application configuration; explicit static credentials are unscoped unless the caller sets a bucket.
+The default chain selects the session for `bucket` from the Upyun CLI (`upx`) configuration at `~/.upx.cfg`. A matching current session is preferred, then the first session for that bucket. The discovered credential is scoped to that bucket: every signature requires the first segment of the request's wire path to exactly equal it, including when a cached credential is reused. This is a local check of the request target and does not assume server-side path rewriting. The file has no account or endpoint scope beyond the bucket. Install`StaticCredentialProvider` directly, or push it in front of the default chain, when credentials come from application configuration; explicit static credentials are unscoped unless the caller sets a bucket. The default source and prepended providers fail closed: a provider error is returned instead of falling through to a lower-priority source.
 
-The signer adds `Date` and `Authorization`. Set `Content-MD5` before signing when the request body should participate in the signature. The signed URI is the request's wire path exactly as supplied; the signer does not decode, normalize, or rebuild it. It does not create presigned URLs or token credentials, and it does not send the request.
+The signer adds `Date` and `Authorization`. Set `Content-MD5` before signing when the request body should participate in the signature. The signed URI is the request's wire path and raw query exactly as supplied, so endpoints such as`?usage` and `?metadata=...` are covered; the signer does not decode, reorder, or rebuild those bytes. It does not create presigned URLs or token credentials, and it does not send the request.
 
 ## Credentials
 
@@ -4793,7 +4797,7 @@ Every release ships as an ASF source release plus crates.io packages — see[Dow
 
 **Native.** Reqsign is pure Rust with no C dependencies of its own; CI exercises Linux, macOS, and Windows. The default context components (Tokio file reading and command execution, reqwest HTTP) run wherever those crates do.
 
-**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, HTTP Message Signatures, Koofr, OneDrive, Upyun, Yandex Disk, and Seafile providers. The shared`reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Cloudflare and Vercel environment, static, and header signing work without a JavaScript clock. Baidu Netdisk static query signing needs no JavaScript clock. Seafile signing also needs no JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute` adapter and is unavailable in bare WASM runtimes. Yandex Disk static credentials without an expiry and header signing work without a JavaScript clock. Dropbox, OAuth2, Aliyun Drive, and OneDrive runtime signing or refresh additionally requires a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The[provider matrix](/docs/providers/) is the authoritative per-provider status.
+**WASM.** `wasm32-unknown-unknown` is a supported, CI-verified target for a defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, HTTP Message Signatures, Koofr, OneDrive, Upyun, Yandex Disk, and Seafile providers. The shared`reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same subset. Cloudflare and Vercel environment, static, and header signing work without a JavaScript clock. Baidu Netdisk static query signing needs no JavaScript clock. Seafile signing also needs no JavaScript clock. GitHub environment, static, and anonymous signing work without a JavaScript clock; GitHub CLI discovery needs a `CommandExecute` adapter and is unavailable in bare WASM runtimes. Yandex Disk static credentials without an expiry and header signing work without a JavaScript clock. HTTP Message Signatures signing, and Dropbox, OAuth2, Aliyun Drive, and OneDrive signing or refresh, additionally require a wasm-bindgen JavaScript host for the clock; see the[Custom runtimes & WASM guide](/docs/guides/custom-runtimes/). The clock-free and clock-dependent examples in this page are not exhaustive: a compile-tested provider not named here may still read the clock on some runtime paths. The[provider matrix](/docs/providers/) is the authoritative per-provider status.
 
 **Async runtimes.** `reqsign-core` is runtime-agnostic — nothing in core assumes Tokio. Runtime coupling lives only in the optional context crates; swap them to run elsewhere.
 
