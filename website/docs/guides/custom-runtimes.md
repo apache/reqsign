@@ -139,11 +139,30 @@ futures that are `MaybeSend` — `Send` on native targets, relaxed on WASM.
 ### Providing a browser runtime
 
 There is no filesystem and no OS environment in a browser, so provide what
-your credential sources actually need — usually just HTTP:
+your credential flows and signer actually need:
+
+- Static or externally injected credentials need a `CryptoProvider` and a
+  clock, not an HTTP adapter. AWS signing stamps `Timestamp::now()`, so enable
+  Jiff's JavaScript clock; `jiff/js` reads `js_sys::Date` through wasm-bindgen
+  JS host imports and only runs on a wasm-bindgen host such as a browser or
+  Node.
+- Credential flows that call network endpoints — STS, metadata, token refresh —
+  also need an `HttpSend` adapter. The `FetchHttpSend` below is a placeholder;
+  implement it over `fetch()` (for example through wasm-bindgen) before use.
+
+```toml
+[dependencies]
+reqsign = { version = "0.21", features = ["aws"] }
+bytes = "1"
+http = "1"
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+jiff = { version = "1.0.1", features = ["js"] }
+```
 
 ```rust
 use bytes::Bytes;
-use reqsign::{Context, HttpSend, Result, Signer};
+use reqsign::{Context, HttpSend, Result, RustCryptoProvider, Signer};
 use reqsign::aws::{RequestSigner, StaticCredentialProvider};
 
 #[derive(Debug)]
@@ -157,13 +176,19 @@ impl HttpSend for FetchHttpSend {
     }
 }
 
-let ctx = Context::new().with_http_send(FetchHttpSend);
+let ctx = Context::new()
+    .with_crypto(RustCryptoProvider::new())
+    .with_http_send(FetchHttpSend);
 let signer = Signer::new(
     ctx,
     StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),
     RequestSigner::new("s3", "us-east-1"),
 );
 ```
+
+The facade's `default_context()` already wires `ReqwestHttpSend` and `OsEnv`
+on WASM; this assembly replaces the HTTP adapter with the `fetch()`-based
+implementation.
 
 Static or externally-injected credentials are the norm on WASM — chains that
 read files or metadata endpoints have nothing to read in a browser.

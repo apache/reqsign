@@ -16,6 +16,17 @@ Most APIs are simple, but they can become complicated when hidden behind complex
 
 ## Quick Start
 
+Add `reqsign` to your `Cargo.toml` with the feature of the service you sign
+for. The example also needs `anyhow`, `http`, and `tokio`:
+
+```toml
+[dependencies]
+reqsign = { version = "0.21", features = ["aws"] }
+anyhow = "1"
+http = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
 ### Option 1: Use Default Signer (Recommended)
 
 The simplest way to use `reqsign` is with the default signers provided by each service:
@@ -52,7 +63,19 @@ async fn main() -> Result<()> {
 
 ### Option 2: Custom Assembly
 
-For more control over the components, you can manually assemble the signer:
+For more control over the components, you can manually assemble the signer.
+This example uses the AWS signer and native context crates directly:
+
+```toml
+[dependencies]
+reqsign = "0.21"
+reqsign-aws-v4 = "4"
+reqsign-file-read-tokio = "4"
+reqsign-http-send-reqwest = "5"
+anyhow = "1"
+http = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
 
 ```rust
 use anyhow::Result;
