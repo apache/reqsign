@@ -78,7 +78,8 @@ do.
 defined subset: `reqsign-core`, `reqsign-aws-core`, and the AWS SigV4, AWS
 SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2,
 Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox,
-Koofr, OneDrive, Upyun, Yandex Disk, and Seafile providers. The shared
+HTTP Message Signatures, Koofr, OneDrive, Upyun, Yandex Disk, and Seafile
+providers. The shared
 `reqsign-oauth2` crate and the `oauth2` facade feature are checked in the same
 subset. Cloudflare and Vercel environment, static, and header signing work
 without a JavaScript clock. Baidu Netdisk static query signing needs no
