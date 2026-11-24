@@ -81,20 +81,25 @@ Release workflow publishes the plan; GitHub Release from `CHANGELOG.md`.
    `cargo publish --workspace --dry-run` stages the workspace as one set, so it
    packages members whose intra-workspace dependencies are not on crates.io yet.
    Do not substitute a per-package `cargo publish -p <crate> --dry-run` before
-   bootstrap: it fails with a version-selection error such as
+   the real dependency versions exist on crates.io: it fails with a
+   version-selection error such as
    `failed to select a version for the requirement reqsign-core = "^4.0.0"`
-   because that dependency version is unpublished. Use the per-package form only
-   after bootstrap, when every dependency version in the plan exists on
-   crates.io.
+   because that dependency version is unpublished. Bootstrap does not unblock
+   the per-package form: its `0.0.0` reservations are dependency-free and do not
+   satisfy requirements such as `^4.0.0`. The form only starts working after the
+   release workflow has published the real dependency versions.
 
    Inventory the plan against the registry before asking for a bootstrap. The
-   check is read-only and needs no credentials:
+   check is read-only and needs no credentials. An empty plan exits nonzero
+   instead of passing vacuously:
 
    ```bash
    python3 - <<'EOF'
    import json, subprocess, urllib.request, urllib.error
    plan = json.loads(subprocess.check_output(
        ["python3", ".github/scripts/release_rust/plan.py"], text=True))
+   if not plan:
+       raise SystemExit("plan.py returned an empty publish plan")
    for package in plan:
        request = urllib.request.Request(
            f"https://crates.io/api/v1/crates/{package['name']}",
@@ -189,7 +194,8 @@ The helper's public verification uses unauthenticated crates.io data and covers
 name existence, the reservation version, and `trustpub_only`. The authenticated
 preflight inside the job covers ownership and publisher metadata; the two checks
 have different scopes, and the public one is not a substitute for the preflight.
-The last successful reservation run for this repository was `43195429526`.
+The last successful reservation run for this repository was `45139940320` at
+commit `485d90da`.
 
 ASF Infrastructure provisions the `release` and `rust-bootstrap` environments
 from `.asf.yaml`. A PMC release manager must add
@@ -415,17 +421,39 @@ NAME
 
 6. Verify crates.io versions.
 
+   Derive the expected `(name, version)` pairs from `plan.py` and require every
+   planned version to be published. A missing name, a missing planned version,
+   an older release, or a `0.0.0` reservation fails the check. An empty plan
+   also exits nonzero instead of passing vacuously:
+
    ```bash
-   for c in \
-     reqsign reqsign-core reqsign-aliyun-drive reqsign-aliyun-oss reqsign-aws-core reqsign-aws-v4 \
-     reqsign-aws-v4a reqsign-azure-storage reqsign-cloudflare reqsign-b2 \
-     reqsign-oauth2 reqsign-dropbox reqsign-onedrive reqsign-http-message-signatures reqsign-github \
-     reqsign-command-execute-tokio reqsign-file-read-tokio reqsign-google \
-     reqsign-http-send-reqwest reqsign-huaweicloud-obs reqsign-oracle \
-     reqsign-seafile reqsign-tencent-cos reqsign-upyun reqsign-vercel reqsign-volcengine-tos reqsign-yandex-disk
-   do
-     cargo info "$c" --registry crates-io | sed -n '1,4p'
-   done
+   python3 - <<'EOF'
+   import json, subprocess, urllib.error, urllib.request
+   plan = json.loads(subprocess.check_output(
+       ["python3", ".github/scripts/release_rust/plan.py"], text=True))
+   if not plan:
+       raise SystemExit("plan.py returned an empty publish plan")
+   missing = []
+   for package in plan:
+       request = urllib.request.Request(
+           f"https://crates.io/api/v1/crates/{package['name']}",
+           headers={"User-Agent": "reqsign-release"})
+       try:
+           versions = {version["num"] for version in
+                       json.load(urllib.request.urlopen(request, timeout=20))["versions"]}
+       except urllib.error.HTTPError as error:
+           if error.code != 404:
+               raise
+           versions = set()
+       if package["version"] in versions:
+           print(f"published: {package['name']} {package['version']}")
+       else:
+           missing.append(package["name"])
+           shown = ", ".join(sorted(versions)) or "no versions"
+           print(f"not published: {package['name']} {package['version']} (found: {shown})")
+   if missing:
+       raise SystemExit(f"{len(missing)} crate(s) did not publish the planned version")
+   EOF
    ```
 
 7. Create a GitHub Release.
