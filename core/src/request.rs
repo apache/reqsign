@@ -16,6 +16,7 @@
 // under the License.
 
 use std::borrow::Cow;
+use std::fmt;
 use std::time::Duration;
 
 use crate::{Error, Result};
@@ -52,7 +53,12 @@ fn parse_query(query: &str) -> Vec<(String, String)> {
 /// to [`Self::build`] is already the final caller-provided representation; services
 /// derive canonical values locally and construct query authentication from the
 /// original URI.
-#[derive(Debug)]
+///
+/// The `Debug` implementation omits query contents because query
+/// authentication, presigned URLs, and fragments pushed through
+/// [`Self::query_append`] can place credentials in either side of a working
+/// entry. It reports only the number of query entries. Header values keep their
+/// existing `http::HeaderMap` debug behavior.
 pub struct SigningRequest {
     /// Read-only HTTP method used for canonicalization.
     pub method: Method,
@@ -72,6 +78,19 @@ pub struct SigningRequest {
     pub query: Vec<(String, String)>,
     /// Staged HTTP headers committed by [`Self::apply`].
     pub headers: HeaderMap,
+}
+
+impl fmt::Debug for SigningRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SigningRequest")
+            .field("method", &self.method)
+            .field("scheme", &self.scheme)
+            .field("authority", &self.authority)
+            .field("path", &self.path)
+            .field("query_entries", &self.query.len())
+            .field("headers", &self.headers)
+            .finish()
+    }
 }
 
 impl SigningRequest {
@@ -433,6 +452,52 @@ mod tests {
             parts.headers.get("authorization"),
             Some(&HeaderValue::from_static("signed"))
         );
+    }
+
+    #[test]
+    fn debug_omits_parsed_query_contents() {
+        let mut parts = Request::get(
+            "https://example.com/object?access_token=query-secret%2Fvalue&X-Signature=signature-secret&flag&empty=",
+        )
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+        let signing = SigningRequest::build(&mut parts).expect("signing request must build");
+        let debug = format!("{signing:?}");
+
+        assert!(debug.contains("/object"));
+        assert!(debug.contains("query_entries: 4"));
+        assert!(!debug.contains("access_token"));
+        assert!(!debug.contains("X-Signature"));
+        assert!(!debug.contains("flag"));
+        assert!(!debug.contains("empty"));
+        assert!(!debug.contains("query-secret"));
+        assert!(!debug.contains("signature-secret"));
+    }
+
+    #[test]
+    fn debug_omits_appended_query_contents() {
+        let mut parts = Request::get("https://example.com/object")
+            .body(())
+            .expect("request must build")
+            .into_parts()
+            .0;
+
+        let mut signing = SigningRequest::build(&mut parts).expect("signing request must build");
+        // `query_append` stores the whole fragment in the key, so neither side of an
+        // appended entry is safe to print as a parameter name.
+        signing.query_append("append-access_token=append-query-fragment");
+        signing.query_push("pushed-name", "pushed-value");
+
+        let debug = format!("{signing:?}");
+
+        assert!(debug.contains("query_entries: 2"));
+        assert!(!debug.contains("append-access_token"));
+        assert!(!debug.contains("append-query-fragment"));
+        assert!(!debug.contains("pushed-name"));
+        assert!(!debug.contains("pushed-value"));
     }
 
     #[cfg(debug_assertions)]

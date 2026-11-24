@@ -3,11 +3,13 @@
 Upyun REST API request signing implementation for reqsign.
 
 The signer adds the Upyun `Date` and `Authorization` headers. The signature
-covers the request method, wire path, `Date`, and the `Content-MD5` header when
-the caller already set it. The signed URI is the request's wire path exactly as
-supplied: the signer does not decode, normalize, or rebuild it, and makes no
-claim about path rewriting by a proxy or server. Request construction, bucket
-selection, endpoint selection, and transport remain with the caller.
+covers the request method, wire URI, `Date`, and the `Content-MD5` header when
+the caller already set it. The wire URI is the request path plus the raw query
+string when one is present. The signed URI is the wire path and raw query
+exactly as supplied: the signer does not decode, normalize, reorder, or rebuild
+them, and makes no claim about path rewriting by a proxy or server. Request
+construction, bucket selection, endpoint selection, and transport remain with
+the caller.
 
 > Signing needs a `CryptoProvider` resolved through the `Context`: bind one with
 > `Context::with_crypto`, install a process-wide default, or use a facade
@@ -17,6 +19,11 @@ selection, endpoint selection, and transport remain with the caller.
 > support MD5, such as a FIPS-restricted backend, fails with `ConfigInvalid`
 > instead of falling back. See
 > [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md).
+
+On `wasm32-unknown-unknown`, this crate enables Jiff's `js` feature because the
+default signer reads the current time for the `Date` header. A wasm-bindgen
+JavaScript host is required; a signer configured with `with_time` needs no
+clock.
 
 ## Quick Start
 
@@ -88,6 +95,9 @@ let provider = DefaultCredentialProvider::new()
     .push_front(StaticCredentialProvider::new("operator", "password"));
 ```
 
+The default source and prepended providers fail closed: a provider error is
+returned instead of falling through to a lower-priority source.
+
 ## Contract
 
 - Only header authentication is implemented. `expires_in` is ignored.
@@ -95,11 +105,14 @@ let provider = DefaultCredentialProvider::new()
   segment of the request's wire path must exactly equal that bucket on every
   signature, including cache hits.
 - Explicit static credentials are unscoped and keep the caller's chosen scope.
-- The signed URI is the wire path exactly as supplied; the signer does not
-  decode or rebuild it and does not assume server-side path rewriting.
+- The signed URI is the wire path and raw query exactly as supplied; the signer
+  does not decode, reorder, or rebuild them and does not assume server-side path
+  rewriting. Endpoints whose request target carries a query, such as `?usage`
+  and `?metadata=...`, are signed over that query.
 - The signer does not calculate the body MD5 or construct requests.
 - Signing is atomic: on error, the request URI and headers remain unchanged.
-- `Debug` output redacts the credential secret.
+- `Debug` output redacts the credential secret, and the generated
+  `Authorization` header is marked sensitive.
 
 ## License
 

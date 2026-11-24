@@ -193,7 +193,7 @@ async fn default_provider_chain_and_push_front_keep_explicit_sources() -> Result
 
     let chain = ProvideCredentialChain::new().push(StaticCredentialProvider::new("chain-token"));
     let provider = DefaultCredentialProvider::with_chain(chain);
-    let signer = Signer::new(context, provider, RequestSigner);
+    let signer = Signer::new(context.clone(), provider, RequestSigner);
     let mut parts = request();
     signer.sign(&mut parts, None).await?;
     assert_eq!(
@@ -201,6 +201,18 @@ async fn default_provider_chain_and_push_front_keep_explicit_sources() -> Result
         "Bearer chain-token"
     );
     assert_eq!(http.calls(), 0);
+
+    let chain = ProvideCredentialChain::new()
+        .push(StaticCredentialProvider::new(""))
+        .push(StaticCredentialProvider::new(STATIC_TOKEN));
+    let provider = DefaultCredentialProvider::with_chain(chain);
+    let signer = Signer::new(context, provider, RequestSigner);
+    let mut parts = request();
+    signer.sign(&mut parts, None).await?;
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        format!("Bearer {STATIC_TOKEN}")
+    );
 
     Ok(())
 }
@@ -249,10 +261,8 @@ async fn static_provider_signs_without_network_and_rejects_expired_tokens() -> R
         "Bearer static-token-A0"
     );
 
-    let expired = StaticCredentialProvider::with_expires_at(
-        STATIC_TOKEN,
-        Timestamp::now() - Duration::from_secs(1),
-    );
+    let expired = StaticCredentialProvider::new(STATIC_TOKEN)
+        .with_expires_at(Timestamp::now() - Duration::from_secs(1));
     let signer = Signer::new(context, expired, RequestSigner);
     let mut parts = request();
     let original = parts.clone();
@@ -518,6 +528,69 @@ async fn refresh_endpoint_can_be_replaced_explicitly() -> Result<()> {
         http.requests()[0].uri,
         "https://trusted.example/oauth2/token?tenant=common"
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_refresh_in_front_does_not_fall_back_to_the_environment() -> Result<()> {
+    let http = MockHttpSend::new([Ok(http::Response::builder()
+        .status(http::StatusCode::BAD_REQUEST)
+        .body(Bytes::from_static(br#"{"error":"invalid_grant"}"#))
+        .expect("response must build"))]);
+    let context = context_with_env(
+        HashMap::from([("DBXCLI_ACCESS_TOKEN".to_string(), ENV_TOKEN.to_string())]),
+        http.clone(),
+    );
+    let provider = DefaultCredentialProvider::new().push_front(RefreshCredentialProvider::new(
+        CLIENT_ID,
+        CLIENT_SECRET,
+        REFRESH_TOKEN,
+    )?);
+    let signer = Signer::new(context, provider, RequestSigner);
+    let original = request();
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a failed refresh must not sign with the environment identity");
+
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    assert_eq!(http.calls(), 1);
+    assert!(!parts.headers.contains_key(http::header::AUTHORIZATION));
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn retryable_refresh_failure_in_front_reaches_the_caller() -> Result<()> {
+    let http = MockHttpSend::new([Err(
+        Error::unexpected("transient refresh failure").set_retryable(true)
+    )]);
+    let context = context_with_env(
+        HashMap::from([("DBXCLI_ACCESS_TOKEN".to_string(), ENV_TOKEN.to_string())]),
+        http.clone(),
+    );
+    let provider = DefaultCredentialProvider::new().push_front(RefreshCredentialProvider::new(
+        CLIENT_ID,
+        CLIENT_SECRET,
+        REFRESH_TOKEN,
+    )?);
+    let signer = Signer::new(context, provider, RequestSigner);
+    let mut parts = request();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a retryable refresh failure must not be replaced by the environment identity");
+
+    assert!(error.is_retryable());
+    assert_eq!(error.kind(), ErrorKind::Unexpected);
+    assert_eq!(http.calls(), 1);
+    assert!(!parts.headers.contains_key(http::header::AUTHORIZATION));
 
     Ok(())
 }

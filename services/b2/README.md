@@ -41,7 +41,10 @@ signer.sign(&mut request, None).await?;
 The default chain reads `B2_APPLICATION_KEY_ID` and `B2_APPLICATION_KEY`, the
 variables used by the official B2 command line tools, and sends them to
 `https://api.backblazeb2.com/b2api/v4/b2_authorize_account` with HTTP Basic
-authentication. API v4 supports Multi-Bucket Application Keys.
+authentication. API v4 supports Multi-Bucket Application Keys. The default
+source and prepended providers fail closed: a provider error is returned to
+the caller instead of falling through, so a retryable `b2_authorize_account`
+failure stays retryable.
 
 Use `AccountAuthorizationCredentialProvider` for an explicit application key, or
 `StaticCredentialProvider` when the caller already has an authorization token and
@@ -68,6 +71,14 @@ expires and reuses it across requests.
 B2 returns key restrictions such as capabilities, bucket allow-lists, and name
 prefixes. B2 enforces them when the token is used, so they are not part of the
 credential and do not need to be checked while signing.
+
+## WASM
+
+On `wasm32-unknown-unknown`, this crate enables Jiff's `js` feature.
+Authorization-token lifetime checks read the clock from a wasm-bindgen
+JavaScript host such as a browser or Node. A bare WASM runtime without a
+JavaScript clock can compile the crate but is not a supported runtime for
+signing.
 
 ## Scope
 

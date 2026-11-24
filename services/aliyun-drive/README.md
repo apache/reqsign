@@ -36,11 +36,13 @@ supply that access token through `StaticCredentialProvider`.
 
 The response returns `access_token`, `token_type`, `expires_in`, and a new
 single-use `refresh_token`. A provider keeps only the latest refresh token in
-memory, clones share it, and exchanges are serialized. Tokens are never
-persisted, and there is no getter or persistence callback. After a successful
-exchange, restarting with the originally configured refresh token may fail
-because that token was consumed. Restart with a fresh authorized grant, or
-manage and persist the exchange in the application and supply an access token.
+memory, clones share it, and exchanges are serialized. A success response
+commits a non-empty rotated token as soon as it can be read, even when the
+remaining fields are malformed or unusable. Tokens are never persisted, and
+there is no getter or persistence callback. After a successful exchange,
+restarting with the originally configured refresh token may fail because that
+token was consumed. Restart with a fresh authorized grant, or manage and
+persist the exchange in the application and supply an access token.
 Access-token caching is provided by `reqsign_core::Signer`.
 
 ## License

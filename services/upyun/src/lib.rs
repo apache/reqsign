@@ -25,12 +25,13 @@
 //! base64(HMAC-SHA1(MD5(password), METHOD&URI&DATE[&CONTENT-MD5]))
 //! ```
 //!
-//! `RequestSigner` signs the request's wire path and includes `Content-MD5`
-//! when the caller already added it to the request. The signed URI is the wire
-//! path exactly as supplied: the signer does not decode, normalize, or rebuild
-//! it, and makes no claim about server-side path rewriting. It does not
-//! construct requests, choose endpoints, sign query-string authentication, or
-//! send anything over the network.
+//! `RequestSigner` signs the request's wire URI and includes `Content-MD5`
+//! when the caller already added it to the request. The wire URI is the request
+//! path plus the raw query string when one is present. The signed URI is the
+//! wire path and raw query exactly as supplied: the signer does not decode,
+//! normalize, reorder, or rebuild them, and makes no claim about server-side
+//! path rewriting. It does not construct requests, choose endpoints, create
+//! presigned URLs, or send anything over the network.
 //!
 //! ## Crypto
 //!
@@ -90,7 +91,7 @@ pub use provide_credential::{
 mod sign_request;
 pub use sign_request::RequestSigner;
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn test_context() -> reqsign_core::Context {
     reqsign_core::Context::new().with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new())
 }

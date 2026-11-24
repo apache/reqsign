@@ -34,6 +34,15 @@ reqsign-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
-[dev-dependencies]
+# Enable Jiff's JavaScript clock for the wasm-bindgen-hosted target. B2
+# authorization-token lifetime checks use the existing reqsign-core
+# Timestamp::now() clock.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+jiff = { workspace = true, features = ["js"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 reqsign-http-send-reqwest = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = { version = "0.3" }

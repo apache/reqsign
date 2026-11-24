@@ -15,7 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
+use reqsign_core::{
+    Context, ProvideCredential, ProvideCredentialChain, ProvideCredentialDyn, Result,
+};
 
 use crate::credential::Credential;
 
@@ -25,9 +27,23 @@ use super::env::EnvCredentialProvider;
 ///
 /// The default chain discovers a B2 application key from the environment and
 /// exchanges it for a Native API authorization token.
+///
+/// The default source and prepended providers fail closed: a provider error is
+/// returned instead of falling through to a lower-priority source. In
+/// particular, a retryable `b2_authorize_account` failure reaches the caller
+/// with its kind and retryability unchanged. [`DefaultCredentialProvider::with_chain`]
+/// keeps the caller-supplied [`ProvideCredentialChain`] and its own error
+/// policy. A slot removed with the builder is never re-enabled during `build()`.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
-    chain: ProvideCredentialChain<Credential>,
+    front: Vec<Box<dyn ProvideCredentialDyn<Credential = Credential>>>,
+    source: CredentialSource,
+}
+
+#[derive(Debug)]
+enum CredentialSource {
+    Default { env: Option<EnvCredentialProvider> },
+    Chain(ProvideCredentialChain<Credential>),
 }
 
 impl Default for DefaultCredentialProvider {
@@ -48,11 +64,23 @@ impl DefaultCredentialProvider {
     }
 
     /// Create with a custom credential chain.
+    ///
+    /// The supplied chain keeps [`ProvideCredentialChain`]'s error policy: a
+    /// provider error is logged and the chain continues to the next provider.
     pub fn with_chain(chain: ProvideCredentialChain<Credential>) -> Self {
-        Self { chain }
+        Self {
+            front: Vec::new(),
+            source: CredentialSource::Chain(chain),
+        }
     }
 
-    /// Add a credential provider to the front of the default chain.
+    /// Add a credential provider to the front of the chain.
+    ///
+    /// The prepended provider is tried before the default source. Its errors are
+    /// returned instead of falling through to a lower-priority source, so an
+    /// explicitly configured invalid credential cannot silently change the
+    /// signing identity. A later `push_front` takes precedence over an earlier
+    /// one.
     ///
     /// # Example
     ///
@@ -71,15 +99,27 @@ impl DefaultCredentialProvider {
         mut self,
         provider: impl ProvideCredential<Credential = Credential> + 'static,
     ) -> Self {
-        self.chain = self.chain.push_front(provider);
+        self.front.insert(0, Box::new(provider));
         self
+    }
+
+    async fn provide_from_front(&self, ctx: &Context) -> Result<Option<Credential>> {
+        for provider in &self.front {
+            if let Some(credential) = provider.provide_credential_dyn(ctx).await? {
+                return Ok(Some(credential));
+            }
+        }
+
+        Ok(None)
     }
 }
 
 /// Builder for [`DefaultCredentialProvider`].
 ///
 /// The environment slot is enabled by default. Use [`Self::no_env`] to remove
-/// it and supply credentials through another provider.
+/// it and supply credentials through another provider. Removed slots are not
+/// re-enabled during `build()`.
+#[derive(Debug)]
 pub struct DefaultCredentialProviderBuilder {
     env: Option<EnvCredentialProvider>,
 }
@@ -112,12 +152,10 @@ impl DefaultCredentialProviderBuilder {
 
     /// Build the default credential provider with the configured slots.
     pub fn build(self) -> DefaultCredentialProvider {
-        let mut chain = ProvideCredentialChain::new();
-        if let Some(provider) = self.env {
-            chain = chain.push(provider);
+        DefaultCredentialProvider {
+            front: Vec::new(),
+            source: CredentialSource::Default { env: self.env },
         }
-
-        DefaultCredentialProvider::with_chain(chain)
     }
 }
 
@@ -125,11 +163,21 @@ impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        self.chain.provide_credential(ctx).await
+        if let Some(credential) = self.provide_from_front(ctx).await? {
+            return Ok(Some(credential));
+        }
+
+        match &self.source {
+            CredentialSource::Default { env } => match env {
+                Some(provider) => provider.provide_credential(ctx).await,
+                None => Ok(None),
+            },
+            CredentialSource::Chain(chain) => chain.provide_credential(ctx).await,
+        }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use reqsign_core::{Context, StaticEnv};

@@ -24,7 +24,7 @@ description = "BoringSSL backend for reqsign."
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/apache/reqsign"
-rust-version = "1.86.0"
+rust-version = "1.87.0"
 
 [features]
 default = []

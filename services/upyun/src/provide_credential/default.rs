@@ -17,7 +17,9 @@
 
 use crate::Credential;
 use crate::provide_credential::UpxConfigCredentialProvider;
-use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
+use reqsign_core::{
+    Context, ProvideCredential, ProvideCredentialChain, ProvideCredentialDyn, Result,
+};
 
 /// Default credential provider for Upyun.
 ///
@@ -28,9 +30,25 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// every signature requires the first segment of the request's wire path to
 /// exactly equal it. Use [`DefaultCredentialProvider::push_front`] to supply
 /// explicit credentials or another source.
+///
+/// The default source and prepended providers fail closed: a provider error is
+/// returned instead of falling through to a lower-priority source, so an
+/// invalid explicitly configured credential cannot silently change the signing
+/// identity. [`DefaultCredentialProvider::with_chain`] keeps the caller-supplied
+/// [`ProvideCredentialChain`] and its own error policy. A slot removed with the
+/// builder is never re-enabled during `build()`.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
-    chain: ProvideCredentialChain<Credential>,
+    front: Vec<Box<dyn ProvideCredentialDyn<Credential = Credential>>>,
+    source: CredentialSource,
+}
+
+#[derive(Debug)]
+enum CredentialSource {
+    Default {
+        upx_config: Option<UpxConfigCredentialProvider>,
+    },
+    Chain(ProvideCredentialChain<Credential>),
 }
 
 impl Default for DefaultCredentialProvider {
@@ -51,11 +69,23 @@ impl DefaultCredentialProvider {
     }
 
     /// Create with a custom credential chain.
+    ///
+    /// The supplied chain keeps [`ProvideCredentialChain`]'s error policy: a
+    /// provider error is logged and the chain continues to the next provider.
     pub fn with_chain(chain: ProvideCredentialChain<Credential>) -> Self {
-        Self { chain }
+        Self {
+            front: Vec::new(),
+            source: CredentialSource::Chain(chain),
+        }
     }
 
-    /// Add a credential provider to the front of the default chain.
+    /// Add a credential provider to the front of the chain.
+    ///
+    /// The prepended provider is tried before the default source. Its errors are
+    /// returned instead of falling through to a lower-priority source, so an
+    /// explicitly configured invalid credential cannot silently change the
+    /// signing identity. A later `push_front` takes precedence over an earlier
+    /// one.
     ///
     /// # Example
     ///
@@ -69,15 +99,27 @@ impl DefaultCredentialProvider {
         mut self,
         provider: impl ProvideCredential<Credential = Credential> + 'static,
     ) -> Self {
-        self.chain = self.chain.push_front(provider);
+        self.front.insert(0, Box::new(provider));
         self
+    }
+
+    async fn provide_from_front(&self, ctx: &Context) -> Result<Option<Credential>> {
+        for provider in &self.front {
+            if let Some(credential) = provider.provide_credential_dyn(ctx).await? {
+                return Ok(Some(credential));
+            }
+        }
+
+        Ok(None)
     }
 }
 
 /// Builder for `DefaultCredentialProvider`.
 ///
 /// Use `upx_config(provider)` to set the Upyun CLI configuration slot or
-/// `no_upx_config()` to remove it from the chain.
+/// `no_upx_config()` to remove it from the chain. Removed slots are not
+/// re-enabled during `build()`.
+#[derive(Debug)]
 pub struct DefaultCredentialProviderBuilder {
     upx_config: Option<UpxConfigCredentialProvider>,
 }
@@ -110,11 +152,12 @@ impl DefaultCredentialProviderBuilder {
 
     /// Build the `DefaultCredentialProvider` with the configured options.
     pub fn build(self) -> DefaultCredentialProvider {
-        let mut chain = ProvideCredentialChain::new();
-        if let Some(provider) = self.upx_config {
-            chain = chain.push(provider);
+        DefaultCredentialProvider {
+            front: Vec::new(),
+            source: CredentialSource::Default {
+                upx_config: self.upx_config,
+            },
         }
-        DefaultCredentialProvider::with_chain(chain)
     }
 }
 
@@ -122,11 +165,21 @@ impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        self.chain.provide_credential(ctx).await
+        if let Some(credential) = self.provide_from_front(ctx).await? {
+            return Ok(Some(credential));
+        }
+
+        match &self.source {
+            CredentialSource::Default { upx_config } => match upx_config {
+                Some(provider) => provider.provide_credential(ctx).await,
+                None => Ok(None),
+            },
+            CredentialSource::Chain(chain) => chain.provide_credential(ctx).await,
+        }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
 

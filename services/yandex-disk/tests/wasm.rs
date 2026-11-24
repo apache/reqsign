@@ -17,6 +17,9 @@
 
 #![cfg(target_arch = "wasm32")]
 
+use std::time::Duration;
+
+use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ErrorKind, Signer};
 use reqsign_yandex_disk::{DefaultCredentialProvider, RequestSigner, StaticCredentialProvider};
 use wasm_bindgen_test::*;
@@ -56,6 +59,24 @@ async fn static_token_signs_without_a_clock() {
         format!("OAuth {TOKEN}")
     );
     assert!(authorization.is_sensitive());
+}
+
+#[wasm_bindgen_test]
+async fn expiring_token_signs_with_the_js_clock() {
+    let credential = StaticCredentialProvider::new(TOKEN)
+        .with_expires_at(Timestamp::now() + Duration::from_secs(3_600));
+    let signer = Signer::new(Context::new(), credential, RequestSigner);
+    let mut parts = request();
+
+    signer
+        .sign(&mut parts, None)
+        .await
+        .expect("expiring token must sign");
+
+    assert_eq!(
+        parts.headers[http::header::AUTHORIZATION],
+        format!("OAuth {TOKEN}")
+    );
 }
 
 #[wasm_bindgen_test]

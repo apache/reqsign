@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+#![cfg(not(target_arch = "wasm32"))]
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -26,7 +28,9 @@ use reqsign_b2::{
     EnvCredentialProvider, RequestSigner, StaticCredentialProvider,
 };
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Error, HttpSend, ProvideCredential, Result, Signer, StaticEnv};
+use reqsign_core::{
+    Context, Error, HttpSend, ProvideCredential, ProvideCredentialChain, Result, Signer, StaticEnv,
+};
 
 const APPLICATION_KEY_ID: &str = "test-application-key-id";
 const APPLICATION_KEY: &str = "test-application-key-secret";
@@ -235,6 +239,26 @@ async fn malformed_response_is_rejected_without_echoing_the_body() {
 }
 
 #[tokio::test]
+async fn mistyped_response_is_rejected_without_echoing_the_payload() {
+    let unexpected_value = "synthetic-expiration-string";
+    let body = format!(
+        r#"{{"apiInfo":{{"storageApi":{{"apiUrl":"{API_URL}","downloadUrl":"{DOWNLOAD_URL}"}}}},"authorizationToken":"{AUTHORIZATION_TOKEN}","applicationKeyExpirationTimestamp":"{unexpected_value}"}}"#
+    );
+    let mock = MockB2::new(body);
+    let context = Context::new().with_http_send(mock);
+
+    let error = explicit_provider()
+        .provide_credential(&context)
+        .await
+        .expect_err("mistyped response must fail");
+
+    assert_eq!(reqsign_core::ErrorKind::Unexpected, error.kind());
+    let text = format!("{error:?}");
+    assert!(!text.contains(unexpected_value));
+    assert!(!text.contains(AUTHORIZATION_TOKEN));
+}
+
+#[tokio::test]
 async fn response_without_native_api_urls_is_rejected() {
     let body = format!(
         r#"{{"apiInfo":{{"storageApi":{{"apiUrl":"","downloadUrl":"{DOWNLOAD_URL}"}}}},"authorizationToken":"{AUTHORIZATION_TOKEN}"}}"#
@@ -413,6 +437,108 @@ async fn static_provider_override_bypasses_environment_discovery() {
         request.headers[http::header::AUTHORIZATION]
     );
     assert_eq!(0, mock.request_count());
+}
+
+#[tokio::test]
+async fn retryable_authorization_failure_from_the_default_source_reaches_the_signer() {
+    let mock = MockB2::new(String::new()).with_status(StatusCode::SERVICE_UNAVAILABLE);
+    let context = Context::new()
+        .with_http_send(mock.clone())
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: envs([
+                ("B2_APPLICATION_KEY_ID", APPLICATION_KEY_ID),
+                ("B2_APPLICATION_KEY", APPLICATION_KEY),
+            ]),
+        });
+    let signer = Signer::new(context, DefaultCredentialProvider::new(), RequestSigner);
+    let original = http::Request::get(format!("{API_URL}/b2api/v4/b2_list_buckets"))
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a retryable authorization failure must not become a missing credential");
+
+    assert_eq!(reqsign_core::ErrorKind::Unexpected, error.kind());
+    assert!(error.is_retryable());
+    assert_eq!(1, mock.request_count());
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+}
+
+#[tokio::test]
+async fn explicit_authorization_failure_does_not_fall_back_to_the_environment() {
+    let mock = MockB2::new(String::new()).with_status(StatusCode::SERVICE_UNAVAILABLE);
+    let context = Context::new()
+        .with_http_send(mock.clone())
+        .with_env(StaticEnv {
+            home_dir: None,
+            envs: envs([
+                ("B2_APPLICATION_KEY_ID", "environment-key-id"),
+                ("B2_APPLICATION_KEY", "environment-key"),
+            ]),
+        });
+    let provider = DefaultCredentialProvider::new().push_front(explicit_provider());
+    let signer = Signer::new(context, provider, RequestSigner);
+    let mut parts = http::Request::get(format!("{API_URL}/b2api/v4/b2_list_buckets"))
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a failed explicit authorization must not switch to the environment");
+
+    assert_eq!(reqsign_core::ErrorKind::Unexpected, error.kind());
+    assert!(error.is_retryable());
+    assert_eq!(1, mock.request_count());
+    assert_eq!(
+        BASIC_AUTHORIZATION,
+        mock.last_request().headers()[http::header::AUTHORIZATION]
+    );
+    assert!(!parts.headers.contains_key(http::header::AUTHORIZATION));
+}
+
+#[tokio::test]
+async fn with_chain_keeps_the_caller_error_policy() {
+    let chain = ProvideCredentialChain::new()
+        .push(StaticCredentialProvider::new(Credential::new(
+            "",
+            API_URL,
+            DOWNLOAD_URL,
+        )))
+        .push(StaticCredentialProvider::new(Credential::new(
+            "chain-authorization-token",
+            API_URL,
+            DOWNLOAD_URL,
+        )));
+    let signer = Signer::new(
+        Context::new(),
+        DefaultCredentialProvider::with_chain(chain),
+        RequestSigner,
+    );
+    let mut parts = http::Request::get(format!("{API_URL}/b2api/v4/b2_list_buckets"))
+        .body(())
+        .expect("request must build")
+        .into_parts()
+        .0;
+
+    signer
+        .sign(&mut parts, None)
+        .await
+        .expect("a caller-supplied chain keeps its permissive error policy");
+
+    assert_eq!(
+        "chain-authorization-token",
+        parts.headers[http::header::AUTHORIZATION]
+    );
 }
 
 #[tokio::test]
