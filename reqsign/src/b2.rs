@@ -44,15 +44,18 @@ pub type DefaultSigner = Signer<Credential>;
 /// let ctx = reqsign::default_context();
 /// let signer = reqsign::b2::default_signer(ctx);
 ///
-/// let mut req = http::Request::get(
-///     "https://api001.backblazeb2.com/b2api/v4/b2_list_buckets?accountId=account-id",
-/// )
-/// .body(())
-/// .unwrap()
-/// .into_parts()
-/// .0;
+/// // Load the credential first: api_url belongs to the application key and
+/// // selects the account's endpoint.
+/// let credential = signer.credential_for(None).await?;
+/// let uri = format!(
+///     "{}/b2api/v4/b2_list_buckets?accountId=account-id",
+///     credential.api_url
+/// );
 ///
-/// signer.sign(&mut req, None).await?;
+/// let mut req = http::Request::get(uri).body(()).unwrap().into_parts().0;
+///
+/// // Sign with the same credential that supplied api_url.
+/// signer.sign_with_credential(&mut req, &credential, None).await?;
 /// # Ok(())
 /// # }
 /// ```
