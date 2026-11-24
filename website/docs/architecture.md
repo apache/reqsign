@@ -324,4 +324,4 @@ reqsign-aws-v4 = "4"
 | An application talking to one or more clouds | facade + `default_signer` |
 | An application with a custom runtime or HTTP stack | facade + custom assembly |
 | A library exposing one provider | that service crate directly |
-| A WASM target | either, without `default-context` — see [Custom runtimes & WASM](/docs/guides/custom-runtimes/) |
+| A WASM target | either; `default_context()` provides HTTP and environment there — see [Custom runtimes & WASM](/docs/guides/custom-runtimes/) |

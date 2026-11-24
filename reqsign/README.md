@@ -55,7 +55,7 @@ Add `reqsign` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-reqsign = "0.21"
+reqsign = { version = "0.21", features = ["aws"] }
 ```
 
 By default, this includes `default-context` (a ready-to-use context using
@@ -70,7 +70,7 @@ To use specific services only:
 
 ```toml
 [dependencies]
-reqsign = { version = "0.21", default-features = false, features = ["aws", "default-context"] }
+reqsign = { version = "0.21", default-features = false, features = ["aws", "default-context", "default-crypto"] }
 ```
 
 ## Examples
@@ -252,11 +252,13 @@ let signer = seafile::default_signer(ctx.clone());
 ## Feature Flags
 
 - `default`: Enables `default-context` and `default-crypto`
-- `default-context`: Provides a default context implementation using `reqwest` and `tokio`
+- `default-context`: Provides a default context implementation: `ReqwestHttpSend` on every target, plus `TokioFileRead` and `TokioCommandExecute` on native targets
 - `default-crypto`: Re-exports `RustCryptoProvider`; `default_context()` binds it when no process-wide provider is installed
 - `aliyun`: Enable Aliyun OSS support
 - `aliyun-drive`: Enable Aliyun Drive Open Platform support
-- `aws`: Enable AWS services support
+- `aws`: Enable AWS services support (alias of `aws-v4`)
+- `aws-v4`: Enable AWS Signature V4 signing support
+- `aws-v4a`: Enable AWS Signature V4a multi-region signing support
 - `azure`: Enable Azure Storage support
 - `b2`: Enable Backblaze B2 Native API support
 - `baidu-netdisk`: Enable Baidu Netdisk support
@@ -267,6 +269,7 @@ let signer = seafile::default_signer(ctx.clone());
 - `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
 - `http-message-signatures`: Enable HTTP Message Signatures (RFC 9421) support
 - `huaweicloud`: Enable Huawei Cloud OBS support
+- `koofr`: Enable Koofr support
 - `oauth2`: Enable the shared OAuth 2.0 refresh-token support
 - `onedrive`: Enable OneDrive support (implies `oauth2`)
 - `openstack`: Enable OpenStack Keystone support
@@ -275,18 +278,28 @@ let signer = seafile::default_signer(ctx.clone());
 - `tencent`: Enable Tencent COS support
 - `upyun`: Enable Upyun support
 - `vercel`: Enable Vercel Blob and Artifacts support
+- `volcengine`: Enable Volcengine TOS support
+- `yandex-disk`: Enable Yandex Disk support
+- `full`: Enable all service features
 
 ## WASM Support
 
-This crate supports WebAssembly (WASM) targets. However, the `default-context` feature is not available on WASM due to platform limitations. When targeting WASM, you should:
+Reqsign supports `wasm32-unknown-unknown` for a defined subset of services;
+see the
+[Custom runtimes & WASM guide](https://github.com/apache/reqsign/blob/main/website/docs/guides/custom-runtimes.md)
+for the provider list and clock requirements.
 
-1. Disable default features
-2. Use the existing context implementations from `reqsign-file-read-tokio` and `reqsign-http-send-reqwest` crates
-3. Or implement your own WASM-compatible context
+`default-context` and `default-crypto` are supported on WASM.
+`default_context()` wires `ReqwestHttpSend` and `OsEnv` and, with
+`default-crypto`, binds RustCrypto; file reading and command execution have no
+browser equivalent and fail when a credential source needs them. Prefer static
+or externally injected credentials, since file- and CLI-based credential
+sources cannot run in a browser.
 
 Example for WASM:
 ```toml
 [dependencies]
-reqsign = { version = "0.21", default-features = false, features = ["aws"] }
-reqsign-http-send-reqwest = "5"
+reqsign = { version = "0.21", features = ["aws"] }
 ```
+
+The default features include `default-context` and `default-crypto`.

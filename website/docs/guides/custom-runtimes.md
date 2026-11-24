@@ -127,11 +127,12 @@ futures that are `MaybeSend` — `Send` on native targets, relaxed on WASM.
 ### Providing a browser runtime
 
 There is no filesystem and no OS environment in a browser, so provide what
-your credential sources actually need — usually just HTTP:
+your credential sources and signer actually need — HTTP plus a
+`CryptoProvider` for signing:
 
 ```rust
 use bytes::Bytes;
-use reqsign::{Context, HttpSend, Result, Signer};
+use reqsign::{Context, HttpSend, Result, RustCryptoProvider, Signer};
 use reqsign::aws::{RequestSigner, StaticCredentialProvider};
 
 #[derive(Debug)]
@@ -145,7 +146,9 @@ impl HttpSend for FetchHttpSend {
     }
 }
 
-let ctx = Context::new().with_http_send(FetchHttpSend);
+let ctx = Context::new()
+    .with_crypto(RustCryptoProvider::new())
+    .with_http_send(FetchHttpSend);
 let signer = Signer::new(
     ctx,
     StaticCredentialProvider::new("AKIDEXAMPLE", "example-secret-key"),

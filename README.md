@@ -16,6 +16,13 @@ Most APIs are simple, but they can become complicated when hidden behind complex
 
 ## Quick Start
 
+Add `reqsign` to your `Cargo.toml` with the feature of the service you sign for:
+
+```toml
+[dependencies]
+reqsign = { version = "0.21", features = ["aws"] }
+```
+
 ### Option 1: Use Default Signer (Recommended)
 
 The simplest way to use `reqsign` is with the default signers provided by each service:
