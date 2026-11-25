@@ -1877,14 +1877,14 @@ Everything else on this page is the detail behind those steps.
 
 ## Dependency versions[​](#dependency-versions "Direct link to Dependency versions")
 
-| Crate                                                                                                                                                                                                                                               | 0.20 line | 0.21 line                   |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | --------------------------- |
-| reqsign                                                                                                                                                                                                                                             | 0.20.x    | 0.21.x                      |
-| reqsign-core, reqsign-aws-core, every established service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                                                                                                                             | 3.x       | 4.0.0                       |
-| reqsign-http-send-reqwest                                                                                                                                                                                                                           | 4.0.x     | 5.0.0                       |
-| reqsign-crypto-rustcrypto                                                                                                                                                                                                                           | —         | 1.0.0                       |
-| reqsign-crypto-boring                                                                                                                                                                                                                               | —         | 1.0.0 (source release only) |
-| reqsign-aliyun-drive, reqsign-baidu-netdisk, reqsign-cloudflare, reqsign-dropbox, reqsign-github, reqsign-koofr, reqsign-oauth2, reqsign-onedrive, reqsign-seafile, reqsign-upyun, reqsign-vercel, reqsign-yandex-disk, and the B2 crate reqsign-b2 | —         | 1.0.0                       |
+| Crate                                                                                                                                                                                                                                               | 0.20 line | 0.21 line |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | --------- |
+| reqsign                                                                                                                                                                                                                                             | 0.20.x    | 0.21.x    |
+| reqsign-core, reqsign-aws-core, every established service crate, reqsign-file-read-tokio, reqsign-command-execute-tokio                                                                                                                             | 3.x       | 4.0.0     |
+| reqsign-http-send-reqwest                                                                                                                                                                                                                           | 4.0.x     | 5.0.0     |
+| reqsign-crypto-rustcrypto                                                                                                                                                                                                                           | —         | 1.0.0     |
+| reqsign-crypto-boring                                                                                                                                                                                                                               | —         | 1.0.0     |
+| reqsign-aliyun-drive, reqsign-baidu-netdisk, reqsign-cloudflare, reqsign-dropbox, reqsign-github, reqsign-koofr, reqsign-oauth2, reqsign-onedrive, reqsign-seafile, reqsign-upyun, reqsign-vercel, reqsign-yandex-disk, and the B2 crate reqsign-b2 | —         | 1.0.0     |
 
 Mixing core majors does not compile, because the traits are the compatibility boundary. Upgrade the facade and every directly used `reqsign-*` crate in the same change:
 
@@ -1992,7 +1992,7 @@ let digest = reqsign_core::hash::hex_sha256(ctx.crypto_provider()?, body)?;
 ### Backend crates[​](#backend-crates "Direct link to Backend crates")
 
 * `reqsign-crypto-rustcrypto` implements all operations and supports`wasm32-unknown-unknown` for MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512, and P-256 ECDSA. RSA, AES-GCM, and random generation report `ConfigInvalid` there.
-* `reqsign-crypto-boring` is native-only, excluded from the main workspace and the workspace publish plan, and forwards an optional `fips` feature. It ships in the source release only; it is not published to crates.io by this release, and publishing it requires a separate decision. Bind it explicitly:`Context::new().with_crypto(BoringCryptoProvider::new())`.
+* `reqsign-crypto-boring` is native-only, excluded from the main workspace, and forwards an optional `fips` feature. It is published to crates.io from the explicit standalone release-plan entry after `reqsign-core`. Bind it explicitly: `Context::new().with_crypto(BoringCryptoProvider::new())`.
 
 ## Default signers take an explicit `Context`[​](#default-signers-take-an-explicit-context "Direct link to default-signers-take-an-explicit-context")
 
@@ -4717,7 +4717,7 @@ Precise, per-item API documentation lives on docs.rs, generated from the source 
 ## Crypto providers[​](#crypto-providers "Direct link to Crypto providers")
 
 * [reqsign-crypto-rustcrypto](https://docs.rs/reqsign-crypto-rustcrypto) — pure-Rust provider, including the supported WASM subset
-* [reqsign-crypto-boring](https://github.com/apache/reqsign/tree/main/crypto/boring) — native BoringSSL provider, built outside the main workspace. It ships in the ASF source release only, so it has no docs.rs page; publishing it to crates.io requires a separate decision
+* [reqsign-crypto-boring](https://docs.rs/reqsign-crypto-boring) — native BoringSSL provider, built outside the main workspace and published to crates.io from the explicit standalone release-plan entry
 
 ## Context components[​](#context-components "Direct link to Context components")
 
@@ -4871,7 +4871,7 @@ reqsign-aws-v4 = "4"
 
 ```
 
-Every release ships as an ASF source release plus crates.io packages — see[Download](/download/). The source release also contains[reqsign-crypto-boring](https://github.com/apache/reqsign/tree/main/crypto/boring), which is not part of the workspace crates.io publish plan; publishing it to crates.io requires a separate decision. Release notes and migration steps for breaking majors are published with each[GitHub release](https://github.com/apache/reqsign/releases).
+Every release ships as an ASF source release plus crates.io packages — see[Download](/download/). The crates.io publish plan also carries the standalone[reqsign-crypto-boring](https://github.com/apache/reqsign/tree/main/crypto/boring)manifest, which is built outside the main workspace and published after`reqsign-core`. Release notes and migration steps for breaking majors are published with each[GitHub release](https://github.com/apache/reqsign/releases).
 
 ## Targets[​](#targets "Direct link to Targets")
 
