@@ -503,7 +503,8 @@ impl RequestSigner {
         let original_uri = req.uri.clone();
         let mut signing_req = SigningRequest::build(req)?;
         if let Some(expires) = expires_in {
-            if expires.as_secs() == 0 || expires > MAX_V4_PRESIGN_LIFETIME {
+            let seconds = expires.as_secs();
+            if seconds == 0 || seconds > MAX_V4_PRESIGN_LIFETIME.as_secs() {
                 return Err(Error::request_invalid(
                     "OSS V4 presigned URL lifetime must be between 1 and 604800 seconds",
                 ));
