@@ -28,6 +28,9 @@ use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, hash};
 use serde::Serialize;
+use std::fmt::{Debug, Formatter};
+
+const REDACTED: &str = "REDACTED";
 
 /// Generate a unique JWT ID using timestamp and a pseudo-random component
 fn generate_jti(now: u64) -> String {
@@ -44,12 +47,26 @@ fn generate_jti(now: u64) -> String {
 }
 
 /// ClientCertificateCredentialProvider provides credentials using a client certificate
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ClientCertificateCredentialProvider {
     tenant_id: Option<String>,
     client_id: Option<String>,
     certificate_path: Option<String>,
     certificate_password: Option<String>,
+}
+
+impl Debug for ClientCertificateCredentialProvider {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientCertificateCredentialProvider")
+            .field("tenant_id", &self.tenant_id)
+            .field("client_id", &self.client_id)
+            .field("certificate_path", &self.certificate_path)
+            .field(
+                "certificate_password",
+                &self.certificate_password.as_ref().map(|_| REDACTED),
+            )
+            .finish()
+    }
 }
 
 impl Default for ClientCertificateCredentialProvider {
@@ -461,5 +478,29 @@ mod tests {
             provider.certificate_path,
             Some("/path/to/cert.pem".to_string())
         );
+    }
+
+    #[test]
+    fn debug_redacts_certificate_password_as_opaque_for_all_lengths() {
+        const TENANT_ID: &str = "synthetic-tenant-id";
+        const CLIENT_ID: &str = "synthetic-client-id";
+        const CERTIFICATE_PATH: &str = "/synthetic/certificate.pem";
+        let expected = format!(
+            "ClientCertificateCredentialProvider {{ tenant_id: Some(\"{TENANT_ID}\"), client_id: Some(\"{CLIENT_ID}\"), certificate_path: Some(\"{CERTIFICATE_PATH}\"), certificate_password: Some(\"{REDACTED}\") }}"
+        );
+
+        for certificate_password in [
+            "synthetic-certificate-password-with-long-prefix-and-suffix",
+            "short",
+            "証明書のパスワード",
+        ] {
+            let provider = ClientCertificateCredentialProvider::new()
+                .with_tenant_id(TENANT_ID)
+                .with_client_id(CLIENT_ID)
+                .with_certificate_path(CERTIFICATE_PATH)
+                .with_certificate_password(certificate_password);
+
+            assert_eq!(format!("{provider:?}"), expected);
+        }
     }
 }
