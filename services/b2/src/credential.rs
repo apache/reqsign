@@ -36,19 +36,15 @@ const REFRESH_WINDOW: Duration = Duration::from_secs(120);
 /// B2 also returns key restrictions such as capabilities and bucket or prefix
 /// allow-lists. Those restrictions are enforced by B2 when the token is used and
 /// are not needed to sign a request, so they are intentionally not retained.
+///
+/// The token and base URLs are read through accessors so the credential stays
+/// bound to the account authorization that produced them.
 #[derive(Clone, Default)]
 pub struct Credential {
-    /// The authorization token used in the Native API `Authorization` header.
-    pub authorization_token: String,
-    /// The base URL for Native API calls other than uploading and downloading.
-    pub api_url: String,
-    /// The base URL for downloading files.
-    pub download_url: String,
-    /// The absolute expiration time of the authorization token.
-    ///
-    /// B2 caps an authorization token at 24 hours. When the application key has
-    /// an earlier expiration timestamp, that earlier deadline is used.
-    pub expires_at: Option<Timestamp>,
+    authorization_token: String,
+    api_url: String,
+    download_url: String,
+    expires_at: Option<Timestamp>,
 }
 
 impl Debug for Credential {
@@ -81,9 +77,38 @@ impl Credential {
     }
 
     /// Set the absolute expiration time of the authorization token.
+    ///
+    /// B2 caps an authorization token at 24 hours. When the application key has
+    /// an earlier expiration timestamp, that earlier deadline is used.
     pub fn with_expires_at(mut self, expires_at: Timestamp) -> Self {
         self.expires_at = Some(expires_at);
         self
+    }
+
+    /// Return the authorization token used in the Native API `Authorization`
+    /// header.
+    ///
+    /// The token is a secret. Treat the returned value as sensitive and do not
+    /// log it.
+    pub fn authorization_token(&self) -> &str {
+        &self.authorization_token
+    }
+
+    /// Return the base URL for Native API calls other than uploading and
+    /// downloading.
+    pub fn api_url(&self) -> &str {
+        &self.api_url
+    }
+
+    /// Return the base URL for downloading files.
+    pub fn download_url(&self) -> &str {
+        &self.download_url
+    }
+
+    /// Return the absolute expiration time of the authorization token, if one
+    /// is known.
+    pub fn expires_at(&self) -> Option<Timestamp> {
+        self.expires_at
     }
 
     /// Return whether the credential has enough data to sign Native API calls.
@@ -114,12 +139,27 @@ mod tests {
     use super::*;
 
     fn credential(expires_at: Option<Timestamp>) -> Credential {
-        Credential {
-            authorization_token: "authorization-token-value".to_string(),
-            api_url: "https://api001.backblazeb2.com".to_string(),
-            download_url: "https://f001.backblazeb2.com".to_string(),
-            expires_at,
+        let credential = Credential::new(
+            "authorization-token-value",
+            "https://api001.backblazeb2.com",
+            "https://f001.backblazeb2.com",
+        );
+
+        match expires_at {
+            Some(expires_at) => credential.with_expires_at(expires_at),
+            None => credential,
         }
+    }
+
+    #[test]
+    fn accessors_return_the_configured_values() {
+        let expires_at = Timestamp::now() + Duration::from_secs(3_600);
+        let value = credential(Some(expires_at));
+
+        assert_eq!("authorization-token-value", value.authorization_token());
+        assert_eq!("https://api001.backblazeb2.com", value.api_url());
+        assert_eq!("https://f001.backblazeb2.com", value.download_url());
+        assert_eq!(Some(expires_at), value.expires_at());
     }
 
     #[test]
@@ -129,12 +169,18 @@ mod tests {
 
     #[test]
     fn missing_endpoint_is_invalid() {
-        let mut value = credential(None);
-        value.api_url.clear();
+        let value = Credential::new(
+            "authorization-token-value",
+            "",
+            "https://f001.backblazeb2.com",
+        );
         assert!(!value.is_valid());
 
-        let mut value = credential(None);
-        value.download_url.clear();
+        let value = Credential::new(
+            "authorization-token-value",
+            "https://api001.backblazeb2.com",
+            "",
+        );
         assert!(!value.is_valid());
     }
 

@@ -151,10 +151,10 @@ async fn account_authorization_uses_the_v4_basic_exchange() {
         .expect("credential must be present");
     let after = Timestamp::now();
 
-    assert_eq!(AUTHORIZATION_TOKEN, credential.authorization_token);
-    assert_eq!(API_URL, credential.api_url);
-    assert_eq!(DOWNLOAD_URL, credential.download_url);
-    let expires_at = credential.expires_at.expect("expiry must be set");
+    assert_eq!(AUTHORIZATION_TOKEN, credential.authorization_token());
+    assert_eq!(API_URL, credential.api_url());
+    assert_eq!(DOWNLOAD_URL, credential.download_url());
+    let expires_at = credential.expires_at().expect("expiry must be set");
     assert!(expires_at >= before + Duration::from_secs(86_400));
     assert!(expires_at <= after + Duration::from_secs(86_400));
 
@@ -185,7 +185,7 @@ async fn application_key_expiration_caps_the_authorization_token() {
         .expect("account authorization must succeed")
         .expect("credential must be present");
 
-    assert_eq!(Some(key_expires_at), credential.expires_at);
+    assert_eq!(Some(key_expires_at), credential.expires_at());
 }
 
 #[tokio::test]
@@ -307,7 +307,7 @@ async fn environment_provider_discovers_the_official_variables() {
         .expect("environment authorization must succeed")
         .expect("credential must be present");
 
-    assert_eq!(AUTHORIZATION_TOKEN, credential.authorization_token);
+    assert_eq!(AUTHORIZATION_TOKEN, credential.authorization_token());
     assert_eq!(
         BASIC_AUTHORIZATION,
         mock.last_request().headers()[http::header::AUTHORIZATION]

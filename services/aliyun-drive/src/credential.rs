@@ -35,6 +35,7 @@ const TOKEN_REFRESH_WINDOW: Duration = Duration::from_secs(120);
 /// The access token is a secret. `Debug` output redacts it, and
 /// [`Credential::bearer_header_value`] is the supported way to obtain request
 /// authentication material. An optional absolute expiration is kept exactly;
+/// set it with the consuming [`Credential::with_expires_at`] builder.
 /// [`SigningCredential::is_valid`] applies a small proactive refresh window
 /// while [`Credential::is_valid_at`] performs the exact check.
 #[derive(Clone)]
@@ -63,9 +64,13 @@ impl Credential {
         Self::from_parts(access_token, None)
     }
 
-    /// Create a credential from an access token and its absolute expiration.
-    pub fn with_expires_at(access_token: impl Into<String>, expires_at: Timestamp) -> Result<Self> {
-        Self::from_parts(access_token, Some(expires_at))
+    /// Set the absolute expiration time of the access token.
+    ///
+    /// [`Credential::new`] validates the token before this builder records the
+    /// expiration, so the builder cannot introduce an invalid access token.
+    pub fn with_expires_at(mut self, expires_at: Timestamp) -> Self {
+        self.expires_at = Some(expires_at);
+        self
     }
 
     pub(crate) fn from_parts(
@@ -135,4 +140,21 @@ fn validate_access_token(value: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn with_expires_at_sets_the_absolute_deadline() {
+        let expires_at = Timestamp::now() + Duration::from_secs(3_600);
+        let credential = Credential::new("fabricated-access-token")
+            .expect("token must be valid")
+            .with_expires_at(expires_at);
+
+        assert_eq!(Some(expires_at), credential.expires_at());
+        assert!(credential.is_valid_at(expires_at - Duration::from_secs(1)));
+        assert!(!credential.is_valid_at(expires_at));
+    }
 }

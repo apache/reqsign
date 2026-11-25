@@ -260,7 +260,7 @@ from it, and sign with that same credential:
 let credential = signer.credential_for(None).await?;
 let uri = format!(
     "{}/b2api/v4/b2_list_buckets?accountId={account_id}",
-    credential.api_url
+    credential.api_url()
 );
 
 let mut req = http::Request::builder()
@@ -311,6 +311,23 @@ contracts as the established services:
 `reqsign-http-message-signatures` (RFC 9421, facade feature
 `http-message-signatures`) is also new; it joins the lockstep line and starts at
 `4.0.0` so it composes with `reqsign-core` 4.
+
+### Credential construction
+
+These crates have no earlier published API to migrate from. Their credential
+types use validated constructors and read-only accessors instead of public
+fields:
+
+```rust
+let credential = aliyun_drive::Credential::new(access_token)?
+    .with_expires_at(expires_at);
+```
+
+B2 credentials are created with `Credential::new(token, api_url, download_url)`
+and read with `authorization_token()`, `api_url()`, `download_url()`, and
+`expires_at()`. Upyun credentials are created with
+`Credential::new(operator, password)` and read with `operator()` and `bucket()`.
+The password is not exposed outside the signer.
 
 Baidu Netdisk has no ambient credential source, so the caller supplies the
 token:

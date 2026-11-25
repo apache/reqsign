@@ -64,6 +64,10 @@ contract. Reqsign therefore does not invent an ambient source. Use
 `StaticCredentialProvider` for a caller-managed access token, or
 `RefreshCredentialProvider` for a confidential-client refresh token.
 
+When constructing a `Credential` directly, `Credential::new(token)` validates
+the token and the consuming `with_expires_at(expires_at)` builder records its
+optional absolute expiration.
+
 An explicit provider fails closed: an invalid token or refresh configuration
 returns an error instead of silently switching to a different identity.
 
