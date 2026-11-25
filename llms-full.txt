@@ -896,7 +896,7 @@ The example signs the request and prints a confirmation; sending it is your HTTP
 
 ## Every provider, one pattern[​](#every-provider-one-pattern "Direct link to Every provider, one pattern")
 
-Swap the entry point and the rest of the code stays the same. Each entry composes that provider's own credential chain — the[provider pages](/docs/providers/) document exactly which sources:
+Swap the entry point and the rest of the code stays the same. Each entry composes that provider's documented credential sources, if any — the[provider pages](/docs/providers/) document exactly which sources. Entries for services without an ambient source take the required identity explicitly:
 
 | Provider                                                                       | Entry                                                            |
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
@@ -910,10 +910,10 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [Vercel Blob](/docs/providers/vercel-blob/)                                    | vercel::default\_blob\_signer(ctx)                               |
 | [Vercel Artifacts](/docs/providers/vercel-artifacts/)                          | vercel::default\_artifacts\_signer(ctx)                          |
 | [GitHub](/docs/providers/github/)                                              | github::default\_signer(ctx)                                     |
-| [OneDrive](/docs/providers/onedrive/)                                          | onedrive::default\_signer(ctx)                                   |
+| [OneDrive](/docs/providers/onedrive/)                                          | onedrive::default\_signer(ctx, access\_token)                    |
 | [Google Cloud](/docs/providers/google/)                                        | google::default\_signer(ctx, service)                            |
 | [Aliyun OSS](/docs/providers/aliyun-oss/)                                      | aliyun::default\_signer(ctx, bucket)                             |
-| [Aliyun Drive](/docs/providers/aliyun-drive/)                                  | aliyun\_drive::default\_signer(ctx)                              |
+| [Aliyun Drive](/docs/providers/aliyun-drive/)                                  | aliyun\_drive::default\_signer(ctx, access\_token)               |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/)                           | huaweicloud::default\_signer(ctx, bucket)                        |
 | [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | http\_message\_signatures::RequestSigner::new(label, components) |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/)                      | openstack::default\_signer(ctx)                                  |
@@ -924,7 +924,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | [Volcengine TOS](/docs/providers/volcengine-tos/)                              | volcengine::default\_signer(ctx, region)                         |
 | [Yandex Disk](/docs/providers/yandex-disk/)                                    | yandex\_disk::default\_signer(ctx, access\_token)                |
 
-Aliyun Drive has no documented ambient source; replace its default provider with a static access token or refresh-token provider. OneDrive's default chain is also empty; prepend a refresh-token or static provider explicitly.
+Aliyun Drive, OneDrive, and Yandex Disk have no documented ambient source. Their facade entries take the access token explicitly, and their service crates export no default provider or builder. For a refresh token or another explicit provider, assemble `Signer::new(ctx, provider, RequestSigner)` directly instead of passing a dummy token.
 
 A default signer is an ordinary `Signer`: replace any component and keep the rest —
 
@@ -1028,7 +1028,7 @@ For each provider, the detail page states precisely:
 
 * **Service scope** — which APIs the signer produces valid signatures for.
 * **Signing schemes** — the exact protocols implemented (e.g. SigV4, Shared Key, OSS V4).
-* **Credential sources** — which loading mechanisms the default chain composes.
+* **Credential sources** — which documented ambient sources a default chain composes (when one exists) and which explicit credential providers are available.
 * **Request authentication** — whether header signing, query authentication, or both are available.
 * **Credential granting** — explicit downscoping operations, if any.
 * **WASM status** — whether CI verifies the provider for`wasm32-unknown-unknown`.
@@ -1122,11 +1122,11 @@ url: https://reqsign.apache.org/docs/guides/credentials/
 
 # Loading credentials
 
-Everything about getting credentials into a signer: use the default chain, bend it, or replace it entirely.
+Everything about getting credentials into a signer: use the documented default chain where one exists, compose explicit providers, or replace the source entirely.
 
 ## Use the default chain[​](#use-the-default-chain "Direct link to Use the default chain")
 
-Every service crate ships a `DefaultCredentialProvider` composing that provider's documented default chain — the same sources the official CLIs and SDKs consult, in a documented order. A provider with no documented ambient source has an empty default chain and requires an explicit credential provider. Each [provider page](/docs/providers/) lists its exact sources.
+Services with a documented ambient source ship a `DefaultCredentialProvider`composing that source and others in a documented order — the same sources the official CLIs and SDKs consult. A service whose only documented sources require explicit caller input does not export an empty default provider or builder: pass the provider directly to `Signer::new`, or use the facade `default_signer`that takes the required identity. Each [provider page](/docs/providers/) lists its exact sources and entry point.
 
 ```
 
@@ -1142,7 +1142,7 @@ let provider = DefaultCredentialProvider::new();
 
 ```
 
-Every `DefaultCredentialProvider` exposes the same four entry points:
+Every service that exports a `DefaultCredentialProvider` exposes the same four entry points:
 
 ```
 
@@ -1203,7 +1203,7 @@ Other token, transport, metadata, role, and credential failures are returned wit
 
 ## Fixed credentials[​](#fixed-credentials "Direct link to Fixed credentials")
 
-When the credential is decided elsewhere — tests, WASM, a control plane that injects keys — skip chains entirely:
+When the credential is decided elsewhere — tests, WASM, a control plane that injects keys — skip chains entirely. Services without a default provider use this path directly; otherwise `.with_credential_provider(provider)` keeps the rest of the signer:
 
 ```
 
@@ -1288,11 +1288,11 @@ impl ProvideCredential for VaultCredentialProvider {
 
 The return-value protocol is what makes chains compose: `Ok(Some(_))`resolves and `Ok(None)` passes to the next source. `ProvideCredentialChain`also logs `Err(_)` and continues: a failing custom source can fall back to profiles, metadata, or another configured identity. If all sources fail or return `None`, the chain returns `Ok(None)`.
 
-Report "not configured" as `None` and real failures as errors. When failure must stop credential resolution, install your provider directly on the signer or implement a chain with that policy; prepending a provider does not enforce it. A provider installed directly has its errors propagated by `Signer`. See[Architecture § ProvideCredential](/docs/architecture/#providecredential).
+Report "not configured" as `None` and real failures as errors. A provider installed directly on the signer propagates its error. A default provider's`push_front` error policy is service-specific; follow its documentation. When failure must stop credential resolution, install your provider directly on the signer or keep that policy in a caller-owned provider. See[Architecture § ProvideCredential](/docs/architecture/#providecredential).
 
 ## Plug it in[​](#plug-it-in "Direct link to Plug it in")
 
-Highest priority in front of the default chain:
+For a service that exports `DefaultCredentialProvider`, highest priority in front of its documented default chain:
 
 ```
 
@@ -1326,7 +1326,7 @@ let provider = DefaultCredentialProvider::with_chain(chain);
 
 ```
 
-Then hand it to a default signer (`.with_credential_provider(provider)`) or a custom `Signer::new`.
+Then hand it to a default signer (`.with_credential_provider(provider)`) or a custom `Signer::new`. If the service has no default provider, pass the provider or chain directly to `Signer::new`.
 
 ## Freshness[​](#freshness "Direct link to Freshness")
 
@@ -2160,6 +2160,8 @@ let credential = aliyun_drive::Credential::new(access_token)?
 
 Aliyun Drive's `Credential::new(access_token)` rejects an invalid token immediately; `with_expires_at` records the optional expiry. B2 credentials are created with `Credential::new(token, api_url, download_url)` and read with`authorization_token()`, `api_url()`, `download_url()`, and `expires_at()`. Upyun credentials are created with `Credential::new(operator, password)` and read with `operator()` and `bucket()`. B2 and Upyun can construct incomplete values, which are rejected by the B2 static provider or the signer at use. The password is not exposed outside the signer.
 
+### Explicit credentials[​](#explicit-credentials "Direct link to Explicit credentials")
+
 Baidu Netdisk has no ambient credential source, so the caller supplies the token:
 
 ```
@@ -2175,6 +2177,159 @@ let signer = baidu_netdisk::default_signer(ctx, access_token);
 ```
 
 The caller still owns request policy, such as the `User-Agent` Baidu requires on download requests. Reqsign only signs the `access_token` query parameter and preserves the rest of the wire query.
+
+Aliyun Drive, OneDrive, and Yandex Disk also have no documented ambient token source. Their facade entries take the access token explicitly:
+
+```
+
+use reqsign::{aliyun_drive, default_context, onedrive, yandex_disk};
+
+
+let ctx = default_context();
+
+let signer = aliyun_drive::default_signer(ctx.clone(), access_token.clone());
+
+let signer = onedrive::default_signer(ctx.clone(), access_token.clone());
+
+let signer = yandex_disk::default_signer(ctx, access_token);
+
+
+```
+
+For a refresh provider or another explicit source, assemble the signer directly instead of passing a dummy token:
+
+```
+
+use reqsign::{Signer, aliyun_drive, default_context};
+
+
+let provider = aliyun_drive::RefreshCredentialProvider::new(
+
+    "client-id",
+
+    "client-secret",
+
+    "refresh-token",
+
+)?;
+
+let signer = Signer::new(default_context(), provider, aliyun_drive::RequestSigner);
+
+
+```
+
+These three crates do not export an empty `DefaultCredentialProvider` or its builder. The facade entries above are convenience wrappers around`StaticCredentialProvider`; any other explicit provider goes directly to`Signer::new`.
+
+### Caller-owned provider composition[​](#caller-owned-provider-composition "Direct link to Caller-owned provider composition")
+
+`DefaultCredentialProvider::with_chain(c)` becomes the chain itself:
+
+```
+
+let signer = Signer::new(ctx, c, service::RequestSigner);
+
+
+```
+
+It keeps `ProvideCredentialChain`'s error policy. A single`push_front(p)` on an otherwise empty default provider, with no fallback chain, becomes `p` directly, which keeps its `Err` behavior.
+
+`DefaultCredentialProvider::with_chain(c).push_front(p)` tried `p` first and kept `c` as the fallback. Build that mixed order explicitly and pass it directly to `Signer::new`:
+
+```
+
+let provider = PrependThenChain::new(c).push_front(p);
+
+let signer = Signer::new(ctx, provider, service::RequestSigner);
+
+
+```
+
+A deliberate no-credential provider is an empty chain:`ProvideCredentialChain::<Credential>::new()`.
+
+If the old code used several `push_front` calls, keep that composition explicitly. The default provider tried the most recently prepended provider first, returned an error immediately, moved on only after `None`, then ran the original chain. This caller-owned provider implements exactly that policy:
+
+```
+
+use reqsign::aliyun_drive::Credential;
+
+use reqsign::{
+
+    Context, ProvideCredential, ProvideCredentialChain, ProvideCredentialDyn, Result,
+
+};
+
+
+#[derive(Debug)]
+
+struct PrependThenChain {
+
+    front: Vec<Box<dyn ProvideCredentialDyn<Credential = Credential>>>,
+
+    fallback: ProvideCredentialChain<Credential>,
+
+}
+
+
+impl PrependThenChain {
+
+    fn new(fallback: ProvideCredentialChain<Credential>) -> Self {
+
+        Self {
+
+            front: Vec::new(),
+
+            fallback,
+
+        }
+
+    }
+
+
+    fn push_front(
+
+        mut self,
+
+        provider: impl ProvideCredential<Credential = Credential> + 'static,
+
+    ) -> Self {
+
+        self.front.insert(0, Box::new(provider));
+
+        self
+
+    }
+
+}
+
+
+impl ProvideCredential for PrependThenChain {
+
+    type Credential = Credential;
+
+
+    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+
+        for provider in &self.front {
+
+            if let Some(credential) = provider.provide_credential_dyn(ctx).await? {
+
+                return Ok(Some(credential));
+
+            }
+
+        }
+
+
+        self.fallback.provide_credential(ctx).await
+
+    }
+
+}
+
+
+```
+
+This example uses Aliyun Drive's credential type; use the same shape with the service you are migrating. Build it in the same order as the old calls:`push_front(first_provider)` and then `push_front(most_recent_provider)`.`ProvideCredentialChain` itself logs a provider error and tries the next source. That permissive fallback differs from the fail-closed composition above, so replacing several `push_front` calls with `ProvideCredentialChain` can change which identity signs.
 
 ## OBS and TOS credentials carry an absolute expiry[​](#obs-and-tos-credentials-carry-an-absolute-expiry "Direct link to OBS and TOS credentials carry an absolute expiry")
 
@@ -2249,7 +2404,7 @@ cargo add http@1
 
 ```
 
-The default provider has no ambient source. Supply the identity explicitly:
+Aliyun Drive has no ambient source, so the facade entry takes the access token explicitly:
 
 ```
 
@@ -2258,9 +2413,7 @@ use reqsign::{aliyun_drive, default_context};
 
 let ctx = default_context();
 
-let signer = aliyun_drive::default_signer(ctx)
-
-    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+let signer = aliyun_drive::default_signer(ctx, "access-token");
 
 
 // The caller owns the drive ID, file path, and request body.
@@ -2289,7 +2442,7 @@ signer.sign(&mut req, None).await?;
 
 ## Credentials[​](#credentials "Direct link to Credentials")
 
-Aliyun Drive Open Platform documents OAuth authorization and its token endpoint, but no CLI, SDK, environment-variable, or local-file credential discovery contract. Reqsign therefore does not invent an ambient source. Use`StaticCredentialProvider` for a caller-managed access token, or`RefreshCredentialProvider` for a confidential-client refresh token.
+Aliyun Drive Open Platform documents OAuth authorization and its token endpoint, but no CLI, SDK, environment-variable, or local-file credential discovery contract. Reqsign therefore does not invent an ambient source, and this crate exports no default provider or builder. Use `StaticCredentialProvider` for a caller-managed access token, or `RefreshCredentialProvider` for a confidential-client refresh token. Pass the provider directly to `Signer::new`; the facade entry above selects the static provider.
 
 When constructing a `Credential` directly, `Credential::new(token)` validates the token and the consuming `with_expires_at(expires_at)` builder records its optional absolute expiration.
 
@@ -2318,6 +2471,8 @@ All three confidential-client credentials are required. Aliyun Drive's official 
 A successful response returns `access_token`, `token_type`, `expires_in`, and a new single-use `refresh_token`. The provider keeps only the latest refresh token in memory. Clones share that state and exchanges are serialized, so concurrent callers use the latest rotated token. A successful, parseable response commits a non-empty rotated token even when the accompanying access token or expiry is unusable, because the previous refresh token was consumed. Tokens are never persisted, and Reqsign exposes no getter or persistence callback.`reqsign::Signer` owns access-token caching and refresh on expiry.
 
 After a successful refresh, the initially configured refresh token may already have been consumed. Restarting with that original value can therefore fail. Restart with a fresh authorized grant, or let the application manage and persist its own refresh exchange and supply the resulting access token through`StaticCredentialProvider`.
+
+Use `Signer::new` for a refresh provider, without a dummy access token:
 
 ```
 
@@ -3687,16 +3842,10 @@ OneDrive requests go to Microsoft Graph with a Microsoft Entra access token in a
 
 use reqsign::{default_context, onedrive::default_signer};
 
-use reqsign::onedrive::{DefaultCredentialProvider, StaticCredentialProvider};
-
 
 let ctx = default_context();
 
-let provider = DefaultCredentialProvider::new()
-
-    .push_front(StaticCredentialProvider::new("graph-access-token"));
-
-let signer = default_signer(ctx).with_credential_provider(provider);
+let signer = default_signer(ctx, "graph-access-token");
 
 
 let mut req = http::Request::builder()
@@ -3719,12 +3868,21 @@ signer.sign(&mut req, None).await?;
 
 ```
 
-Microsoft documents no environment variable or shared configuration file that carries a Microsoft Graph user token, and MSAL token caches are library-specific. `default_signer(ctx)` therefore composes a default provider whose automatic chain is empty: it does not run the Azure CLI, read MSAL caches, or start a login flow. Configure one source before signing:
+Microsoft documents no environment variable or shared configuration file that carries a Microsoft Graph user token, and MSAL token caches are library-specific. Reqsign therefore exports no default provider or builder for OneDrive: it does not run the Azure CLI, read MSAL caches, or start a login flow. The facade entry above selects `StaticCredentialProvider` for a caller-supplied token. For the documented refresh exchange or another provider, pass it directly to `Signer::new`:
 
-* the documented refresh exchange, composed with`DefaultCredentialProvider::new().push_front(RefreshCredentialProvider::new(..)?)`
-* a static access token or a custom provider, also composed with `push_front`; the provider pushed last is tried first
+```
 
-Supplying a provider directly to `Signer::new` or`Signer::with_credential_provider` is equivalent when you do not need the default chain.
+use reqsign::{default_context, Signer, onedrive};
+
+
+let provider = onedrive::RefreshCredentialProvider::new("client-id", "refresh-token")?;
+
+let signer = Signer::new(default_context(), provider, onedrive::RequestSigner);
+
+
+```
+
+A single explicit provider keeps its own error behavior. For several sources, the caller owns the composition; `ProvideCredentialChain` tries providers in insertion order and logs a provider error before continuing. It is not equivalent to fail-closed, last-added-first ordering. A deliberate empty`ProvideCredentialChain` yields no credential.
 
 ## Refresh tokens[​](#refresh-tokens "Direct link to Refresh tokens")
 
@@ -3734,16 +3892,12 @@ A **public client** — desktop, mobile, browserless, or client-side app — can
 
 ```
 
-use reqsign::{default_context, onedrive::default_signer};
-
-use reqsign::onedrive::{DefaultCredentialProvider, RefreshCredentialProvider};
+use reqsign::{default_context, Signer, onedrive};
 
 
-let provider = DefaultCredentialProvider::new()
+let provider = onedrive::RefreshCredentialProvider::new("client-id", "refresh-token")?;
 
-    .push_front(RefreshCredentialProvider::new("client-id", "refresh-token")?);
-
-let signer = default_signer(default_context()).with_credential_provider(provider);
+let signer = Signer::new(default_context(), provider, onedrive::RequestSigner);
 
 
 ```
@@ -3752,22 +3906,16 @@ A **confidential client** — web app, web API, or daemon that keeps the secret 
 
 ```
 
-use reqsign::{default_context, onedrive::default_signer};
-
-use reqsign::onedrive::{DefaultCredentialProvider, RefreshCredentialProvider};
+use reqsign::{default_context, Signer, onedrive};
 
 
-let provider = DefaultCredentialProvider::new().push_front(
+let provider = onedrive::RefreshCredentialProvider::builder("client-id", "refresh-token")
 
-    RefreshCredentialProvider::builder("client-id", "refresh-token")
+    .client_secret("client-secret")
 
-        .client_secret("client-secret")
+    .build()?;
 
-        .build()?,
-
-);
-
-let signer = default_signer(default_context()).with_credential_provider(provider);
+let signer = Signer::new(default_context(), provider, onedrive::RequestSigner);
 
 
 ```
@@ -4647,7 +4795,7 @@ signer.sign(&mut req, None).await?;
 
 The [Yandex Disk REST API](https://yandex.ru/dev/yandex-360/disk/rest/en/concepts/quickstart)authenticates requests with `Authorization: OAuth <access token>`. The token is issued by Yandex OAuth to an app for a specific user's Disk.
 
-Yandex documents no environment variable, CLI token store, or well-known credential file for these tokens, so Reqsign does not infer one.`default_signer` therefore takes the token explicitly, and`DefaultCredentialProvider::new()` has an empty automatic chain. Compose`StaticCredentialProvider` with `push_front`, or supply a dynamic`ProvideCredential` when the token rotates:
+Yandex documents no environment variable, CLI token store, or well-known credential file for these tokens, so Reqsign does not infer one, and this crate exports no default provider or builder. `default_signer` therefore takes the token explicitly and selects `StaticCredentialProvider`. Supply a dynamic`ProvideCredential` when the token rotates, passing it directly to`Signer::new`:
 
 ```
 
