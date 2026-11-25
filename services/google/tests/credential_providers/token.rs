@@ -24,6 +24,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// The last whole second jiff can represent. A saturated relative expiry must
+// land here rather than panicking in `Timestamp + Duration`.
+const MAX_JIFF_UNIX_SECOND: i64 = 253_402_207_200;
+
 fn temp_token_file() -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -78,6 +82,86 @@ async fn test_token_credential_provider_from_path() -> Result<()> {
     assert!(token.expires_at.is_some());
 
     Ok(())
+}
+
+#[tokio::test]
+async fn test_token_credential_provider_relative_expiry_saturates_for_inline_and_file_tokens()
+-> Result<()> {
+    let ctx = create_test_context();
+
+    let inline = TokenCredentialProvider::new("inline-access-token")
+        .with_expires_in(Duration::MAX)
+        .provide_credential(&ctx)
+        .await?
+        .expect("inline credential must be provided");
+    let inline_token = inline
+        .token
+        .as_ref()
+        .expect("inline credential must contain a token");
+    assert_eq!("inline-access-token", inline_token.access_token);
+    assert_eq!(
+        Some(MAX_JIFF_UNIX_SECOND),
+        inline_token
+            .expires_at
+            .map(|expires_at| expires_at.as_second())
+    );
+
+    let path = temp_token_file();
+    fs::write(&path, "file-access-token\n").expect("token file must be written");
+    let result = TokenCredentialProvider::from_path(path.to_string_lossy())
+        .with_expires_in(Duration::MAX)
+        .provide_credential(&ctx)
+        .await;
+    fs::remove_file(&path).expect("token file must be removed");
+
+    let file = result?.expect("file credential must be provided");
+    let file_token = file
+        .token
+        .as_ref()
+        .expect("file credential must contain a token");
+    assert_eq!("file-access-token", file_token.access_token);
+    assert_eq!(
+        Some(MAX_JIFF_UNIX_SECOND),
+        file_token
+            .expires_at
+            .map(|expires_at| expires_at.as_second())
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_token_credential_provider_relative_expiry_preserves_error_order() {
+    let ctx = create_test_context();
+
+    let err = TokenCredentialProvider::new("   ")
+        .with_expires_in(Duration::MAX)
+        .provide_credential(&ctx)
+        .await
+        .expect_err("empty inline token must fail before expiry is used");
+    assert_eq!(ErrorKind::CredentialInvalid, err.kind());
+    assert!(err.to_string().contains("access token is empty"));
+
+    let missing = temp_token_file();
+    let err = TokenCredentialProvider::from_path(missing.to_string_lossy())
+        .with_expires_in(Duration::MAX)
+        .provide_credential(&ctx)
+        .await
+        .expect_err("missing token file must fail before expiry is used");
+    assert_eq!(ErrorKind::Unexpected, err.kind());
+    assert!(err.to_string().contains("failed to read file"));
+
+    let invalid_utf8 = temp_token_file();
+    fs::write(&invalid_utf8, [0xff, 0xfe]).expect("token file must be written");
+    let result = TokenCredentialProvider::from_path(invalid_utf8.to_string_lossy())
+        .with_expires_in(Duration::MAX)
+        .provide_credential(&ctx)
+        .await;
+    fs::remove_file(&invalid_utf8).expect("token file must be removed");
+
+    let err = result.expect_err("invalid UTF-8 must fail before expiry is used");
+    assert_eq!(ErrorKind::Unexpected, err.kind());
+    assert!(err.to_string().contains("invalid UTF-8 in token file"));
 }
 
 #[tokio::test]

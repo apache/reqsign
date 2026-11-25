@@ -89,7 +89,7 @@ impl TokenCredentialProvider {
 
         let expires_at = self.expiration.map(|expiration| match expiration {
             Expiration::At(ts) => ts,
-            Expiration::In(duration) => Timestamp::now() + duration,
+            Expiration::In(duration) => Timestamp::now().saturating_add(duration),
         });
 
         Ok(Credential::with_token(Token {
