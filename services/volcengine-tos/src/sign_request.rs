@@ -595,7 +595,11 @@ mod tests {
         let signer = RequestSigner::new("cn-beijing").with_time(now);
         let credential = Credential::new("testAK", "testSK");
 
-        for expires_in in [Duration::from_secs(604_801), Duration::MAX] {
+        for expires_in in [
+            Duration::from_millis(500),
+            Duration::from_secs(604_801),
+            Duration::MAX,
+        ] {
             let mut parts = http::Request::get("https://example.com/object")
                 .body(())?
                 .into_parts()
