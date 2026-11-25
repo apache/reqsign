@@ -388,8 +388,19 @@ let signer = Signer::new(ctx, c, service::RequestSigner);
 ```
 
 It keeps `ProvideCredentialChain`'s error policy. A single
-`push_front(provider)` becomes that provider directly, which keeps its `Err`
-behavior. A deliberate no-credential provider is an empty chain:
+`push_front(p)` on an otherwise empty default provider, with no fallback chain,
+becomes `p` directly, which keeps its `Err` behavior.
+
+`DefaultCredentialProvider::with_chain(c).push_front(p)` tried `p` first and
+kept `c` as the fallback. Build that mixed order explicitly and pass it directly
+to `Signer::new`:
+
+```rust
+let provider = PrependThenChain::new(c).push_front(p);
+let signer = Signer::new(ctx, provider, service::RequestSigner);
+```
+
+A deliberate no-credential provider is an empty chain:
 `ProvideCredentialChain::<Credential>::new()`.
 
 If the old code used several `push_front` calls, keep that composition
