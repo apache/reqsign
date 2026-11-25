@@ -315,18 +315,21 @@ contracts as the established services:
 ### Credential construction
 
 These crates have no earlier published API to migrate from. Their credential
-types use validated constructors and read-only accessors instead of public
-fields:
+types are built through constructors and builders and read through accessors
+instead of public fields:
 
 ```rust
 let credential = aliyun_drive::Credential::new(access_token)?
     .with_expires_at(expires_at);
 ```
 
-B2 credentials are created with `Credential::new(token, api_url, download_url)`
-and read with `authorization_token()`, `api_url()`, `download_url()`, and
-`expires_at()`. Upyun credentials are created with
-`Credential::new(operator, password)` and read with `operator()` and `bucket()`.
+Aliyun Drive's `Credential::new(access_token)` rejects an invalid token
+immediately; `with_expires_at` records the optional expiry. B2 credentials are
+created with `Credential::new(token, api_url, download_url)` and read with
+`authorization_token()`, `api_url()`, `download_url()`, and `expires_at()`.
+Upyun credentials are created with `Credential::new(operator, password)` and
+read with `operator()` and `bucket()`. B2 and Upyun can construct incomplete
+values, which are rejected by the B2 static provider or the signer at use.
 The password is not exposed outside the signer.
 
 Baidu Netdisk has no ambient credential source, so the caller supplies the

@@ -56,13 +56,15 @@ through the `Context`, passes the `Context` explicitly to facade
   `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`,
   `reqsign-github`, `reqsign-koofr`, `reqsign-oauth2`, `reqsign-onedrive`,
   `reqsign-seafile`, `reqsign-upyun`, `reqsign-vercel`, `reqsign-yandex-disk`.
-- The first-release provider credentials use validated constructors and
-  read-only accessors instead of public fields. Aliyun Drive records its
-  optional expiry with the consuming
-  `Credential::new(token)?.with_expires_at(expires_at)` builder. B2 exposes
-  `authorization_token()`, `api_url()`, `download_url()`, and `expires_at()`;
-  Upyun exposes `operator()` and `bucket()`. These crates have no earlier
-  release, so these are their initial API shapes.
+- The first-release provider credentials use constructors/builders and
+  read-only accessors instead of public fields. Aliyun Drive's
+  `Credential::new(token)` rejects an invalid token immediately, and its
+  consuming `with_expires_at(expires_at)` builder records the optional expiry.
+  B2 exposes `authorization_token()`, `api_url()`, `download_url()`, and
+  `expires_at()`; Upyun exposes `operator()` and `bucket()`. B2 and Upyun can
+  construct incomplete credentials, which are rejected by the B2 static
+  provider or the signer at use. These crates have no earlier release, so
+  these are their initial API shapes.
 - `reqsign-http-message-signatures` for RFC 9421 request signing, facade
   feature `http-message-signatures`.
 - Shared OAuth 2.0 refresh grants and OpenStack static-token credentials and
