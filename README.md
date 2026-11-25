@@ -220,10 +220,9 @@ let signer = aliyun::default_signer(ctx, "mybucket");
 ```rust
 use reqsign::{aliyun_drive, default_context};
 
-// Aliyun Drive has no ambient credential contract. Supply an explicit provider.
+// Aliyun Drive has no ambient credential contract. Pass the token explicitly.
 let ctx = default_context();
-let signer = aliyun_drive::default_signer(ctx)
-    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+let signer = aliyun_drive::default_signer(ctx, "access-token");
 ```
 
 #### Vercel Blob and Artifacts

@@ -26,10 +26,11 @@
 //!
 //! Yandex Disk documents no environment variable, CLI token store, or
 //! well-known credential file for OAuth access tokens. Reqsign therefore does
-//! not invent one: [`DefaultCredentialProvider::new`] has an empty automatic
-//! chain and yields no credential. Compose an explicit provider with
-//! [`DefaultCredentialProvider::push_front`], or pass a token to the facade's
-//! `default_signer`.
+//! not invent one, and this crate exports no default provider or builder.
+//! Pass [`StaticCredentialProvider`] or another explicit
+//! [`reqsign_core::ProvideCredential`] implementation directly to
+//! [`reqsign_core::Signer::new`], or use the facade's
+//! `default_signer(ctx, access_token)`.
 //!
 //! Token issuance, refresh, revocation, and the permissions attached to the
 //! OAuth app stay with the caller and Yandex OAuth. This crate does not
@@ -80,9 +81,7 @@ mod credential;
 pub use credential::{AccessToken, Credential};
 
 mod provide_credential;
-pub use provide_credential::{
-    DefaultCredentialProvider, DefaultCredentialProviderBuilder, StaticCredentialProvider,
-};
+pub use provide_credential::StaticCredentialProvider;
 
 mod sign_request;
 pub use sign_request::RequestSigner;

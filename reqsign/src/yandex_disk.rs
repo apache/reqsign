@@ -25,15 +25,17 @@ pub use reqsign_yandex_disk::*;
 
 use crate::{Context, Signer};
 
-/// Default Yandex Disk signer type with the explicit static credential source.
+/// Default Yandex Disk signer type with an explicit static access token.
 pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default Yandex Disk signer with the supplied runtime context and
-/// OAuth access token.
+/// Create a Yandex Disk signer with the supplied runtime context and OAuth
+/// access token.
 ///
 /// This composes:
-/// - The caller-supplied [`Context`] (for example `reqsign::default_context()` when `default-context` is enabled)
-/// - [`DefaultCredentialProvider`] with [`StaticCredentialProvider`] prepended
+/// - The caller-supplied [`Context`] (for example `reqsign::default_context()`
+///   when `default-context` is enabled)
+/// - [`StaticCredentialProvider`], because Yandex Disk documents no ambient
+///   token source and this crate exports no default provider
 /// - [`RequestSigner`], which adds a sensitive `Authorization: OAuth` header
 ///
 /// Yandex Disk has no documented environment variable, CLI token store, or
@@ -62,7 +64,9 @@ pub type DefaultSigner = Signer<Credential>;
 /// # }
 /// ```
 pub fn default_signer(ctx: Context, access_token: impl Into<String>) -> DefaultSigner {
-    let provider =
-        DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(access_token));
-    Signer::new(ctx, provider, RequestSigner)
+    Signer::new(
+        ctx,
+        StaticCredentialProvider::new(access_token),
+        RequestSigner,
+    )
 }

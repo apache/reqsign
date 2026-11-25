@@ -250,11 +250,11 @@ OneDrive follows Microsoft's client types: a public-client exchange sends no
 client secret, while a confidential client sends its secret as an RFC 6749 form
 field. Microsoft documents no environment variable or shared configuration
 file for Microsoft Graph user tokens, and MSAL token caches are
-library-specific, so the OneDrive default provider's automatic chain is empty:
-it does not read MSAL token caches, run the Azure CLI, or discover a token
-endpoint. The token endpoint is the documented Microsoft Entra v2.0 endpoint
-for an explicit tenant, or an explicitly configured HTTPS endpoint such as a
-national cloud, and the caller owns that trust decision.
+library-specific, so Reqsign exports no OneDrive default provider: it does not
+read MSAL token caches, run the Azure CLI, or discover a token endpoint. The
+token endpoint is the documented Microsoft Entra v2.0 endpoint for an explicit
+tenant, or an explicitly configured HTTPS endpoint such as a national cloud,
+and the caller owns that trust decision.
 
 ### 4.3 Credential redaction and observability
 
@@ -406,15 +406,15 @@ signed `Authorization` header is marked sensitive, and forwarding it to a
 different host is the caller's responsibility.
 
 The Yandex Disk provider reads no environment variable, CLI token store, or
-well-known credential file: Yandex documents no automatic token source. Its
-default provider yields no credential until the caller supplies an explicit
-`StaticCredentialProvider` or another `ProvideCredential`. A supplied token is
-an opaque value validated as non-empty visible ASCII, and signing inserts a
-sensitive `Authorization: OAuth` header without changing the URI or any other
-header. The caller owns the API host, version, resource path, query parameters,
-and upload or download URLs. Reqsign does not implement Yandex OAuth token
-issuance, refresh, or revocation, and forwarding a signed header to a different
-host is the caller's responsibility.
+well-known credential file: Yandex documents no automatic token source, and
+Reqsign exports no default provider for Yandex Disk. Signing requires an
+explicit `StaticCredentialProvider` or another `ProvideCredential`. A supplied
+token is an opaque value validated as non-empty visible ASCII, and signing
+inserts a sensitive `Authorization: OAuth` header without changing the URI or
+any other header. The caller owns the API host, version, resource path, query
+parameters, and upload or download URLs. Reqsign does not implement Yandex
+OAuth token issuance, refresh, or revocation, and forwarding a signed header to
+a different host is the caller's responsibility.
 
 If a trusted caller configures a malicious file path, command, environment
 implementation, metadata endpoint, HTTP client, or custom provider, using that

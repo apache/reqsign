@@ -20,8 +20,8 @@
 use std::time::Duration;
 
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, ErrorKind, Signer};
-use reqsign_yandex_disk::{DefaultCredentialProvider, RequestSigner, StaticCredentialProvider};
+use reqsign_core::{Context, ErrorKind, ProvideCredentialChain, Signer};
+use reqsign_yandex_disk::{Credential, RequestSigner, StaticCredentialProvider};
 use wasm_bindgen_test::*;
 
 const TOKEN: &str = "fake-wasm-yandex-disk-token-H6";
@@ -80,25 +80,10 @@ async fn expiring_token_signs_with_the_js_clock() {
 }
 
 #[wasm_bindgen_test]
-async fn explicit_provider_chain_signs_and_empty_default_fails() {
+async fn deliberate_empty_chain_fails_without_mutating_the_request() {
     let signer = Signer::new(
         Context::new(),
-        DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(TOKEN)),
-        RequestSigner,
-    );
-    let mut parts = request();
-    signer
-        .sign(&mut parts, None)
-        .await
-        .expect("explicit provider chain must sign");
-    assert_eq!(
-        parts.headers[http::header::AUTHORIZATION],
-        format!("OAuth {TOKEN}")
-    );
-
-    let signer = Signer::new(
-        Context::new(),
-        DefaultCredentialProvider::new(),
+        ProvideCredentialChain::<Credential>::new(),
         RequestSigner,
     );
     let original = request();
@@ -106,7 +91,7 @@ async fn explicit_provider_chain_signs_and_empty_default_fails() {
     let error = signer
         .sign(&mut parts, None)
         .await
-        .expect_err("the empty default chain must not sign");
+        .expect_err("a deliberate empty chain must not sign");
     assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
     assert_eq!(parts.uri, original.uri);
     assert_eq!(parts.headers, original.headers);

@@ -25,18 +25,38 @@ This document defines the repository's authoritative public API design for all
 Implementations that do not match this document should be treated as legacy
 debt. New code, reviews, and refactors must follow this document.
 
+## Applicability
+
+A service exports `DefaultCredentialProvider` and
+`DefaultCredentialProviderBuilder` only when default construction can discover
+at least one documented credential source, such as an environment variable, a
+profile or well-known file, a CLI session, or instance metadata.
+
+A service whose only documented sources require explicit caller input has no
+default construction to wrap. It must not export an empty default provider or
+builder. Callers pass the explicit provider to `Signer::new` or to the facade
+`default_signer` that takes the required identity. Aliyun Drive, OneDrive, and
+Yandex Disk are examples: none documents an automatic token source, so
+their explicit providers are used directly. Baidu Netdisk and Koofr already
+accept the identity explicitly and need no default provider either.
+
+The rest of this document applies to every service that does export the
+default-provider API.
+
 ## Goals
 
 - Make provider participation explicit.
 - Remove boolean toggles from the public API.
 - Remove `configure_*` patch-style APIs from the public API.
-- Keep the top-level `DefaultCredentialProvider` API uniform across services.
-- Keep builder APIs predictable across services while allowing service-specific
-  provider slots.
+- Keep the top-level `DefaultCredentialProvider` API uniform across the
+  services that export it.
+- Keep builder APIs predictable across those services while allowing
+  service-specific provider slots.
 
 ## Product API
 
-Every service-level default provider exposes the same product-level API:
+Every service that exports a default provider exposes the same product-level
+API:
 
 ```rust
 DefaultCredentialProvider::new()
@@ -57,7 +77,7 @@ impl Default for DefaultCredentialProvider
 
 ## Builder API
 
-Every `DefaultCredentialProviderBuilder` exposes:
+Every `DefaultCredentialProviderBuilder` for such a service exposes:
 
 ```rust
 DefaultCredentialProviderBuilder::new()
@@ -215,14 +235,37 @@ Expected slots:
 
 When changing an existing service:
 
-1. Remove all public `configure_*` methods.
-2. Remove all public `disable_*(bool)` methods.
-3. Initialize builder defaults with `Some(T::default())` for documented default
+1. Confirm that default construction can discover a documented credential
+   source. If it cannot, remove the empty default provider and builder instead
+   of keeping them for API uniformity.
+2. Remove all public `configure_*` methods.
+3. Remove all public `disable_*(bool)` methods.
+4. Initialize builder defaults with `Some(T::default())` for documented default
    slots.
-4. Add `slot(provider)` and `no_slot()` methods for every supported slot.
-5. Update tests to verify that `no_slot()` truly removes the provider from the
+5. Add `slot(provider)` and `no_slot()` methods for every supported slot.
+6. Update tests to verify that `no_slot()` truly removes the provider from the
    chain.
-6. Update examples and docs to use slot/no-slot APIs only.
+7. Update examples and docs to use slot/no-slot APIs only.
+
+### Removing an empty default provider
+
+Translate existing composition without changing its error behavior:
+
+- A single `push_front(provider)` becomes the provider itself. Passing it
+  directly to `Signer::new` or `Signer::with_credential_provider` keeps the
+  fail-closed behavior, including returning that provider's error.
+- `with_chain(chain)` becomes the chain itself. `ProvideCredentialChain`
+  implements `ProvideCredential` and keeps its existing permissive error
+  policy.
+- More than one `push_front` was an intentional composition: providers were
+  tried last-added-first, an error was returned immediately, `None` advanced to
+  the next provider, and then the service's documented chain, if any, ran last.
+  `ProvideCredentialChain` is not equivalent because it treats a provider error
+  as "try the next source". Callers that need the original ordering and error
+  propagation must keep that composition in a caller-owned
+  `ProvideCredential` implementation. An empty `ProvideCredentialChain` remains
+  available when a caller deliberately wants a provider that yields no
+  credential.
 
 ## Non-Goals
 

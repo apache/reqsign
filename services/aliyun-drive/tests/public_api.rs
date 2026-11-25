@@ -20,8 +20,7 @@ use bytes::Bytes;
 use futures::poll;
 use http::StatusCode;
 use reqsign_aliyun_drive::{
-    Credential, DefaultCredentialProvider, RefreshCredentialProvider, RequestSigner,
-    StaticCredentialProvider,
+    Credential, RefreshCredentialProvider, RequestSigner, StaticCredentialProvider,
 };
 use reqsign_core::{
     Context, Error, ErrorKind, HttpSend, ProvideCredential, ProvideCredentialChain, Result,
@@ -751,73 +750,33 @@ async fn invalid_endpoint_and_configuration_errors_are_redacted() -> Result<()> 
 }
 
 #[tokio::test]
-async fn default_provider_does_not_invent_an_ambient_source() -> Result<()> {
-    let ctx = context(HashMap::from([
-        (
-            "ALIYUN_DRIVE_ACCESS_TOKEN".to_string(),
-            "fake-env-token".to_string(),
-        ),
-        (
-            "ALIYUN_DRIVE_CLIENT_ID".to_string(),
-            "fake-env-client".to_string(),
-        ),
-        (
-            "ALIYUN_DRIVE_CLIENT_SECRET".to_string(),
-            "fake-env-secret".to_string(),
-        ),
-        (
-            "ALIYUN_DRIVE_REFRESH_TOKEN".to_string(),
-            "fake-env-refresh".to_string(),
-        ),
-    ]));
-
-    assert!(
-        DefaultCredentialProvider::new()
-            .provide_credential(&ctx)
-            .await?
-            .is_none()
-    );
-    assert!(
-        DefaultCredentialProvider::builder()
-            .build()
-            .provide_credential(&ctx)
-            .await?
-            .is_none()
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn explicit_providers_compose_and_fail_closed() -> Result<()> {
+async fn explicit_provider_and_caller_chain_preserve_their_error_policy() -> Result<()> {
     let ctx = context(HashMap::new());
-    let provider =
-        DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(ACCESS_TOKEN));
+    let provider = StaticCredentialProvider::new(ACCESS_TOKEN);
     let credential = provider
         .provide_credential(&ctx)
         .await?
-        .expect("prepended provider must provide a credential");
+        .expect("the explicit provider must supply a credential");
     assert_eq!(
         credential.bearer_header_value()?,
         format!("Bearer {ACCESS_TOKEN}")
     );
 
-    let invalid = DefaultCredentialProvider::new()
-        .push_front(StaticCredentialProvider::new("token with space"));
+    let invalid = StaticCredentialProvider::new("token with space");
     let error = invalid
         .provide_credential(&ctx)
         .await
-        .expect_err("an invalid prepended provider must not fall through");
+        .expect_err("an invalid explicit provider must not fall through");
     assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
 
     let chain = ProvideCredentialChain::new()
         .push(StaticCredentialProvider::new(""))
         .push(StaticCredentialProvider::new(ACCESS_TOKEN));
-    let credential = DefaultCredentialProvider::with_chain(chain)
-        .provide_credential(&ctx)
-        .await?
-        .expect("a caller-supplied chain keeps its error policy");
+    let signer = Signer::new(context(HashMap::new()), chain, RequestSigner);
+    let mut parts = request();
+    signer.sign(&mut parts, None).await?;
     assert_eq!(
-        credential.bearer_header_value()?,
+        parts.headers[AUTHORIZATION],
         format!("Bearer {ACCESS_TOKEN}")
     );
     Ok(())
@@ -847,7 +806,7 @@ async fn expires_in_is_rejected_without_mutating_the_request() -> Result<()> {
 async fn missing_or_expired_credentials_fail_without_mutating_the_request() -> Result<()> {
     let signer = Signer::new(
         Context::new(),
-        DefaultCredentialProvider::new(),
+        ProvideCredentialChain::<Credential>::new(),
         RequestSigner,
     );
     let original = request();
@@ -855,7 +814,7 @@ async fn missing_or_expired_credentials_fail_without_mutating_the_request() -> R
     let error = signer
         .sign(&mut parts, None)
         .await
-        .expect_err("no credential must not sign");
+        .expect_err("a deliberate empty chain must not sign");
     assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
     assert_eq!(parts.uri, original.uri);
     assert_eq!(parts.headers, original.headers);
@@ -904,14 +863,11 @@ fn credentials_and_providers_redact_token_material() {
     let credential = Credential::new(ACCESS_TOKEN).expect("token must be valid");
     let static_provider = StaticCredentialProvider::new(ACCESS_TOKEN);
     let refresh_provider = provider();
-    let default_provider =
-        DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(ACCESS_TOKEN));
 
     for output in [
         format!("{credential:?}"),
         format!("{static_provider:?}"),
         format!("{refresh_provider:?}"),
-        format!("{default_provider:?}"),
     ] {
         assert!(!output.contains(ACCESS_TOKEN));
         assert!(!output.contains(REFRESH_TOKEN));

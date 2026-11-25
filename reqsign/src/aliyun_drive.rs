@@ -25,28 +25,46 @@ pub use reqsign_aliyun_drive::*;
 
 use crate::{Context, Signer};
 
-/// Default Aliyun Drive signer type with the documented credential chain.
+/// Default Aliyun Drive signer type with an explicit static access token.
 pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default Aliyun Drive signer with the supplied runtime context.
+/// Create an Aliyun Drive signer with an explicit access token.
 ///
 /// Aliyun Drive Open Platform does not define an ambient CLI, SDK, environment,
-/// or file credential contract, so the default provider intentionally has no
-/// source. Replace it with [`StaticCredentialProvider`] for a caller-managed
-/// access token or [`RefreshCredentialProvider`] for a confidential-client
-/// refresh token. Official PKCE public clients receive an access token, not a
-/// refresh token.
+/// or file credential contract, so there is no default provider to discover
+/// one. This helper selects [`StaticCredentialProvider`] for a caller-managed
+/// token and [`RequestSigner`].
+///
+/// For a confidential-client refresh token or another explicit provider,
+/// assemble the signer directly instead of passing a dummy token:
+///
+/// ```no_run
+/// # #[cfg(feature = "default-context")]
+/// # fn example(ctx: reqsign::Context) -> reqsign_core::Result<()> {
+/// use reqsign::{Signer, aliyun_drive};
+///
+/// let provider = aliyun_drive::RefreshCredentialProvider::new(
+///     "client-id",
+///     "client-secret",
+///     "refresh-token",
+/// )?;
+/// let signer = Signer::new(ctx, provider, aliyun_drive::RequestSigner);
+/// # let _ = signer;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Official PKCE public clients receive an access token, not a refresh token.
 ///
 /// # Example
 ///
 /// ```no_run
 /// # #[cfg(feature = "default-context")]
 /// # async fn example() -> reqsign_core::Result<()> {
-/// use reqsign::aliyun_drive::{StaticCredentialProvider, default_signer};
+/// use reqsign::aliyun_drive::default_signer;
 ///
 /// let ctx = reqsign::default_context();
-/// let signer = default_signer(ctx)
-///     .with_credential_provider(StaticCredentialProvider::new("access-token"));
+/// let signer = default_signer(ctx, "access-token");
 ///
 /// // The caller owns the drive ID, path, and request body.
 /// let mut req = http::Request::builder()
@@ -62,6 +80,10 @@ pub type DefaultSigner = Signer<Credential>;
 /// # Ok(())
 /// # }
 /// ```
-pub fn default_signer(ctx: Context) -> DefaultSigner {
-    Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner)
+pub fn default_signer(ctx: Context, access_token: impl Into<String>) -> DefaultSigner {
+    Signer::new(
+        ctx,
+        StaticCredentialProvider::new(access_token),
+        RequestSigner,
+    )
 }

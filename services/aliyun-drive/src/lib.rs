@@ -30,8 +30,11 @@
 //!
 //! Use [`StaticCredentialProvider`] for an access token that the caller already
 //! holds, or [`RefreshCredentialProvider`] to exchange an Aliyun Drive refresh
-//! token. [`DefaultCredentialProvider`] keeps the uniform empty default chain
-//! and composes explicit providers through `push_front` or `with_chain`.
+//! token, and pass the selected provider to [`reqsign_core::Signer::new`]. A
+//! service whose only documented sources require explicit caller input has no
+//! default construction to wrap, so this crate exports no default provider or
+//! builder. The facade's `default_signer(ctx, access_token)` selects
+//! [`StaticCredentialProvider`].
 //!
 //! ## Refresh token exchange
 //!
@@ -122,10 +125,7 @@ mod credential;
 pub use credential::Credential;
 
 mod provide_credential;
-pub use provide_credential::{
-    DefaultCredentialProvider, DefaultCredentialProviderBuilder, RefreshCredentialProvider,
-    StaticCredentialProvider,
-};
+pub use provide_credential::{RefreshCredentialProvider, StaticCredentialProvider};
 
 mod sign_request;
 pub use sign_request::RequestSigner;

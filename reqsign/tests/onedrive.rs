@@ -19,10 +19,8 @@
 
 use bytes::Bytes;
 use reqsign::oauth2::RefreshTokenGrant;
-use reqsign::onedrive::{
-    DefaultCredentialProvider, RefreshCredentialProvider, StaticCredentialProvider, default_signer,
-};
-use reqsign::{Context, ErrorKind, HttpSend, Result};
+use reqsign::onedrive::{RefreshCredentialProvider, RequestSigner, default_signer};
+use reqsign::{Context, ErrorKind, HttpSend, Result, Signer};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -79,6 +77,7 @@ fn refresh_response() -> http::Response<Bytes> {
 
 fn request() -> http::request::Parts {
     http::Request::get("https://graph.microsoft.com/v1.0/me/drive")
+        .header("x-original", "value")
         .body(())
         .expect("request must build")
         .into_parts()
@@ -86,46 +85,56 @@ fn request() -> http::request::Parts {
 }
 
 #[tokio::test]
-async fn facade_default_signer_requires_an_explicit_source() -> Result<()> {
+async fn facade_default_signer_uses_the_explicit_static_token() -> Result<()> {
     let http = MockHttpSend::new([]);
-    let context = Context::new().with_http_send(http.clone());
+    let signer = default_signer(
+        Context::new().with_http_send(http.clone()),
+        "facade-static-token",
+    );
+    let original = request();
+    let mut parts = original.clone();
 
-    let signer = default_signer(context.clone());
-    let mut parts = request();
-    let original = parts.clone();
-    let error = signer
-        .sign(&mut parts, None)
-        .await
-        .expect_err("the default chain has no automatic source");
-
-    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
-    assert_eq!(http.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(parts.uri, original.uri);
-    assert_eq!(parts.headers, original.headers);
-
-    let signer = default_signer(context)
-        .with_credential_provider(StaticCredentialProvider::new("facade-static-token"));
-    let mut parts = request();
     signer.sign(&mut parts, None).await?;
 
     let authorization = &parts.headers[http::header::AUTHORIZATION];
     assert_eq!(authorization, "Bearer facade-static-token");
     assert!(authorization.is_sensitive());
     assert_eq!(http.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(
+        parts.headers.get("x-original"),
+        original.headers.get("x-original")
+    );
 
     Ok(())
 }
 
 #[tokio::test]
-async fn facade_default_signer_composes_a_refresh_provider() -> Result<()> {
+async fn facade_default_signer_rejects_an_invalid_token_without_mutating_the_request() {
+    let signer = default_signer(Context::new(), "unusable access token");
+    let original = request();
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("an invalid explicit token must fail");
+    assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+}
+
+#[tokio::test]
+async fn facade_refresh_provider_uses_the_context_transport_and_cache() -> Result<()> {
     let http = MockHttpSend::new([refresh_response()]);
-    let provider = DefaultCredentialProvider::new().push_front(
-        RefreshCredentialProvider::builder("client-id", "refresh-token")
-            .scope("offline_access Files.ReadWrite")
-            .build()?,
+    let provider = RefreshCredentialProvider::builder("client-id", "refresh-token")
+        .scope("offline_access Files.ReadWrite")
+        .build()?;
+    let signer = Signer::new(
+        Context::new().with_http_send(http.clone()),
+        provider,
+        RequestSigner,
     );
-    let signer = default_signer(Context::new().with_http_send(http.clone()))
-        .with_credential_provider(provider);
 
     for _ in 0..2 {
         let mut parts = request();

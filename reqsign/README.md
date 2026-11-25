@@ -223,17 +223,13 @@ let signer = google::default_signer(ctx.clone(), "storage.googleapis.com");
 use reqsign::aliyun;
 let signer = aliyun::default_signer(ctx.clone(), "mybucket");
 
-// Aliyun Drive (supply an explicit provider; there is no ambient source)
+// Aliyun Drive (the access token is explicit; there is no ambient source)
 use reqsign::aliyun_drive;
-let signer = aliyun_drive::default_signer(ctx.clone())
-    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+let signer = aliyun_drive::default_signer(ctx.clone(), "access-token");
 
-// OneDrive (supply an explicit static or refresh provider; there is no ambient source)
+// OneDrive (the access token is explicit; there is no ambient source)
 use reqsign::onedrive;
-let signer = onedrive::default_signer(ctx.clone()).with_credential_provider(
-    onedrive::DefaultCredentialProvider::new()
-        .push_front(onedrive::StaticCredentialProvider::new("graph-access-token")),
-);
+let signer = onedrive::default_signer(ctx.clone(), "graph-access-token");
 
 // Huawei Cloud OBS
 use reqsign::huaweicloud;

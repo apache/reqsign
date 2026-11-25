@@ -108,8 +108,9 @@ signature — the service rejects them, but the wire format is real.
 ## Every provider, one pattern
 
 Swap the entry point and the rest of the code stays the same. Each entry
-composes that provider's own credential chain — the
-[provider pages](/docs/providers/) document exactly which sources:
+composes that provider's documented credential sources, if any — the
+[provider pages](/docs/providers/) document exactly which sources. Entries for
+services without an ambient source take the required identity explicitly:
 
 | Provider | Entry |
 | --- | --- |
@@ -123,10 +124,10 @@ composes that provider's own credential chain — the
 | [Vercel Blob](/docs/providers/vercel-blob/) | `vercel::default_blob_signer(ctx)` |
 | [Vercel Artifacts](/docs/providers/vercel-artifacts/) | `vercel::default_artifacts_signer(ctx)` |
 | [GitHub](/docs/providers/github/) | `github::default_signer(ctx)` |
-| [OneDrive](/docs/providers/onedrive/) | `onedrive::default_signer(ctx)` |
+| [OneDrive](/docs/providers/onedrive/) | `onedrive::default_signer(ctx, access_token)` |
 | [Google Cloud](/docs/providers/google/) | `google::default_signer(ctx, service)` |
 | [Aliyun OSS](/docs/providers/aliyun-oss/) | `aliyun::default_signer(ctx, bucket)` |
-| [Aliyun Drive](/docs/providers/aliyun-drive/) | `aliyun_drive::default_signer(ctx)` |
+| [Aliyun Drive](/docs/providers/aliyun-drive/) | `aliyun_drive::default_signer(ctx, access_token)` |
 | [Huawei Cloud OBS](/docs/providers/huaweicloud-obs/) | `huaweicloud::default_signer(ctx, bucket)` |
 | [HTTP Message Signatures (RFC 9421)](/docs/providers/http-message-signatures/) | `http_message_signatures::RequestSigner::new(label, components)` |
 | [OpenStack Keystone](/docs/providers/openstack-keystone/) | `openstack::default_signer(ctx)` |
@@ -137,9 +138,11 @@ composes that provider's own credential chain — the
 | [Volcengine TOS](/docs/providers/volcengine-tos/) | `volcengine::default_signer(ctx, region)` |
 | [Yandex Disk](/docs/providers/yandex-disk/) | `yandex_disk::default_signer(ctx, access_token)` |
 
-Aliyun Drive has no documented ambient source; replace its default provider
-with a static access token or refresh-token provider. OneDrive's default chain
-is also empty; prepend a refresh-token or static provider explicitly.
+Aliyun Drive, OneDrive, and Yandex Disk have no documented ambient source.
+Their facade entries take the access token explicitly, and their service crates
+export no default provider or builder. For a refresh token or another explicit
+provider, assemble `Signer::new(ctx, provider, RequestSigner)` directly instead
+of passing a dummy token.
 
 A default signer is an ordinary `Signer`: replace any component and keep the
 rest —

@@ -82,6 +82,15 @@ through the `Context`, passes the `Context` explicitly to facade
 - Minimum supported Rust version is 1.87.0. The RustCrypto backend's
   `rsa 0.10.0` requirement is the reason.
 - The facade `default` feature enables `default-context` and `default-crypto`.
+- **Services without a documented ambient source no longer export an empty
+  `DefaultCredentialProvider`.** Aliyun Drive, OneDrive, and Yandex Disk pass
+  `StaticCredentialProvider` directly. Facade
+  `aliyun_drive::default_signer(ctx, access_token)` and
+  `onedrive::default_signer(ctx, access_token)` select it;
+  `yandex_disk::default_signer(ctx, access_token)` keeps its signature and also
+  wires it directly. Refresh and other explicit providers use
+  `Signer::new(ctx, provider, service::RequestSigner)` without a dummy token.
+  Baidu Netdisk and Koofr already accept the identity explicitly.
 - Lockstep major `4.0.0` for `reqsign-core`, `reqsign-aws-core`, every
   established service crate, `reqsign-file-read-tokio`, and
   `reqsign-command-execute-tokio`. `reqsign-http-send-reqwest` moves to

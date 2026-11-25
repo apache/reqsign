@@ -1,7 +1,7 @@
 ---
 title: Loading credentials
 sidebar_label: Loading credentials
-description: Use each provider's default credential chain, adjust its slots, or implement your own credential source.
+description: Use documented default credential chains, adjust their slots, compose explicit providers, or implement your own source.
 ---
 
 <!--
@@ -23,16 +23,19 @@ description: Use each provider's default credential chain, adjust its slots, or 
  under the License.
 -->
 
-Everything about getting credentials into a signer: use the default chain,
-bend it, or replace it entirely.
+Everything about getting credentials into a signer: use the documented default
+chain where one exists, compose explicit providers, or replace the source
+entirely.
 
 ## Use the default chain
 
-Every service crate ships a `DefaultCredentialProvider` composing that
-provider's documented default chain — the same sources the official CLIs and
-SDKs consult, in a documented order. A provider with no documented ambient
-source has an empty default chain and requires an explicit credential
-provider. Each [provider page](/docs/providers/) lists its exact sources.
+Services with a documented ambient source ship a `DefaultCredentialProvider`
+composing that source and others in a documented order — the same sources the
+official CLIs and SDKs consult. A service whose only documented sources require
+explicit caller input does not export an empty default provider or builder:
+pass the provider directly to `Signer::new`, or use the facade `default_signer`
+that takes the required identity. Each [provider page](/docs/providers/) lists
+its exact sources and entry point.
 
 ```rust
 use reqsign::aws::DefaultCredentialProvider;
@@ -42,7 +45,8 @@ use reqsign::aws::DefaultCredentialProvider;
 let provider = DefaultCredentialProvider::new();
 ```
 
-Every `DefaultCredentialProvider` exposes the same four entry points:
+Every service that exports a `DefaultCredentialProvider` exposes the same four
+entry points:
 
 ```rust
 DefaultCredentialProvider::new();                // the documented default chain
@@ -89,7 +93,9 @@ without falling back. Enable this only for instances where IMDSv2 is unavailable
 ## Fixed credentials
 
 When the credential is decided elsewhere — tests, WASM, a control plane that
-injects keys — skip chains entirely:
+injects keys — skip chains entirely. Services without a default provider use
+this path directly; otherwise `.with_credential_provider(provider)` keeps the
+rest of the signer:
 
 ```rust file=reqsign/examples/static_credentials.rs region=static
 ```
@@ -142,15 +148,17 @@ also logs `Err(_)` and continues: a failing custom source can fall back to
 profiles, metadata, or another configured identity. If all sources fail or
 return `None`, the chain returns `Ok(None)`.
 
-Report "not configured" as `None` and real failures as errors. When failure
-must stop credential resolution, install your provider directly on the signer
-or implement a chain with that policy; prepending a provider does not enforce
-it. A provider installed directly has its errors propagated by `Signer`. See
+Report "not configured" as `None` and real failures as errors. A provider
+installed directly on the signer propagates its error. A default provider's
+`push_front` error policy is service-specific; follow its documentation. When
+failure must stop credential resolution, install your provider directly on the
+signer or keep that policy in a caller-owned provider. See
 [Architecture § ProvideCredential](/docs/architecture/#providecredential).
 
 ## Plug it in
 
-Highest priority in front of the default chain:
+For a service that exports `DefaultCredentialProvider`, highest priority in
+front of its documented default chain:
 
 ```rust
 use reqsign::aws::DefaultCredentialProvider;
@@ -172,7 +180,8 @@ let provider = DefaultCredentialProvider::with_chain(chain);
 ```
 
 Then hand it to a default signer (`.with_credential_provider(provider)`) or
-a custom `Signer::new`.
+a custom `Signer::new`. If the service has no default provider, pass the
+provider or chain directly to `Signer::new`.
 
 ## Freshness
 

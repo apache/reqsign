@@ -30,15 +30,17 @@
 //! run the Azure CLI, read MSAL caches, or start a login flow. The caller
 //! obtains a token through the flow it chose and configures it explicitly:
 //!
-//! - [`DefaultCredentialProvider`] keeps the documented default-chain API with
-//!   an empty automatic chain. Prepend an explicit provider with
-//!   [`DefaultCredentialProvider::push_front`], or bypass assembly with
-//!   [`DefaultCredentialProvider::with_chain`].
 //! - [`StaticCredentialProvider`] for an existing access token. Tokens are
 //!   short lived; pass an expiration with
 //!   [`StaticCredentialProvider::with_expires_at`] when the caller knows it.
 //! - [`RefreshCredentialProvider`] for a refresh token. The provider exchanges
 //!   it through the shared [`reqsign_oauth2::RefreshTokenGrant`].
+//!
+//! A service whose only documented sources require explicit caller input has no
+//! default construction to wrap, so this crate exports no default provider or
+//! builder. Pass one provider directly to [`reqsign_core::Signer::new`]; the
+//! facade's `default_signer(ctx, access_token)` selects
+//! [`StaticCredentialProvider`].
 //!
 //! ## Public and confidential clients
 //!
@@ -110,10 +112,13 @@
 //! only and not query authentication; signing never changes the URI or any
 //! other header.
 //!
-//! A prepended provider is tried before the empty default chain, so a
-//! caller-injected short-lived token and a configured refresh provider compose
-//! in the order the caller pushes them. Prepended providers fail closed: their
-//! errors are returned instead of being treated as "no credential".
+//! A single provider passed to [`reqsign_core::Signer::new`] keeps its own
+//! error behavior. When one signer needs several explicit sources, the caller
+//! owns that composition: [`reqsign_core::ProvideCredentialChain`] tries every
+//! provider in order and logs a provider error before continuing, so it is not
+//! equivalent to fail-closed, last-added-first ordering. Keep that ordering in
+//! a caller-owned [`reqsign_core::ProvideCredential`] implementation when it is
+//! required.
 //!
 //! ## WASM
 //!
@@ -132,6 +137,5 @@ pub use sign_request::RequestSigner;
 
 mod provide_credential;
 pub use provide_credential::{
-    DefaultCredentialProvider, DefaultCredentialProviderBuilder, RefreshCredentialProvider,
-    RefreshCredentialProviderBuilder, StaticCredentialProvider,
+    RefreshCredentialProvider, RefreshCredentialProviderBuilder, StaticCredentialProvider,
 };

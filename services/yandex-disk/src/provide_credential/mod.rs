@@ -15,8 +15,5 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod default;
-pub use default::{DefaultCredentialProvider, DefaultCredentialProviderBuilder};
-
 mod static_provider;
 pub use static_provider::StaticCredentialProvider;

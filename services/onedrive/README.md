@@ -7,21 +7,24 @@ to Microsoft Graph with a Microsoft Entra access token in an
 
 Microsoft documents no environment variable or shared configuration file that
 carries a Microsoft Graph user token, and MSAL token caches are
-library-specific. `DefaultCredentialProvider` therefore has an empty automatic
-chain: it does not run the Azure CLI, read MSAL caches, or start a login flow.
-Every credential comes from an explicit provider, and the facade entry is
-`reqsign::onedrive::default_signer(ctx)`.
+library-specific. This crate therefore exports no default provider or builder:
+it does not run the Azure CLI, read MSAL caches, or start a login flow. Every
+credential comes from an explicit provider passed to `Signer::new`. The facade
+entry `reqsign::onedrive::default_signer(ctx, access_token)` selects
+`StaticCredentialProvider` for a caller-managed token.
 
 ## Quick Start
 
 ```rust,no_run
 use reqsign_core::{Context, Signer};
-use reqsign_onedrive::{DefaultCredentialProvider, RequestSigner, StaticCredentialProvider};
+use reqsign_onedrive::{RequestSigner, StaticCredentialProvider};
 
 # async fn example(context: Context) -> reqsign_core::Result<()> {
-let provider = DefaultCredentialProvider::new()
-    .push_front(StaticCredentialProvider::new("graph-access-token"));
-let signer = Signer::new(context, provider, RequestSigner);
+let signer = Signer::new(
+    context,
+    StaticCredentialProvider::new("graph-access-token"),
+    RequestSigner,
+);
 
 let mut req = http::Request::get("https://graph.microsoft.com/v1.0/me/drive")
     .body(())
@@ -34,39 +37,18 @@ signer.sign(&mut req, None).await?;
 # }
 ```
 
-## Default provider
+## Provider composition
 
-`DefaultCredentialProvider` follows the repository-wide default-chain API but
-has no automatic source. Prepend an explicit provider for the flow you chose, or
-keep a caller-supplied chain:
+Pass one provider directly to `Signer::new`. A single provider keeps its own
+error behavior; an invalid explicit credential fails instead of selecting a
+different identity.
 
-```rust,no_run
-use reqsign_onedrive::{
-    DefaultCredentialProvider, RefreshCredentialProvider, StaticCredentialProvider,
-};
-
-# fn example() -> reqsign_core::Result<()> {
-// The documented refresh exchange.
-let provider = DefaultCredentialProvider::new()
-    .push_front(RefreshCredentialProvider::new("client-id", "refresh-token")?);
-
-// A caller-injected short-lived token takes precedence when pushed last.
-let provider = provider.push_front(StaticCredentialProvider::new("graph-access-token"));
-
-// Or keep a caller-supplied chain and its own error policy.
-let provider = DefaultCredentialProvider::with_chain(
-    reqsign_core::ProvideCredentialChain::new()
-        .push(StaticCredentialProvider::new("graph-access-token")),
-);
-# let _ = provider;
-# Ok(())
-# }
-```
-
-Prepended providers fail closed: an error is returned instead of being treated
-as "no credential". Without a prepended source the provider yields no
-credential, and signing reports a missing credential rather than falling back to
-an ambient one.
+For several sources, the caller owns the composition.
+`ProvideCredentialChain` tries providers in insertion order and logs a provider
+error before continuing. It is not equivalent to the fail-closed,
+last-added-first ordering that an empty default provider used to provide; keep
+that ordering in a caller-owned `ProvideCredential` implementation when it is
+required. A deliberate empty `ProvideCredentialChain` yields no credential.
 
 ## Refresh tokens
 
@@ -107,9 +89,9 @@ let signer = Signer::new(context, provider, RequestSigner);
 # }
 ```
 
-The example above supplies the provider directly. Prepending the same
-`RefreshCredentialProvider` to `DefaultCredentialProvider` and using
-`reqsign::onedrive::default_signer(ctx)` is equivalent.
+The example above passes the refresh provider directly to `Signer::new`. The
+facade `default_signer(ctx, access_token)` is the static-token convenience; it
+does not take a refresh provider.
 
 Microsoft returns a new refresh token with every successful exchange and
 documents that the client must discard the previous one. A provider keeps only
