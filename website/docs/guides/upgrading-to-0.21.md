@@ -44,7 +44,7 @@ Everything else on this page is the detail behind those steps.
 | `reqsign-core`, `reqsign-aws-core`, every established service crate, `reqsign-file-read-tokio`, `reqsign-command-execute-tokio` | `3.x` | `4.0.0` |
 | `reqsign-http-send-reqwest` | `4.0.x` | `5.0.0` |
 | `reqsign-crypto-rustcrypto` | — | `1.0.0` |
-| `reqsign-crypto-boring` | — | `1.0.0` (source release only) |
+| `reqsign-crypto-boring` | — | `1.0.0` |
 | `reqsign-aliyun-drive`, `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`, `reqsign-github`, `reqsign-koofr`, `reqsign-oauth2`, `reqsign-onedrive`, `reqsign-seafile`, `reqsign-upyun`, `reqsign-vercel`, `reqsign-yandex-disk`, and the B2 crate `reqsign-b2` | — | `1.0.0` |
 
 Mixing core majors does not compile, because the traits are the compatibility
@@ -158,11 +158,10 @@ loading credentials to see the `ConfigInvalid` failure itself.
 - `reqsign-crypto-rustcrypto` implements all operations and supports
   `wasm32-unknown-unknown` for MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512, and
   P-256 ECDSA. RSA, AES-GCM, and random generation report `ConfigInvalid` there.
-- `reqsign-crypto-boring` is native-only, excluded from the main workspace and
-  the workspace publish plan, and forwards an optional `fips` feature. It ships
-  in the source release only; it is not published to crates.io by this release,
-  and publishing it requires a separate decision. Bind it explicitly:
-  `Context::new().with_crypto(BoringCryptoProvider::new())`.
+- `reqsign-crypto-boring` is native-only, excluded from the main workspace,
+  and forwards an optional `fips` feature. It is published to crates.io from
+  the explicit standalone release-plan entry after `reqsign-core`. Bind it
+  explicitly: `Context::new().with_crypto(BoringCryptoProvider::new())`.
 
 ## Default signers take an explicit `Context`
 

@@ -64,14 +64,18 @@ def already_published(output: str, package: Package) -> bool:
     )
 
 
+def publish_command(package: Package) -> list[str]:
+    # A standalone manifest is not a workspace member, so Cargo cannot select
+    # it by package name from the project directory.
+    if package.manifest is None:
+        selector = ["--package", package.name]
+    else:
+        selector = ["--manifest-path", package.manifest]
+    return ["cargo", "publish", *selector, "--no-verify"]
+
+
 def publish_package(package: Package) -> str:
-    command = [
-        "cargo",
-        "publish",
-        "--package",
-        package.name,
-        "--no-verify",
-    ]
+    command = publish_command(package)
 
     while True:
         print(f"Publishing {package.name} {package.version}", flush=True)

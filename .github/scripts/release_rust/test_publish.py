@@ -21,11 +21,37 @@ from contextlib import contextmanager
 from unittest import mock
 
 from plan import Package
-from publish import already_published, publish_package
+from publish import already_published, publish_command, publish_package
 
 
 def subprocess_result(returncode: int, output: str):
     return mock.Mock(returncode=returncode, stdout=output)
+
+
+class ReleaseRustPublishCommandTest(unittest.TestCase):
+    def test_workspace_member_is_selected_by_package_name(self):
+        self.assertEqual(
+            publish_command(Package("reqsign-core", "4.0.0")),
+            ["cargo", "publish", "--package", "reqsign-core", "--no-verify"],
+        )
+
+    def test_standalone_package_is_selected_by_manifest_path(self):
+        self.assertEqual(
+            publish_command(
+                Package(
+                    "reqsign-crypto-boring",
+                    "1.0.0",
+                    manifest="crypto/boring/Cargo.toml",
+                )
+            ),
+            [
+                "cargo",
+                "publish",
+                "--manifest-path",
+                "crypto/boring/Cargo.toml",
+                "--no-verify",
+            ],
+        )
 
 
 class ReleaseRustPublishTest(unittest.TestCase):

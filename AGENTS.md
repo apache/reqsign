@@ -109,9 +109,12 @@ need a JavaScript host clock.
 - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring` each have independent
   version lines, starting at `1.0.0`.
 - The facade `reqsign` crate follows an independent scheme (`0.21.0`).
-- Release is triggered by pushing a `v*.*.*` tag; `cargo publish --workspace`
-  publishes every crate in the plan. `crypto/boring` is excluded from the root
-  workspace and needs its own publication decision.
+- Release is triggered by pushing a `v*.*.*` tag. `plan.py` is the
+  authoritative crates.io package set: the root workspace members plus the
+  explicit standalone `crypto/boring/Cargo.toml` manifest. `cargo publish
+  --workspace` covers the members; the release workflow publishes
+  `reqsign-crypto-boring` by manifest path after `reqsign-core`. A workspace
+  exclusion alone does not add a package to the plan.
 
 ## License
 

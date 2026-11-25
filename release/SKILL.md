@@ -76,6 +76,7 @@ Release workflow publishes the plan; GitHub Release from `CHANGELOG.md`.
      -p "test_*.py"
    python3 .github/scripts/release_rust/plan.py
    cargo publish --workspace --dry-run --allow-dirty
+   python3 .github/scripts/release_rust/standalone.py
    ```
 
    `cargo publish --workspace --dry-run` stages the workspace as one set, so it
@@ -88,6 +89,15 @@ Release workflow publishes the plan; GitHub Release from `CHANGELOG.md`.
    the per-package form: its `0.0.0` reservations are dependency-free and do not
    satisfy requirements such as `^4.0.0`. The form only starts working after the
    release workflow has published the real dependency versions.
+
+   `standalone.py` packages the explicit standalone manifests against the local
+   path dependencies instead of the workspace set. It patches the planned
+   local dependencies from the checkout, runs `cargo package --no-verify` for
+   each one without a BoringSSL build, and checks that the produced package
+   carries LICENSE, NOTICE, README, and source files and that normalized local
+   dependencies keep the planned version without a path. It covers packaging
+   only: the BoringSSL build and tests stay in `crypto_boring.yml`, and the
+   upload path is covered by the release workflow at publish time.
 
    Inventory the plan against the registry before asking for a bootstrap. The
    check is read-only and needs no credentials. An empty plan exits nonzero
@@ -119,9 +129,12 @@ Release workflow publishes the plan; GitHub Release from `CHANGELOG.md`.
 
    Every `missing name` must be reserved by the bootstrap workflow before the
    RC tag, and no line may report an already-published planned version. The
-   0.21.0 preparation started from 31 workspace packages: 15 missing names plus
-   16 published crates, and the standalone `reqsign-crypto-boring` as a
-   separately inventoried name.
+   0.21.0 plan has 31 workspace packages plus the explicit standalone
+   `crypto/boring/Cargo.toml` manifest. The 15 workspace names that were missing
+   were reserved by run `45139940320`; that reviewed plan predates the standalone
+   entry, so `reqsign-crypto-boring` is the one name a new bootstrap must
+   reserve. The other 16 workspace names are already published crates whose
+   planned 0.21 versions are not published yet.
 
 4. Merge the version bump PR into `main`.
 
@@ -195,7 +208,7 @@ name existence, the reservation version, and `trustpub_only`. The authenticated
 preflight inside the job covers ownership and publisher metadata; the two checks
 have different scopes, and the public one is not a substitute for the preflight.
 The last successful reservation run for this repository was `45139940320` at
-commit `485d90da`.
+commit `485d90da`; its reviewed plan covered only the 31 workspace crates.
 
 ASF Infrastructure provisions the `release` and `rust-bootstrap` environments
 from `.asf.yaml`. A PMC release manager must add
@@ -205,18 +218,23 @@ crate scopes restricted to reqsign package names. Never expose it to the normal
 release workflow.
 
 Run the helper again if the publish plan gains another crate after a successful
-bootstrap.
+bootstrap. A new run previews the complete plan (workspace plus standalone),
+reserves only the names still missing, and never modifies an established crate.
 
-### What the workspace publish covers
+### What the publish plan covers
 
-`cargo publish --workspace` publishes every root workspace member that allows
-the crates.io registry, in dependency order, and `plan.py` is the authoritative
-list. `crypto/boring` is excluded from the root workspace
-(`exclude = ["crypto/boring"]`), so `reqsign-crypto-boring` is not in
-`plan.py`, not packaged by the Release workflow, and not covered by the
-bootstrap. Publishing it needs its own explicit decision and publishing path,
-including its own crates.io Trusted Publisher, and it is out of scope for a
-workspace release unless the release manager says otherwise. Its dependency
+`plan.py` is the authoritative crates.io package set. It combines the root
+workspace members with the explicit `STANDALONE_MANIFESTS` list, keeps every
+package that allows the crates.io registry, and orders them by local path
+dependencies. A directory excluded from the workspace is not published merely
+because a package exists there; the standalone list is the decision.
+
+`cargo publish --workspace` publishes only workspace members. The release
+workflow publishes `reqsign-crypto-boring` as an explicit standalone entry
+(`crypto/boring/Cargo.toml`, `exclude = ["crypto/boring"]`) by manifest path,
+after every local path dependency it resolves, including `reqsign-core` and the
+crates its tests use. Packaging a crate outside the workspace resolves all of
+those against crates.io, so each must be published first. Its dependency
 version bounds in `crypto/boring/Cargo.toml` are not inherited from the root
 workspace, so align them by hand in the same preparation PR.
 
@@ -414,7 +432,7 @@ NAME
    gh run view RUN_ID --repo apache/reqsign --json status,conclusion,url,jobs
    ```
 
-   The workflow validates the complete workspace package set, then publishes
+   The workflow validates the complete publish plan, then publishes
    crates in dependency order. Every package attempt receives a new
    OIDC-derived crates.io token that is revoked immediately afterward. Reruns
    skip versions already published by an earlier partial run.
