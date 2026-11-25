@@ -50,6 +50,11 @@ use crate::{Error, Result};
 ///
 /// Implementations must be safe to call concurrently and must not retain mutable
 /// per-call state between invocations.
+///
+/// `Arc<T>` implements this trait by forwarding every operation to `T`. A caller
+/// that already holds an `Arc<dyn CryptoProvider>` can pass it directly to
+/// [`Context::with_crypto`](crate::Context::with_crypto) or [`install_default`]
+/// without a wrapper that would miss future optional methods.
 pub trait CryptoProvider: Debug + Send + Sync + 'static {
     /// Compute the SHA-1 digest of `input`.
     fn sha1(&self, input: &[u8]) -> Result<[u8; 20]>;
@@ -138,6 +143,61 @@ pub trait CryptoProvider: Debug + Send + Sync + 'static {
         Err(Error::config_invalid(
             "configured CryptoProvider does not support random byte generation",
         ))
+    }
+}
+
+// `CryptoProvider` may gain defaulted methods. Keep this forwarding impl
+// exhaustive instead of silently falling back to a trait default.
+#[deny(clippy::missing_trait_methods)]
+impl<T: CryptoProvider + ?Sized> CryptoProvider for Arc<T> {
+    fn sha1(&self, input: &[u8]) -> Result<[u8; 20]> {
+        (**self).sha1(input)
+    }
+
+    fn sha256(&self, input: &[u8]) -> Result<[u8; 32]> {
+        (**self).sha256(input)
+    }
+
+    fn md5(&self, input: &[u8]) -> Result<[u8; 16]> {
+        (**self).md5(input)
+    }
+
+    fn hmac_sha1(&self, key: &[u8], input: &[u8]) -> Result<[u8; 20]> {
+        (**self).hmac_sha1(key, input)
+    }
+
+    fn hmac_sha256(&self, key: &[u8], input: &[u8]) -> Result<[u8; 32]> {
+        (**self).hmac_sha256(key, input)
+    }
+
+    fn hmac_sha512(&self, key: &[u8], input: &[u8]) -> Result<[u8; 64]> {
+        (**self).hmac_sha512(key, input)
+    }
+
+    fn rsa_pkcs1v15_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
+        (**self).rsa_pkcs1v15_sha256_sign(private_key_pem, message)
+    }
+
+    fn ecdsa_p256_sha256_sign(
+        &self,
+        private_key_scalar: &[u8; 32],
+        message: &[u8],
+    ) -> Result<Vec<u8>> {
+        (**self).ecdsa_p256_sha256_sign(private_key_scalar, message)
+    }
+
+    fn aes_gcm_encrypt(
+        &self,
+        key: &[u8],
+        nonce: &[u8; 12],
+        aad: &[u8],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>> {
+        (**self).aes_gcm_encrypt(key, nonce, aad, plaintext)
+    }
+
+    fn fill_random(&self, dest: &mut [u8]) -> Result<()> {
+        (**self).fill_random(dest)
     }
 }
 
