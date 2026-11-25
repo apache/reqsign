@@ -118,6 +118,10 @@ impl RequestSigner {
     }
 
     /// Configure Service SAS presign start time for Shared Key query signing.
+    ///
+    /// The start keeps the signer's existing whole-second formatting. An
+    /// explicit start at or after the encoded expiry returns `RequestInvalid`
+    /// before the request changes.
     pub fn with_service_sas_start(mut self, start: Timestamp) -> Self {
         self.service_sas_start = Some(start);
         self
@@ -468,6 +472,12 @@ impl SignRequest for RequestSigner {
                                 "Azure Service SAS lifetime does not reach a future wire timestamp",
                             ));
                         }
+                        let start = self.service_sas_start;
+                        if start.is_some_and(|start| start >= expiry) {
+                            return Err(reqsign_core::Error::request_invalid(
+                                "Azure Service SAS start time must be before its expiration",
+                            ));
+                        }
 
                         let mut signer = crate::service_sas::ServiceSharedAccessSignature::new(
                             account_name.clone(),
@@ -476,7 +486,7 @@ impl SignRequest for RequestSigner {
                             permissions.to_string(),
                             expiry,
                         );
-                        if let Some(start) = self.service_sas_start {
+                        if let Some(start) = start {
                             signer = signer.with_start(start);
                         }
                         if let Some(ip) = &self.service_sas_ip {
@@ -1009,6 +1019,218 @@ mod tests {
                 "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&sig=CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D"
             )
         );
+    }
+
+    #[tokio::test]
+    async fn shared_key_presign_rejects_explicit_start_at_or_after_wire_expiry() {
+        let ctx = crate::test_context();
+        let now = Timestamp::from_str("2022-03-01T08:12:34Z").unwrap();
+        let key = reqsign_core::hash::base64_encode(b"key");
+        let cred = Credential::with_shared_key("account", &key);
+
+        for start in [
+            "2022-03-01T08:17:34Z",
+            "2022-03-01T08:17:34.700Z",
+            "2022-03-01T08:17:35Z",
+        ] {
+            let signer = RequestSigner::new()
+                .with_time(now)
+                .with_service_sas_permissions("r")
+                .with_service_sas_start(Timestamp::from_str(start).unwrap());
+            let mut parts =
+                Request::get("https://account.blob.core.windows.net/container/path/to/blob.txt")
+                    .body(())
+                    .unwrap()
+                    .into_parts()
+                    .0;
+            let original = parts.clone();
+
+            let err = signer
+                .sign_request(
+                    &ctx,
+                    &mut parts,
+                    Some(&cred),
+                    Some(Duration::from_secs(300)),
+                )
+                .await
+                .expect_err("an explicit start must encode before the expiry");
+
+            assert_eq!(err.kind(), reqsign_core::ErrorKind::RequestInvalid);
+            assert_eq!(parts.method, original.method);
+            assert_eq!(parts.uri, original.uri);
+            assert_eq!(parts.version, original.version);
+            assert_eq!(parts.headers, original.headers);
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_key_presign_keeps_existing_start_rounding_for_valid_windows() {
+        let ctx = crate::test_context();
+        let now = Timestamp::from_str("2022-03-01T08:12:34Z").unwrap();
+        let key = reqsign_core::hash::base64_encode(b"key");
+        let cred = Credential::with_shared_key("account", &key);
+        let mut queries = Vec::new();
+
+        for start in ["2022-03-01T08:17:33Z", "2022-03-01T08:17:33.700Z"] {
+            let signer = RequestSigner::new()
+                .with_time(now)
+                .with_service_sas_permissions("r")
+                .with_service_sas_start(Timestamp::from_str(start).unwrap());
+            let mut parts =
+                Request::get("https://account.blob.core.windows.net/container/path/to/blob.txt")
+                    .body(())
+                    .unwrap()
+                    .into_parts()
+                    .0;
+
+            signer
+                .sign_request(
+                    &ctx,
+                    &mut parts,
+                    Some(&cred),
+                    Some(Duration::from_secs(300)),
+                )
+                .await
+                .unwrap();
+
+            queries.push(
+                parts
+                    .uri
+                    .query()
+                    .expect("presigned URL must have a query")
+                    .to_string(),
+            );
+        }
+
+        for query in &queries {
+            assert!(query.contains("st=2022-03-01T08%3A17%3A33Z"));
+            assert!(query.contains("se=2022-03-01T08%3A17%3A34Z"));
+            assert!(query.contains("sig="));
+        }
+        assert_eq!(
+            queries[0], queries[1],
+            "fractional start must keep the existing whole-second wire formatting"
+        );
+    }
+
+    fn review_request_with_override() -> http::request::Parts {
+        Request::get(
+            "https://example.invalid/container/blob?rscd=attachment%3B%20filename%3Da.txt&x=%2f",
+        )
+        .header("x-test", "unchanged")
+        .extension(19_u32)
+        .body(())
+        .unwrap()
+        .into_parts()
+        .0
+    }
+
+    #[tokio::test]
+    async fn shared_key_presign_preserves_negative_year_start_bytes() {
+        let ctx = crate::test_context();
+        let cred =
+            Credential::with_shared_key("account", &reqsign_core::hash::base64_encode(b"key"));
+        let signer = RequestSigner::new()
+            .with_time("-000001-12-31T23:59:57Z".parse().unwrap())
+            .with_service_sas_permissions("r")
+            .with_service_sas_start("-000001-12-31T23:59:58.700Z".parse().unwrap());
+        let mut parts = review_request_with_override();
+
+        signer
+            .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(2)))
+            .await
+            .unwrap();
+
+        let query = parts.uri.query().expect("presigned URL must have a query");
+        assert!(query.starts_with("rscd=attachment%3B%20filename%3Da.txt&x=%2f&"));
+        let pairs =
+            form_urlencoded::parse(query.as_bytes()).collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(pairs["st"], "-0001-12-31T23:59:58Z");
+        assert_eq!(pairs["se"], "-0001-12-31T23:59:59Z");
+
+        let canonical = [
+            "r",
+            "-0001-12-31T23:59:58Z",
+            "-0001-12-31T23:59:59Z",
+            "/blob/account/container/blob",
+            "",
+            "",
+            "",
+            "2020-12-06",
+            "b",
+            "",
+            "",
+            "",
+            "attachment; filename=a.txt",
+            "",
+            "",
+            "",
+        ]
+        .join("\n");
+        let expected_signature =
+            base64_hmac_sha256(ctx.crypto_provider().unwrap(), b"key", canonical.as_bytes())
+                .unwrap();
+        assert_eq!(pairs["sig"], expected_signature);
+    }
+
+    #[tokio::test]
+    async fn shared_key_presign_rejects_negative_year_same_wire_second() {
+        let ctx = crate::test_context();
+        let cred =
+            Credential::with_shared_key("account", &reqsign_core::hash::base64_encode(b"key"));
+
+        for start in ["-000001-12-31T23:59:59Z", "-000001-12-31T23:59:59.700Z"] {
+            let signer = RequestSigner::new()
+                .with_time("-000001-12-31T23:59:57Z".parse().unwrap())
+                .with_service_sas_permissions("r")
+                .with_service_sas_start(start.parse().unwrap());
+            let mut parts = review_request_with_override();
+            let original = parts.clone();
+
+            let err = signer
+                .sign_request(&ctx, &mut parts, Some(&cred), Some(Duration::from_secs(2)))
+                .await
+                .expect_err("a negative-year start at the expiry must be rejected");
+
+            assert_eq!(err.kind(), reqsign_core::ErrorKind::RequestInvalid);
+            assert_eq!(parts.method, original.method);
+            assert_eq!(parts.uri, original.uri);
+            assert_eq!(parts.version, original.version);
+            assert_eq!(parts.headers, original.headers);
+            assert_eq!(parts.extensions.get::<u32>(), Some(&19));
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_key_presign_keeps_future_start_before_expiry() {
+        let ctx = crate::test_context();
+        let cred =
+            Credential::with_shared_key("account", &reqsign_core::hash::base64_encode(b"key"));
+        let signer = RequestSigner::new()
+            .with_time(Timestamp::from_str("2022-03-01T08:12:34Z").unwrap())
+            .with_service_sas_permissions("r")
+            .with_service_sas_start(Timestamp::from_str("2022-03-01T08:15:00Z").unwrap());
+        let mut parts =
+            Request::get("https://account.blob.core.windows.net/container/path/to/blob.txt")
+                .body(())
+                .unwrap()
+                .into_parts()
+                .0;
+
+        signer
+            .sign_request(
+                &ctx,
+                &mut parts,
+                Some(&cred),
+                Some(Duration::from_secs(300)),
+            )
+            .await
+            .unwrap();
+
+        let query = parts.uri.query().expect("presigned URL must have a query");
+        assert!(query.contains("st=2022-03-01T08%3A15%3A00Z"));
+        assert!(query.contains("se=2022-03-01T08%3A17%3A34Z"));
+        assert!(query.contains("sig="));
     }
 
     #[tokio::test]
