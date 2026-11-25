@@ -33,6 +33,7 @@ use crate::credential::Credential;
 use crate::uri::percent_encode_query;
 
 const TOS_ALGORITHM: &str = "TOS4-HMAC-SHA256";
+const MAX_PRESIGN_LIFETIME: Duration = Duration::from_secs(604_800);
 const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 const TOS_AUTH_QUERY_NAMES: &[&str] = &[
     "x-tos-algorithm",
@@ -55,6 +56,9 @@ static HEADER_TOS_SECURITY_TOKEN: LazyLock<HeaderName> =
 /// RequestSigner that implements Volcengine TOS signing.
 ///
 /// - [Volcengine TOS Signature](https://www.volcengine.com/docs/6349/1747874)
+///
+/// Presigned URLs accept a lifetime from 1 through 604800 seconds (seven days).
+/// Other values return `RequestInvalid` before changing the request.
 #[derive(Debug)]
 pub struct RequestSigner {
     region: String,
@@ -91,7 +95,7 @@ impl RequestSigner {
         signing_time: Timestamp,
         expires_in: Option<Duration>,
     ) -> Timestamp {
-        signing_time + expires_in.unwrap_or_default()
+        signing_time.saturating_add(expires_in.unwrap_or_default())
     }
 }
 impl SignRequest for RequestSigner {
@@ -123,6 +127,13 @@ impl SignRequest for RequestSigner {
             return Err(reqsign_core::Error::credential_invalid(
                 "credential expires before the requested signing operation deadline",
             ));
+        }
+        if let Some(expires) = expires_in {
+            if expires.as_secs() == 0 || expires > MAX_PRESIGN_LIFETIME {
+                return Err(reqsign_core::Error::request_invalid(
+                    "TOS presigned URL lifetime must be between 1 and 604800 seconds",
+                ));
+            }
         }
 
         let original_uri = req.uri.clone();
@@ -452,7 +463,7 @@ mod tests {
 
     use super::*;
     use crate::provide_credential::StaticCredentialProvider;
-    use reqsign_core::{OsEnv, Signer};
+    use reqsign_core::{ErrorKind, OsEnv, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
 
@@ -573,6 +584,87 @@ mod tests {
             parts.uri.to_string()
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_lifetimes_above_seven_days_without_changing_the_request() -> Result<()>
+    {
+        let now: Timestamp = "2022-01-01T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("cn-beijing").with_time(now);
+        let credential = Credential::new("testAK", "testSK");
+
+        for expires_in in [Duration::from_secs(604_801), Duration::MAX] {
+            let mut parts = http::Request::get("https://example.com/object")
+                .body(())?
+                .into_parts()
+                .0;
+            let original = parts.clone();
+
+            let err = signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    Some(expires_in),
+                )
+                .await
+                .expect_err("invalid presigned URL lifetime must be rejected");
+
+            assert_eq!(err.kind(), ErrorKind::RequestInvalid);
+            assert_request_head_unchanged(&parts, &original);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_oversized_lifetime_after_credential_validation() -> Result<()> {
+        let now: Timestamp = "2022-01-01T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("cn-beijing").with_time(now);
+        let finite =
+            Credential::new("testAK", "testSK").with_expires_at(now + Duration::from_secs(3600));
+        let mut parts = http::Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+        let original = parts.clone();
+
+        let err = signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&finite),
+                Some(Duration::MAX),
+            )
+            .await
+            .expect_err("a finite credential cannot cover an unbounded lifetime");
+
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_request_head_unchanged(&parts, &original);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_accepts_the_seven_day_limit() -> Result<()> {
+        let now: Timestamp = "2022-01-01T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("cn-beijing").with_time(now);
+        let mut parts = http::Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&Credential::new("testAK", "testSK")),
+                Some(Duration::from_secs(604_800)),
+            )
+            .await?;
+
+        let query = parts.uri.query().expect("presigned URL must have a query");
+        assert!(query.contains("X-Tos-Expires=604800"));
+        assert!(query.contains("X-Tos-Signature="));
         Ok(())
     }
 
