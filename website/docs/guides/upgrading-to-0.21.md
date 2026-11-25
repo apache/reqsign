@@ -332,6 +332,8 @@ read with `operator()` and `bucket()`. B2 and Upyun can construct incomplete
 values, which are rejected by the B2 static provider or the signer at use.
 The password is not exposed outside the signer.
 
+### Explicit credentials
+
 Baidu Netdisk has no ambient credential source, so the caller supplies the
 token:
 
@@ -373,11 +375,79 @@ let signer = Signer::new(default_context(), provider, aliyun_drive::RequestSigne
 ```
 
 These three crates do not export an empty `DefaultCredentialProvider` or its
-builder. A single explicit provider passed to `Signer::new` keeps its own error
-behavior. `ProvideCredentialChain` remains available for an intentional
-multi-source chain and keeps its permissive error policy; it is not equivalent
-to the fail-closed, last-added-first ordering that an empty default provider's
-`push_front` used to provide.
+builder. The facade entries above are convenience wrappers around
+`StaticCredentialProvider`; any other explicit provider goes directly to
+`Signer::new`.
+
+### Caller-owned provider composition
+
+`DefaultCredentialProvider::with_chain(c)` becomes the chain itself:
+
+```rust
+let signer = Signer::new(ctx, c, service::RequestSigner);
+```
+
+It keeps `ProvideCredentialChain`'s error policy. A single
+`push_front(provider)` becomes that provider directly, which keeps its `Err`
+behavior. A deliberate no-credential provider is an empty chain:
+`ProvideCredentialChain::<Credential>::new()`.
+
+If the old code used several `push_front` calls, keep that composition
+explicitly. The default provider tried the most recently prepended provider
+first, returned an error immediately, moved on only after `None`, then ran the
+original chain. This caller-owned provider implements exactly that policy:
+
+```rust
+use reqsign::aliyun_drive::Credential;
+use reqsign::{
+    Context, ProvideCredential, ProvideCredentialChain, ProvideCredentialDyn, Result,
+};
+
+#[derive(Debug)]
+struct PrependThenChain {
+    front: Vec<Box<dyn ProvideCredentialDyn<Credential = Credential>>>,
+    fallback: ProvideCredentialChain<Credential>,
+}
+
+impl PrependThenChain {
+    fn new(fallback: ProvideCredentialChain<Credential>) -> Self {
+        Self {
+            front: Vec::new(),
+            fallback,
+        }
+    }
+
+    fn push_front(
+        mut self,
+        provider: impl ProvideCredential<Credential = Credential> + 'static,
+    ) -> Self {
+        self.front.insert(0, Box::new(provider));
+        self
+    }
+}
+
+impl ProvideCredential for PrependThenChain {
+    type Credential = Credential;
+
+    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+        for provider in &self.front {
+            if let Some(credential) = provider.provide_credential_dyn(ctx).await? {
+                return Ok(Some(credential));
+            }
+        }
+
+        self.fallback.provide_credential(ctx).await
+    }
+}
+```
+
+This example uses Aliyun Drive's credential type; use the same shape with the
+service you are migrating. Build it in the same order as the old calls:
+`push_front(first_provider)` and then `push_front(most_recent_provider)`.
+`ProvideCredentialChain` itself logs a provider error and tries the next source.
+That permissive fallback differs from the fail-closed composition above, so
+replacing several `push_front` calls with `ProvideCredentialChain` can change
+which identity signs.
 
 ## OBS and TOS credentials carry an absolute expiry
 
