@@ -33,7 +33,8 @@ use std::time::Duration;
 
 const CONTENT_MD5: &str = "content-md5";
 const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
-const MAX_V4_PRESIGN_LIFETIME: Duration = Duration::from_secs(604_800);
+const MAX_V4_PRESIGN_LIFETIME: u64 = 604_800;
+const MAX_V4_STS_PRESIGN_LIFETIME: u64 = 43_200;
 const IF_MODIFIED_SINCE: &str = "if-modified-since";
 const OSS_V2_ALGORITHM: &str = "OSS2";
 const OSS_V4_ALGORITHM: &str = "OSS4-HMAC-SHA256";
@@ -91,9 +92,12 @@ pub enum SigningVersion {
 
 /// RequestSigner for Aliyun OSS signature.
 ///
-/// V4 presigned URLs accept a lifetime from 1 through 604800 seconds (seven
-/// days). V1 and V2 embed an absolute expiration and reject values that the
-/// timestamp cannot represent.
+/// V4 presigned URLs accept encoded `x-oss-expires` values from 1 through
+/// 604800 seconds, or through 43200 seconds when the credential supplies
+/// `x-oss-security-token`. V1 and V2 embed an absolute expiration with no
+/// relative cap and reject values that the timestamp cannot represent.
+///
+/// - [Add signatures to URLs](https://help.aliyun.com/zh/oss/developer-reference/add-signatures-to-urls)
 #[derive(Debug)]
 pub struct RequestSigner {
     bucket: String,
@@ -504,10 +508,15 @@ impl RequestSigner {
         let mut signing_req = SigningRequest::build(req)?;
         if let Some(expires) = expires_in {
             let seconds = expires.as_secs();
-            if seconds == 0 || seconds > MAX_V4_PRESIGN_LIFETIME.as_secs() {
-                return Err(Error::request_invalid(
-                    "OSS V4 presigned URL lifetime must be between 1 and 604800 seconds",
-                ));
+            let max_seconds = if cred.security_token.is_some() {
+                MAX_V4_STS_PRESIGN_LIFETIME
+            } else {
+                MAX_V4_PRESIGN_LIFETIME
+            };
+            if seconds == 0 || seconds > max_seconds {
+                return Err(Error::request_invalid(format!(
+                    "OSS V4 presigned URL lifetime must be between 1 and {max_seconds} seconds"
+                )));
             }
         }
         self.canonicalize_v4_headers(&mut signing_req, cred, signing_time, expires_in.is_some())?;
@@ -1319,12 +1328,44 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn v4_presign_rejects_invalid_lifetimes_without_changing_the_request() -> Result<()> {
-        let signer = RequestSigner::new("bucket")
+    fn v4_signer() -> RequestSigner {
+        RequestSigner::new("bucket")
             .with_region("oss-cn-beijing")
             .with_signing_version(SigningVersion::V4)
-            .with_time(test_time());
+            .with_time(test_time())
+    }
+
+    #[tokio::test]
+    async fn v4_presign_enforces_long_term_encoded_lifetime_bounds() -> Result<()> {
+        let signer = v4_signer();
+        let credential = test_credential(None);
+
+        for (expires_in, encoded_seconds) in [
+            (Duration::from_secs(1), "1"),
+            (
+                Duration::from_secs(604_800) + Duration::from_millis(500),
+                "604800",
+            ),
+        ] {
+            let mut parts = Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+
+            signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    Some(expires_in),
+                )
+                .await?;
+
+            let query = parts.uri.query().expect("presigned URL must have a query");
+            assert!(query.contains(&format!("x-oss-expires={encoded_seconds}")));
+            assert!(query.contains("x-oss-signature="));
+        }
 
         for expires_in in [Duration::from_millis(500), Duration::from_secs(604_801)] {
             let mut parts = Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
@@ -1338,7 +1379,7 @@ mod tests {
                 .sign_request(
                     &crate::test_context(),
                     &mut parts,
-                    Some(&test_credential(None)),
+                    Some(&credential),
                     Some(expires_in),
                 )
                 .await
@@ -1351,29 +1392,137 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v4_presign_accepts_the_seven_day_limit() -> Result<()> {
-        let signer = RequestSigner::new("bucket")
-            .with_region("oss-cn-beijing")
-            .with_signing_version(SigningVersion::V4)
-            .with_time(test_time());
+    async fn v4_presign_enforces_sts_encoded_lifetime_bounds() -> Result<()> {
+        let signer = v4_signer();
+        let credential = test_credential(Some("synthetic-sts-token"));
+
+        for (expires_in, encoded_seconds) in [
+            (Duration::from_secs(1), "1"),
+            (
+                Duration::from_secs(43_200) + Duration::from_millis(500),
+                "43200",
+            ),
+        ] {
+            let mut parts = Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+
+            signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    Some(expires_in),
+                )
+                .await?;
+
+            let query = parts.uri.query().expect("presigned URL must have a query");
+            assert!(query.contains(&format!("x-oss-expires={encoded_seconds}")));
+            assert!(query.contains("x-oss-security-token="));
+            assert!(query.contains("x-oss-signature="));
+        }
+
+        for expires_in in [
+            Duration::from_millis(500),
+            Duration::from_secs(43_201),
+            Duration::from_secs(604_800),
+        ] {
+            let mut parts = Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+                .body(())
+                .expect("request must build")
+                .into_parts()
+                .0;
+            let original = parts.clone();
+
+            let err = signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    Some(expires_in),
+                )
+                .await
+                .expect_err("invalid STS presigned URL lifetime must be rejected");
+
+            assert_eq!(err.kind(), ErrorKind::RequestInvalid);
+            assert_parts_unchanged(&parts, &original);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn v4_presign_keeps_finite_credential_precedence_for_sts() -> Result<()> {
+        let signer = v4_signer();
+        let credential = Credential {
+            expires_in: Some(test_time() + Duration::from_secs(3600)),
+            ..test_credential(Some("synthetic-sts-token"))
+        };
         let mut parts = Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
             .body(())
             .expect("request must build")
             .into_parts()
             .0;
+        let original = parts.clone();
 
-        signer
+        let err = signer
             .sign_request(
                 &crate::test_context(),
                 &mut parts,
-                Some(&test_credential(None)),
-                Some(Duration::from_secs(604_800)),
+                Some(&credential),
+                Some(Duration::from_secs(43_201)),
             )
-            .await?;
+            .await
+            .expect_err("a finite credential cannot cover the requested STS lifetime");
 
-        let query = parts.uri.query().expect("presigned URL must have a query");
-        assert!(query.contains("x-oss-expires=604800"));
-        assert!(query.contains("x-oss-signature="));
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_parts_unchanged(&parts, &original);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn v1_and_v2_presign_keep_absolute_expiration_semantics() -> Result<()> {
+        for version in [SigningVersion::V1, SigningVersion::V2] {
+            let signer = RequestSigner::new("bucket")
+                .with_signing_version(version)
+                .with_time(test_time());
+            let credential = test_credential(None);
+
+            for expires_in in [Duration::ZERO, Duration::from_secs(604_801)] {
+                let mut parts =
+                    Request::get("https://bucket.oss-cn-beijing.aliyuncs.com/object.txt")
+                        .body(())
+                        .expect("request must build")
+                        .into_parts()
+                        .0;
+
+                signer
+                    .sign_request(
+                        &crate::test_context(),
+                        &mut parts,
+                        Some(&credential),
+                        Some(expires_in),
+                    )
+                    .await?;
+
+                let expected_expiration = 1_717_332_000 + expires_in.as_secs();
+                let query = parts.uri.query().expect("presigned URL must have a query");
+                let (expires_field, signature_field) = match version {
+                    SigningVersion::V1 => (format!("Expires={expected_expiration}"), "Signature="),
+                    SigningVersion::V2 => (
+                        format!("x-oss-expires={expected_expiration}"),
+                        "x-oss-signature=",
+                    ),
+                    SigningVersion::V4 => unreachable!("only V1 and V2 are tested"),
+                };
+                assert!(
+                    query.contains(&expires_field),
+                    "query {query} must contain {expires_field}"
+                );
+                assert!(query.contains(signature_field));
+            }
+        }
         Ok(())
     }
 
