@@ -271,9 +271,11 @@ When BoringSSL runs in FIPS mode, `md5` returns `ConfigInvalid` because FIPS
 does not approve MD5. The provider does not fall back to a non-FIPS MD5
 implementation. SHA-512 and HMAC-SHA-512 remain available.
 
-The crate has an independent version cadence (`1.0.0` initially), is verified by
-`.github/workflows/crypto_boring.yml`, and is not published by
-`cargo publish --workspace`.
+The crate has an independent version cadence (`1.0.0` initially) and is
+verified by `.github/workflows/crypto_boring.yml`. It is excluded from
+`cargo publish --workspace`; the release plan carries it as an explicit
+standalone manifest entry (`crypto/boring/Cargo.toml`), and the release
+workflow publishes it by manifest path after `reqsign-core`.
 
 ## Facade and Features
 

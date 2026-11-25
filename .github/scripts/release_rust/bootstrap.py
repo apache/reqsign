@@ -389,7 +389,7 @@ def format_discover_summary(statuses: list[CrateStatus]) -> str:
     lines = [
         "## Bootstrap Plan",
         "",
-        f"- Workspace publish plan: **{len(statuses)}** crates",
+        f"- Publish plan: **{len(statuses)}** crates",
         f"- New crates to publish (`{PLACEHOLDER_VERSION}` placeholder, irreversible): **{len(missing)}**",
         f"- Existing `{PLACEHOLDER_VERSION}` placeholders to reconcile/verify: **{len(placeholders)}**",
         f"- Established crates (audited only, never modified): **{len(established)}**",

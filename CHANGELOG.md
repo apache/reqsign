@@ -46,11 +46,11 @@ through the `Context`, passes the `Context` explicitly to facade
 
 - Crypto backend crates `reqsign-crypto-rustcrypto` (workspace member,
   `wasm32-unknown-unknown` for its supported subset) and
-  `reqsign-crypto-boring` (native-only, excluded from the main workspace and
-  the workspace publish plan, optional `fips` feature), both `1.0.0`.
-  `reqsign-crypto-boring` is included in the source release; it is not
-  published to crates.io by this release, and publishing it requires a
-  separate decision.
+  `reqsign-crypto-boring` (native-only, excluded from the main workspace,
+  optional `fips` feature), both `1.0.0`.
+  `reqsign-crypto-boring` is included in the source release and is published
+  to crates.io from the explicit standalone release-plan entry after
+  `reqsign-core`.
 - Provider crates and facade features, all first release at `1.0.0`:
   `reqsign-aliyun-drive`, `reqsign-b2` (facade feature `b2`),
   `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`,
@@ -128,7 +128,7 @@ upgrading from 0.20.8 or earlier receive them from either release:
 | `reqsign-tencent-cos` | 4.0.0 |
 | `reqsign-volcengine-tos` | 4.0.0 |
 | `reqsign-crypto-rustcrypto` | 1.0.0 |
-| `reqsign-crypto-boring` | 1.0.0 (source release only) |
+| `reqsign-crypto-boring` | 1.0.0 |
 | `reqsign-aliyun-drive` | 1.0.0 |
 | `reqsign-b2` | 1.0.0 |
 | `reqsign-baidu-netdisk` | 1.0.0 |

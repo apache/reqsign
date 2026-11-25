@@ -63,9 +63,11 @@ jobs:
         run: python3 .github/scripts/release_rust/plan.py
       - name: Verify workspace packages
         run: cargo publish --workspace --dry-run
+      - name: Verify standalone packages
+        run: python3 .github/scripts/release_rust/standalone.py
 
   publish:
-    name: Publish Workspace
+    name: Publish Crates
     # The push trigger accepts only formal release tags.
     if: github.event_name == 'push'
     needs: validate

@@ -4,9 +4,17 @@ These scripts define and publish the crates.io package set for Apache Reqsign.
 
 ## Publish plan
 
-`plan.py` reads `cargo metadata --no-deps`, selects workspace packages that can
-publish to crates.io, and orders them by non-dev local dependencies using
-Python's `TopologicalSorter`.
+`plan.py` reads `cargo metadata --no-deps` and is the authoritative crates.io
+package set. It combines the root workspace members with the explicit
+`STANDALONE_MANIFESTS` list (currently only `crypto/boring/Cargo.toml`), keeps
+packages that can publish to crates.io, and orders them with Python's
+`TopologicalSorter`. A workspace exclusion alone does not add a package to the
+plan.
+
+Workspace members order by non-dev local dependencies: staging publishes them
+as one set, and their dev-only edges can form cycles. A standalone manifest is
+packaged on its own, so it also orders after every local path dependency it
+resolves, including dev-dependencies.
 
 ```bash
 python3 .github/scripts/release_rust/plan.py
@@ -23,12 +31,26 @@ intra-workspace dependency versions are not on crates.io yet. A single-package
 `cargo publish -p <crate> --dry-run` does not, and fails before a bootstrap with
 a version-selection error for the unpublished dependency.
 
-It then runs `publish.py`. The publisher uploads one package at a time, requests
-and revokes a fresh GitHub OIDC-derived crates.io token for every attempt,
-retries crates.io rate limits, and treats an already-published matching
-name/version as a completed step. Individual uploads use `--no-verify` because
-the workflow has already verified the complete package set from the same
-commit.
+The workspace dry run cannot stage a standalone manifest. `standalone.py`
+patches the planned local dependencies from the checkout, runs `cargo package
+--no-verify` for every standalone manifest without a BoringSSL build, and
+checks the produced package: LICENSE, NOTICE, README, and source files are
+present, and normalized local dependencies keep the planned version with no
+path. That is the supported staging mechanism for a crate that is not a
+workspace member. The BoringSSL build and tests stay in `crypto_boring.yml`.
+
+It then runs `publish.py`. The publisher uploads one package at a time —
+workspace members by package name and standalone packages by manifest path —
+requests and revokes a fresh GitHub OIDC-derived crates.io token for every
+attempt, retries crates.io rate limits, and treats an already-published matching
+name/version as a completed step. A successful upload or duplicate report does
+not promise that the index already exposes the version to the next package, so
+the publisher also retries the same package with a bounded budget while Cargo
+fails to select exactly a planned dependency version from the crates.io index.
+A requirement for another version, an unplanned package, and every unrelated
+build, manifest, or authentication failure still fail immediately. Individual
+uploads use `--no-verify` because the workflow has already verified the
+complete package set from the same commit.
 
 Live publishing requires the `release` GitHub environment and a job with
 `id-token: write`. It never reads a long-lived crates.io token.
@@ -36,7 +58,9 @@ Live publishing requires the `release` GitHub environment and a job with
 ## Bootstrap crate names
 
 Trusted Publishing cannot create the first version of a crate.
-`bootstrap.py` reserves new names and audits the complete publish plan:
+`bootstrap.py` reserves new names and audits the complete publish plan, which
+includes the standalone manifests, so the same run reserves
+`reqsign-crypto-boring` when it is the missing name:
 
 - `discover` reports missing names, existing `0.0.0` placeholders, and
   established crates with their public `trustpub_only` status. With
@@ -97,7 +121,8 @@ These are repository-specific scripts: run them with normal Python (without
 `-O` or `PYTHONOPTIMIZE`, which disable assertions). Cargo and crates.io response
 fields are used directly; unexpected package or publisher state fails an
 assertion. Failed API requests stop the run; rerun after resolving the failure.
-Only Cargo publish rate limits and public metadata propagation are retried.
+Only Cargo publish rate limits, Cargo registry index lag for a planned
+dependency version, and public metadata propagation are retried.
 
 ## Tests
 
