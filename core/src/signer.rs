@@ -132,11 +132,13 @@ impl<K: SigningCredential> Signer<K> {
     ///
     /// Cached credentials must be fresh according to [`SigningCredential::is_valid`]
     /// and usable through [`SignRequest::required_valid_until`]. A refreshed credential
-    /// only needs to satisfy the exact operation deadline. Credential refresh is
-    /// serialized per shared cache. A failed refresh is not cached, so the next waiting
-    /// or later caller can retry. Provider errors are returned without internal retry or
-    /// fallback to the previous cached credential. Request signing runs after refresh
-    /// coordination has completed and remains concurrent.
+    /// only needs to satisfy the exact operation deadline, and a caller that waited
+    /// on a concurrent refresh reuses that credential when it covers the waiting
+    /// caller's own deadline. Credential refresh is serialized per shared cache. A
+    /// failed refresh is not cached, so the next waiting or later caller can retry.
+    /// Provider errors are returned without internal retry or fallback to the
+    /// previous cached credential. Request signing runs after refresh coordination
+    /// has completed and remains concurrent.
     pub async fn sign(
         &self,
         req: &mut http::request::Parts,
@@ -168,15 +170,48 @@ impl<K: SigningCredential> Signer<K> {
     /// The returned [`Arc`] borrows the cached credential, so the signing path
     /// does not clone `K`. Callers that need an owned value use
     /// [`Signer::credential_for`].
+    ///
+    /// A caller that loses the refresh race reuses the credential published
+    /// while it waited only when that credential covers this caller's own
+    /// operation deadline. A snapshot the caller already observed before
+    /// waiting never satisfies it this way, so a stale credential is refreshed
+    /// instead of reused.
     async fn credential_arc_for(&self, expires_in: Option<Duration>) -> Result<Arc<K>> {
-        if let Some(credential) = self.usable_cached(expires_in) {
-            return Ok(credential);
+        let observed = self.cached_arc();
+        if let Some(credential) = observed.as_ref() {
+            if self.is_fresh_and_usable(credential, expires_in) {
+                return Ok(Arc::clone(credential));
+            }
         }
 
         let refresh = self.credential.refresh.lock().await;
-        if let Some(credential) = self.usable_cached(expires_in) {
-            return Ok(credential);
+
+        let latest = self.cached_arc();
+        if let Some(credential) = latest.as_ref() {
+            if self.is_fresh_and_usable(credential, expires_in) {
+                return Ok(Arc::clone(credential));
+            }
         }
+
+        // `observed` stays alive through the comparison so both snapshots are
+        // valid while their pointers are compared. A different snapshot means
+        // another caller published while this one waited, including a cold start
+        // from no credential to the first one.
+        let refreshed_while_waiting = match (observed.as_ref(), latest.as_ref()) {
+            (None, Some(_)) => true,
+            (Some(observed), Some(latest)) => !Arc::ptr_eq(observed, latest),
+            _ => false,
+        };
+        if refreshed_while_waiting {
+            if let Some(credential) = latest.as_ref() {
+                if self.satisfies_operation(credential, expires_in) {
+                    return Ok(Arc::clone(credential));
+                }
+            }
+        }
+
+        drop(observed);
+        drop(latest);
 
         let credential = Arc::new(
             self.loader
@@ -194,16 +229,15 @@ impl<K: SigningCredential> Signer<K> {
         Ok(credential)
     }
 
-    fn usable_cached(&self, expires_in: Option<Duration>) -> Option<Arc<K>> {
-        let credential = self.cached_arc()?;
+    fn is_fresh_and_usable(&self, credential: &K, expires_in: Option<Duration>) -> bool {
+        credential.is_valid() && self.satisfies_operation(credential, expires_in)
+    }
+
+    fn satisfies_operation(&self, credential: &K, expires_in: Option<Duration>) -> bool {
         let required_until = self
             .builder
-            .required_valid_until_dyn(&credential, expires_in);
-        if credential.is_valid() && credential.is_valid_at(required_until) {
-            Some(credential)
-        } else {
-            None
-        }
+            .required_valid_until_dyn(credential, expires_in);
+        credential.is_valid_at(required_until)
     }
 
     /// Read the cached credential and release the read guard before any user or
@@ -480,6 +514,58 @@ mod tests {
         }
     }
 
+    /// Blocks the first provider call on a controlled response and returns a
+    /// ready credential for every later call, so a test that expects one load
+    /// fails on the call count instead of waiting for a response that was never
+    /// sent.
+    struct FirstLoadBlockedProvider {
+        first: StdMutex<Option<oneshot::Receiver<ControlledResponse>>>,
+        calls: Arc<AtomicUsize>,
+        later: ExpiringCredential,
+    }
+
+    impl Debug for FirstLoadBlockedProvider {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("FirstLoadBlockedProvider")
+                .finish_non_exhaustive()
+        }
+    }
+
+    fn first_load_blocked_provider(
+        later: ExpiringCredential,
+    ) -> (
+        FirstLoadBlockedProvider,
+        Arc<AtomicUsize>,
+        oneshot::Sender<ControlledResponse>,
+    ) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (sender, receiver) = oneshot::channel();
+        (
+            FirstLoadBlockedProvider {
+                first: StdMutex::new(Some(receiver)),
+                calls: calls.clone(),
+                later,
+            },
+            calls,
+            sender,
+        )
+    }
+
+    impl ProvideCredential for FirstLoadBlockedProvider {
+        type Credential = ExpiringCredential;
+
+        async fn provide_credential(&self, _ctx: &Context) -> Result<Option<Self::Credential>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let first = self.first.lock().expect("lock poisoned").take();
+            match first {
+                Some(response) => response
+                    .await
+                    .map_err(|_| Error::unexpected("controlled response sender was dropped"))?,
+                None => Ok(Some(self.later.clone())),
+            }
+        }
+    }
+
     struct ControlledRequestSigner {
         started: Arc<AtomicUsize>,
         releases: StdMutex<VecDeque<oneshot::Receiver<()>>>,
@@ -649,6 +735,41 @@ mod tests {
             req.headers.insert(
                 "x-credential-generation",
                 credential.generation.to_string().parse()?,
+            );
+            Ok(())
+        }
+    }
+
+    #[derive(Debug)]
+    struct ExpiresInRequestSigner;
+
+    impl SignRequest for ExpiresInRequestSigner {
+        type Credential = ExpiringCredential;
+
+        fn required_valid_until(
+            &self,
+            credential: &Self::Credential,
+            expires_in: Option<Duration>,
+        ) -> Timestamp {
+            credential
+                .required_until
+                .saturating_add(expires_in.unwrap_or_default())
+        }
+
+        async fn sign_request(
+            &self,
+            _ctx: &Context,
+            req: &mut http::request::Parts,
+            credential: Option<&Self::Credential>,
+            _expires_in: Option<Duration>,
+        ) -> Result<()> {
+            req.headers.insert(
+                "x-credential-generation",
+                credential
+                    .expect("credential must be present")
+                    .generation
+                    .to_string()
+                    .parse()?,
             );
             Ok(())
         }
@@ -917,6 +1038,134 @@ mod tests {
                     Some(&HeaderValue::from_static("2"))
                 );
             }
+        });
+    }
+
+    #[test]
+    fn waiting_callers_reuse_concurrently_published_credential_that_is_not_fresh() {
+        futures::executor::block_on(async {
+            let base = Timestamp::from_second(2_100).expect("timestamp must be valid");
+            let cached = ExpiringCredential {
+                generation: 1,
+                fresh: false,
+                expires_at: base + Duration::from_secs(30),
+                required_until: base + Duration::from_secs(10),
+            };
+            let published = ExpiringCredential {
+                generation: 2,
+                fresh: false,
+                expires_at: base + Duration::from_secs(30),
+                required_until: base + Duration::from_secs(10),
+            };
+            let later = ExpiringCredential {
+                generation: 3,
+                fresh: true,
+                expires_at: base + Duration::from_secs(30),
+                required_until: base + Duration::from_secs(10),
+            };
+            let (provider, calls, responder) = first_load_blocked_provider(later);
+            let signer = Signer::new(Context::new(), provider, OperationSigner);
+            set_cached_credential(&signer, cached);
+            let mut requests = (0..8).map(|_| request_parts()).collect::<Vec<_>>();
+            let mut batch = Box::pin(join_all(
+                requests
+                    .iter_mut()
+                    .map(|request| signer.sign(request, None)),
+            ));
+
+            assert!(poll!(&mut batch).is_pending());
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+            responder
+                .send(Ok(Some(published)))
+                .expect("controlled response must be received");
+            for result in batch.await {
+                result.expect("waiters must reuse the concurrently published credential");
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            for request in &requests {
+                assert_eq!(
+                    request.headers.get("x-credential-generation"),
+                    Some(&HeaderValue::from_static("2"))
+                );
+            }
+
+            let mut later_request = request_parts();
+            signer
+                .sign(&mut later_request, None)
+                .await
+                .expect("an independent caller must refresh the non-fresh credential");
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+            assert_eq!(
+                later_request.headers.get("x-credential-generation"),
+                Some(&HeaderValue::from_static("3"))
+            );
+        });
+    }
+
+    #[test]
+    fn waiting_caller_refreshes_when_published_credential_misses_its_deadline() {
+        futures::executor::block_on(async {
+            let base = Timestamp::from_second(2_200).expect("timestamp must be valid");
+            let cached = ExpiringCredential {
+                generation: 1,
+                fresh: false,
+                expires_at: base + Duration::from_secs(30),
+                required_until: base + Duration::from_secs(10),
+            };
+            let short_lived = ExpiringCredential {
+                generation: 2,
+                fresh: false,
+                expires_at: base + Duration::from_secs(20),
+                required_until: base + Duration::from_secs(10),
+            };
+            let long_lived = ExpiringCredential {
+                generation: 3,
+                fresh: true,
+                expires_at: base + Duration::from_secs(30),
+                required_until: base + Duration::from_secs(10),
+            };
+            let (provider, calls, mut responses) = ControlledProvider::new(2);
+            let leader = Signer::new(Context::new(), provider, OperationSigner);
+            set_cached_credential(&leader, cached);
+            let waiter = leader.clone().with_request_signer(ExpiresInRequestSigner);
+
+            let mut leader_request = request_parts();
+            let mut leader_signing = Box::pin(leader.sign(&mut leader_request, None));
+            let mut waiter_request = request_parts();
+            let mut waiter_signing =
+                Box::pin(waiter.sign(&mut waiter_request, Some(Duration::from_secs(15))));
+
+            assert!(poll!(&mut leader_signing).is_pending());
+            assert!(poll!(&mut waiter_signing).is_pending());
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+            responses
+                .remove(0)
+                .send(Ok(Some(short_lived)))
+                .expect("controlled response must be received");
+            leader_signing
+                .await
+                .expect("the short-deadline leader must succeed");
+            assert_eq!(
+                leader_request.headers.get("x-credential-generation"),
+                Some(&HeaderValue::from_static("2"))
+            );
+
+            assert!(poll!(&mut waiter_signing).is_pending());
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+            responses
+                .remove(0)
+                .send(Ok(Some(long_lived)))
+                .expect("controlled response must be received");
+            waiter_signing
+                .await
+                .expect("the long-deadline waiter must refresh for its own request");
+            assert_eq!(
+                waiter_request.headers.get("x-credential-generation"),
+                Some(&HeaderValue::from_static("3"))
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
         });
     }
 
