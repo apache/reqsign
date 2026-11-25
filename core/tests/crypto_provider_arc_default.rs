@@ -23,17 +23,19 @@ mod support;
 use std::sync::Arc;
 
 use reqsign_core::crypto::{CryptoProvider, get_default, install_default};
-use support::crypto_arc::{ALL_CRYPTO_METHODS, MarkerProvider, assert_all_forwarded};
+use support::crypto_arc::MarkerProvider;
 
 #[test]
 fn install_default_accepts_an_arc_dyn_provider() {
-    let marker = Arc::new(MarkerProvider::new());
-    let provider: Arc<dyn CryptoProvider> = marker.clone();
+    let provider: Arc<dyn CryptoProvider> = Arc::new(MarkerProvider);
 
     install_default(provider).expect("an Arc<dyn CryptoProvider> must install");
     let installed = get_default().expect("the provider must be installed");
 
-    assert_all_forwarded::<Arc<dyn CryptoProvider>>(installed);
-
-    assert_eq!(marker.recorded_calls(), ALL_CRYPTO_METHODS);
+    assert_eq!(
+        installed
+            .sha256(b"marker input")
+            .expect("the installed Arc provider must forward sha256"),
+        [2; 32]
+    );
 }

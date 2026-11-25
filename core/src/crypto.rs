@@ -146,6 +146,9 @@ pub trait CryptoProvider: Debug + Send + Sync + 'static {
     }
 }
 
+// `CryptoProvider` may gain defaulted methods. Keep this forwarding impl
+// exhaustive instead of silently falling back to a trait default.
+#[deny(clippy::missing_trait_methods)]
 impl<T: CryptoProvider + ?Sized> CryptoProvider for Arc<T> {
     fn sha1(&self, input: &[u8]) -> Result<[u8; 20]> {
         (**self).sha1(input)
