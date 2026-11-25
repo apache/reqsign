@@ -43,9 +43,14 @@ It then runs `publish.py`. The publisher uploads one package at a time —
 workspace members by package name and standalone packages by manifest path —
 requests and revokes a fresh GitHub OIDC-derived crates.io token for every
 attempt, retries crates.io rate limits, and treats an already-published matching
-name/version as a completed step. Individual uploads use `--no-verify` because
-the workflow has already verified the complete package set from the same
-commit.
+name/version as a completed step. A successful upload or duplicate report does
+not promise that the index already exposes the version to the next package, so
+the publisher also retries the same package with a bounded budget while Cargo
+fails to select exactly a planned dependency version from the crates.io index.
+A requirement for another version, an unplanned package, and every unrelated
+build, manifest, or authentication failure still fail immediately. Individual
+uploads use `--no-verify` because the workflow has already verified the
+complete package set from the same commit.
 
 Live publishing requires the `release` GitHub environment and a job with
 `id-token: write`. It never reads a long-lived crates.io token.
@@ -116,7 +121,8 @@ These are repository-specific scripts: run them with normal Python (without
 `-O` or `PYTHONOPTIMIZE`, which disable assertions). Cargo and crates.io response
 fields are used directly; unexpected package or publisher state fails an
 assertion. Failed API requests stop the run; rerun after resolving the failure.
-Only Cargo publish rate limits and public metadata propagation are retried.
+Only Cargo publish rate limits, Cargo registry index lag for a planned
+dependency version, and public metadata propagation are retried.
 
 ## Tests
 

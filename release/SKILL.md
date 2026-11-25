@@ -435,7 +435,9 @@ NAME
    The workflow validates the complete publish plan, then publishes
    crates in dependency order. Every package attempt receives a new
    OIDC-derived crates.io token that is revoked immediately afterward. Reruns
-   skip versions already published by an earlier partial run.
+   skip versions already published by an earlier partial run. A package whose
+   planned dependency version is not visible in the crates.io index yet is
+   retried with a bounded budget before the run fails.
 
 6. Verify crates.io versions.
 

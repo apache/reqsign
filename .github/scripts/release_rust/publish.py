@@ -25,6 +25,13 @@ from email.utils import parsedate_to_datetime
 from plan import PROJECT_DIR, Package, plan
 from trusted_publishing import temporary_trusted_publishing_token
 
+# A successful upload or duplicate report does not promise that the crates.io
+# index already exposes that version. Cargo reports the lag as a version
+# selection failure against the index when packaging the next package. Retry
+# the same package with a bounded budget before treating the failure as real.
+INDEX_RETRY_ATTEMPTS = 10
+INDEX_RETRY_DELAY = 30
+
 
 def parse_retry_after(output: str) -> int:
     match = re.search(r"Please try again after ([^\n]+)", output)
@@ -64,6 +71,32 @@ def already_published(output: str, package: Package) -> bool:
     )
 
 
+def not_yet_indexed_dependency(
+    output: str, planned_versions: dict[str, str]
+) -> str | None:
+    """Return a planned dependency the index does not expose yet.
+
+    Cargo fails to prepare the next package when a just-published dependency
+    version is not visible through the index. Only an index resolution failure
+    for exactly the planned version is recoverable this way; a requirement for
+    another version or an unplanned package is a manifest, registry, or
+    ordering error that must fail the run.
+    """
+    if "location searched: crates.io index" not in output:
+        return None
+    match = re.search(
+        r"failed to select a version for the requirement `([^`]+) = \"([^\"]+)\"`",
+        output,
+    )
+    if match is None:
+        return None
+    name, requirement = match.groups()
+    version = planned_versions.get(name)
+    if version is None or requirement.lstrip("^=") != version:
+        return None
+    return name
+
+
 def publish_command(package: Package) -> list[str]:
     # A standalone manifest is not a workspace member, so Cargo cannot select
     # it by package name from the project directory.
@@ -74,8 +107,9 @@ def publish_command(package: Package) -> list[str]:
     return ["cargo", "publish", *selector, "--no-verify"]
 
 
-def publish_package(package: Package) -> str:
+def publish_package(package: Package, *, planned_versions: dict[str, str]) -> str:
     command = publish_command(package)
+    index_attempts = 0
 
     while True:
         print(f"Publishing {package.name} {package.version}", flush=True)
@@ -110,11 +144,33 @@ def publish_package(package: Package) -> str:
             )
             time.sleep(delay)
             continue
+        pending = not_yet_indexed_dependency(output, planned_versions)
+        if pending is not None:
+            if index_attempts < INDEX_RETRY_ATTEMPTS:
+                index_attempts += 1
+                print(
+                    f"crates.io index has not caught up with "
+                    f"{pending} {planned_versions[pending]}; retry "
+                    f"{index_attempts}/{INDEX_RETRY_ATTEMPTS}",
+                    flush=True,
+                )
+                time.sleep(INDEX_RETRY_DELAY)
+                continue
+            print(
+                f"crates.io index did not expose {pending} "
+                f"{planned_versions[pending]} after {index_attempts} retries",
+                flush=True,
+            )
         raise subprocess.CalledProcessError(process.returncode, command, output=output)
 
 
 def main() -> int:
-    results = [(package, publish_package(package)) for package in plan()]
+    packages = plan()
+    planned_versions = {package.name: package.version for package in packages}
+    results = [
+        (package, publish_package(package, planned_versions=planned_versions))
+        for package in packages
+    ]
 
     print("Publish plan completed:", flush=True)
     for package, result in results:
