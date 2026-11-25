@@ -307,7 +307,8 @@ pub fn validate_presign_lifetime(expires_in: Option<Duration>) -> Result<()> {
         return Ok(());
     };
 
-    if expires_in.as_secs() == 0 || expires_in > MAX_PRESIGN_LIFETIME {
+    let seconds = expires_in.as_secs();
+    if seconds == 0 || seconds > MAX_PRESIGN_LIFETIME.as_secs() {
         return Err(reqsign_core::Error::request_invalid(
             "AWS SigV4 presigned URL lifetime must be between 1 and 604800 seconds",
         ));
