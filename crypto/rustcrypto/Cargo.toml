@@ -27,18 +27,31 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+# MD5, SHA-1, SHA-256, and HMAC operations are unconditional. These features
+# select the remaining algorithms; `aes-gcm` also enables secure random.
+[features]
+default = ["rsa", "p256", "aes-gcm"]
+rsa = ["dep:rsa"]
+p256 = ["dep:p256"]
+aes-gcm = ["dep:aes-gcm", "dep:getrandom"]
+
 [dependencies]
 hmac = "0.13"
 md-5 = "0.11"
-p256 = { version = "0.14.0", default-features = false, features = ["ecdsa"] }
+p256 = { version = "0.14.0", default-features = false, features = [
+  "ecdsa",
+], optional = true }
 reqsign-core = { workspace = true }
 sha1 = "0.11"
 sha2 = { version = "0.11", features = ["oid"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
-getrandom = "0.4"
-rsa = { version = "0.10.0", features = ["pkcs1v15"] }
+aes-gcm = { version = "0.11", default-features = false, features = [
+  "aes",
+  "alloc",
+], optional = true }
+getrandom = { version = "0.4", optional = true }
+rsa = { version = "0.10.0", features = ["pkcs1v15"], optional = true }
 
 [dev-dependencies]
 hex = { workspace = true }

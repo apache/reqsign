@@ -34,9 +34,20 @@ let signer = Signer::new(
 );
 ```
 
-The crate also supports server-side Cloud Storage Credential Access Boundary
-downscoping. Enable the `credential-access-boundary-client-side` feature for
-local client-side token generation.
+The crate supports server-side Cloud Storage Credential Access Boundary
+downscoping. For local client-side token generation, enable the
+`credential-access-boundary-client-side` feature and bind a `CryptoProvider`
+that supports AES-GCM and secure random generation, such as
+`RustCryptoProvider` with its default `aes-gcm` feature:
+
+```toml
+[dependencies]
+reqsign-google = { version = "4", features = ["credential-access-boundary-client-side"] }
+reqsign-crypto-rustcrypto = "1"
+```
+
+The facade's `google` feature enables request signing and server-side CAB only;
+it does not select the AES-GCM or random operations that client-side CAB needs.
 
 For query signing, credential providers preserve a target service account email
 when they can determine it from impersonation or VM metadata configuration. The

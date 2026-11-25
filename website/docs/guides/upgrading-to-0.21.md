@@ -153,15 +153,49 @@ loading credentials to see the `ConfigInvalid` failure itself.
   `sas.token(ctx.crypto_provider()?)?`.
 - Base64 helpers (`base64_encode`, `base64_decode`) are unchanged.
 
-### Backend crates
+### Backend crates and features
 
-- `reqsign-crypto-rustcrypto` implements all operations and supports
-  `wasm32-unknown-unknown` for MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512, and
-  P-256 ECDSA. RSA, AES-GCM, and random generation report `ConfigInvalid` there.
+- `reqsign-crypto-rustcrypto` keeps MD5, SHA-1, SHA-256, and HMAC-SHA-1/256/512
+  unconditional. `rsa`, `p256`, and `aes-gcm` are additive features, all
+  enabled by default. `aes-gcm` also enables `getrandom` for secure random
+  generation. A hash/HMAC-only build uses `default-features = false`.
+- Disabled operations return `ConfigInvalid` and name the missing feature. On
+  `wasm32-unknown-unknown`, RSA, AES-GCM, and random generation remain
+  unsupported even when their feature is enabled, and report `ConfigInvalid`.
 - `reqsign-crypto-boring` is native-only, excluded from the main workspace,
   and forwards an optional `fips` feature. It is published to crates.io from
   the explicit standalone release-plan entry after `reqsign-core`. Bind it
   explicitly: `Context::new().with_crypto(BoringCryptoProvider::new())`.
+
+The facade has no algorithm features. With `default-crypto`, it disables backend
+defaults and weakly enables only what each service feature needs:
+
+| Facade feature | Backend feature |
+| --- | --- |
+| `aws-v4a` | `p256` |
+| `azure` | `rsa` |
+| `google` | `rsa` |
+| `oracle` | `rsa` |
+| `http-message-signatures` | `rsa` |
+| all other service features | none (hashes and HMACs) |
+
+`full` therefore selects `rsa` and `p256`, not `aes-gcm`. A service feature
+without `default-crypto` does not pull the crypto backend. If you need
+`aes-gcm`, depend on `reqsign-crypto-rustcrypto` directly or use a backend that
+provides it.
+
+The facade's `google-credential-access-boundary-client-side` feature is
+removed. Client-side Google Credential Access Boundary generation now requires
+the service crate directly:
+
+```toml
+[dependencies]
+reqsign-google = { version = "4", features = ["credential-access-boundary-client-side"] }
+reqsign-crypto-rustcrypto = "1"
+```
+
+Bind a provider that supports AES-GCM and secure random generation. With
+`RustCryptoProvider`, the default features include `aes-gcm`.
 
 ## Default signers take an explicit `Context`
 

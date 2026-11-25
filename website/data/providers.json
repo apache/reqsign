@@ -7,7 +7,7 @@
     },
     {
       "name": "reqsign-crypto-rustcrypto",
-      "role": "Pure-Rust CryptoProvider backend, re-exported by the reqsign facade's default-crypto feature and bound by the facade default context when no global provider is installed."
+      "role": "Pure-Rust CryptoProvider backend with additive rsa, p256, and aes-gcm features (default all; hash and HMAC unconditional). Re-exported by the reqsign facade's default-crypto feature and bound by the facade default context when no global provider is installed."
     },
     {
       "name": "reqsign-aws-core",
@@ -618,10 +618,6 @@
         {
           "name": "google",
           "capability": "Enables reqsign-google."
-        },
-        {
-          "name": "google-credential-access-boundary-client-side",
-          "capability": "Enables client-side Credential Access Boundary downscoping inside reqsign-google."
         }
       ],
       "default_signer": {
@@ -660,7 +656,7 @@
         },
         {
           "name": "Credential Access Boundary (client-side)",
-          "mechanism": "Derives a downscoped token locally without a round-trip to the STS API. Requires the google-credential-access-boundary-client-side facade feature.",
+          "mechanism": "Derives a downscoped token locally without a round-trip to the STS API. Requires the credential-access-boundary-client-side feature on reqsign-google and a CryptoProvider that supports AES-GCM.",
           "source_refs": [
             "services/google/src/credential_access_boundary/client_side.rs"
           ]

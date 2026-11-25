@@ -23,7 +23,9 @@
 //!
 //! Typed server-side Cloud Storage Credential Access Boundary downscoping is
 //! always available. Enable the `credential-access-boundary-client-side`
-//! feature for local client-side token generation.
+//! feature for local client-side token generation. Client-side CAB also needs
+//! a `CryptoProvider` with AES-GCM and secure random support, such as
+//! `RustCryptoProvider` with its default `aes-gcm` feature.
 
 mod constants;
 

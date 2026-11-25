@@ -66,7 +66,9 @@ By default, this includes `default-context` (a ready-to-use context using
 `reqwest` and `tokio`) and `default-crypto` (the RustCrypto provider).
 `default-crypto` makes `default_context()` bind RustCrypto when the process-wide
 slot is empty, so default signers work without startup boilerplate. It never
-writes the global slot. To choose a global provider, install it before
+writes the global slot. The backend keeps hash and HMAC operations
+unconditional and enables only the algorithm features selected by the service
+features in use. To choose a global provider, install it before
 constructing facade contexts; contexts already bound to RustCrypto keep that
 binding, and an explicit `Context::with_crypto` binding always wins.
 
@@ -267,7 +269,11 @@ let signer = seafile::default_signer(ctx.clone());
 
 - `default`: Enables `default-context` and `default-crypto`
 - `default-context`: Provides a default context implementation: `ReqwestHttpSend` and `OsEnv` on every target, plus `TokioFileRead` and `TokioCommandExecute` on native targets
-- `default-crypto`: Re-exports `RustCryptoProvider`; `default_context()` binds it when no process-wide provider is installed
+- `default-crypto`: Re-exports `RustCryptoProvider`; `default_context()` binds
+  it when no process-wide provider is installed. The backend always includes
+  MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512, and enables `rsa` or `p256` only when
+  a selected service feature needs it. No facade feature selects `aes-gcm`. A
+  service feature alone does not pull the backend.
 - `aliyun`: Enable Aliyun OSS support
 - `aliyun-drive`: Enable Aliyun Drive Open Platform support
 - `aws`: Enable AWS services support (alias of `aws-v4`)
@@ -280,7 +286,6 @@ let signer = seafile::default_signer(ctx.clone());
 - `dropbox`: Enable Dropbox OAuth 2.0 support
 - `github`: Enable GitHub.com support
 - `google`: Enable Google Cloud support
-- `google-credential-access-boundary-client-side`: Enable client-side Google Credential Access Boundary token generation; implies `google` (server-side CAB is included by `google`)
 - `http-message-signatures`: Enable HTTP Message Signatures (RFC 9421) support
 - `huaweicloud`: Enable Huawei Cloud OBS support
 - `koofr`: Enable Koofr support
@@ -296,6 +301,14 @@ let signer = seafile::default_signer(ctx.clone());
 - `yandex-disk`: Enable Yandex Disk support
 - `full`: Enable all service features
 
+The facade has no algorithm features. With `default-crypto`, `aws-v4a` selects
+`p256`; `azure`, `google`, `oracle`, and `http-message-signatures` select `rsa`.
+Other service features use only the unconditional hash and HMAC operations.
+Client-side Google Credential Access Boundary generation is available from the
+`reqsign-google` crate directly: enable its
+`credential-access-boundary-client-side` feature and bind a `CryptoProvider`
+that supports AES-GCM and secure random generation.
+
 ## WASM Support
 
 Reqsign supports `wasm32-unknown-unknown` for a defined subset of services;
@@ -308,7 +321,9 @@ for the provider list and clock requirements.
 `default-crypto`, binds RustCrypto. File reading and command execution have no
 browser equivalent and fail when a credential source needs them; `OsEnv` reads
 no variables on WASM because there is no process environment, so prefer static
-or externally injected credentials.
+or externally injected credentials. Service features still select the same
+backend algorithms on WASM, but RSA, AES-GCM, and secure random generation
+remain unsupported there and return `ConfigInvalid`.
 
 AWS signing stamps each request with `Timestamp::now()`. A WASM build must
 enable Jiff's JavaScript clock in the application for that to work:

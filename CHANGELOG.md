@@ -41,6 +41,12 @@ through the `Context`, passes the `Context` explicitly to facade
 - **OBS and TOS `Credential` gained `expires_at`**, which breaks struct-literal
   construction. Use `Credential::new` plus `with_expires_at` (and
   `with_session_token` for TOS).
+- **The facade `google-credential-access-boundary-client-side` feature is
+  removed.** Client-side Google Credential Access Boundary generation now
+  requires depending on `reqsign-google` directly with its
+  `credential-access-boundary-client-side` feature and binding a provider that
+  supports AES-GCM and secure random generation. The facade `google` feature
+  keeps request signing and server-side CAB.
 
 ### Added
 
@@ -74,6 +80,16 @@ through the `Context`, passes the `Context` explicitly to facade
   before building the request URI and sign with that same credential, without a
   refresh in between changing it.
 - Optional MD5 and HMAC-SHA512 provider operations.
+- Additive `rsa`, `p256`, and `aes-gcm` features in
+  `reqsign-crypto-rustcrypto`, all enabled by default. MD5, SHA-1, SHA-256, and
+  HMAC operations stay unconditional. Disabled operations return
+  `ConfigInvalid` naming the missing feature; `aes-gcm` also owns secure random
+  generation through `getrandom`.
+- Facade service features weakly select only the backend algorithms they need:
+  `aws-v4a` selects `p256`; `azure`, `google`, `oracle`, and
+  `http-message-signatures` select `rsa`. A service feature without
+  `default-crypto` does not pull the backend, and the facade exposes no
+  algorithm features.
 - Opt-in IMDSv1 fallback for AWS credentials, and AssumeRole providers that
   honor STS endpoint settings.
 
@@ -82,6 +98,9 @@ through the `Context`, passes the `Context` explicitly to facade
 - Minimum supported Rust version is 1.87.0. The RustCrypto backend's
   `rsa 0.10.0` requirement is the reason.
 - The facade `default` feature enables `default-context` and `default-crypto`.
+  The backend dependency disables backend defaults, and `default-crypto` relies
+  on the weak service mappings above; a service feature alone does not pull the
+  backend.
 - **Services without a documented ambient source no longer export an empty
   `DefaultCredentialProvider`.** Aliyun Drive, OneDrive, and Yandex Disk pass
   `StaticCredentialProvider` directly. Facade

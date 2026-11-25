@@ -74,7 +74,8 @@ rustdoc owns signatures.
 ## Crypto providers
 
 - [`reqsign-crypto-rustcrypto`](https://docs.rs/reqsign-crypto-rustcrypto) —
-  pure-Rust provider, including the supported WASM subset
+  pure-Rust provider with additive `rsa`, `p256`, and `aes-gcm` features and
+  the supported WASM subset
 - [`reqsign-crypto-boring`](https://docs.rs/reqsign-crypto-boring) —
   native BoringSSL provider, built outside the main workspace and published to
   crates.io from the explicit standalone release-plan entry
