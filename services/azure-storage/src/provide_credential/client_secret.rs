@@ -21,7 +21,6 @@ use crate::provide_credential::entra::{
 };
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
-use std::time::Duration;
 
 /// Load credential from Azure Client Secret.
 ///
@@ -116,7 +115,7 @@ impl ProvideCredential for ClientSecretCredentialProvider {
 
         match token {
             Some(token_response) => {
-                let expires_on = Timestamp::now() + Duration::from_secs(token_response.expires_in);
+                let expires_on = token_response.expires_at(Timestamp::now())?;
                 Ok(Some(Credential::with_bearer_token(
                     &token_response.access_token,
                     Some(expires_on),
@@ -167,4 +166,95 @@ async fn get_client_secret_token(
 
     let token = parse_token_response(resp.body(), "client secret token response")?;
     Ok(Some(token))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use reqsign_core::{ErrorKind, HttpSend};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    #[derive(Clone, Debug)]
+    struct StaticTokenHttpSend {
+        body: &'static [u8],
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl HttpSend for StaticTokenHttpSend {
+        async fn http_send(
+            &self,
+            req: http::Request<Bytes>,
+        ) -> reqsign_core::Result<http::Response<Bytes>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(http::Method::POST, req.method());
+
+            Ok(http::Response::builder()
+                .status(http::StatusCode::OK)
+                .body(Bytes::from_static(self.body))
+                .expect("mock token response must build"))
+        }
+    }
+
+    fn synthetic_provider() -> ClientSecretCredentialProvider {
+        ClientSecretCredentialProvider::new()
+            .with_tenant_id("synthetic-tenant")
+            .with_client_id("synthetic-client")
+            .with_client_secret("synthetic-secret")
+    }
+
+    fn synthetic_context(body: &'static [u8]) -> (Context, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ctx = crate::test_context().with_http_send(StaticTokenHttpSend {
+            body,
+            calls: calls.clone(),
+        });
+        (ctx, calls)
+    }
+
+    #[tokio::test]
+    async fn provider_preserves_normal_bearer_token_and_expiry() {
+        let (ctx, calls) = synthetic_context(
+            br#"{"token_type":"Bearer","expires_in":3599,"access_token":"synthetic-access-token"}"#,
+        );
+        let before = Timestamp::now();
+        let credential = synthetic_provider()
+            .provide_credential(&ctx)
+            .await
+            .expect("normal token response must decode")
+            .expect("configured provider must return a credential");
+        let after = Timestamp::now();
+
+        match credential {
+            Credential::BearerToken { token, expires_in } => {
+                assert_eq!("synthetic-access-token", token);
+                let expires_in = expires_in.expect("normal token response must have an expiry");
+                assert!(expires_in >= before + Duration::from_secs(3599));
+                assert!(expires_in <= after + Duration::from_secs(3599));
+            }
+            other => panic!("expected bearer token, got {other:?}"),
+        }
+        assert_eq!(1, calls.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn provider_rejects_unrepresentable_expiry_with_a_sanitized_error() {
+        let (ctx, calls) = synthetic_context(
+            br#"{"token_type":"Bearer","expires_in":18446744073709551615,"access_token":"synthetic-access-token"}"#,
+        );
+
+        let err = synthetic_provider()
+            .provide_credential(&ctx)
+            .await
+            .expect_err("unrepresentable expiry must fail");
+        assert_eq!(ErrorKind::Unexpected, err.kind());
+        assert_eq!(
+            "Microsoft Entra token response expires_in is out of range",
+            err.to_string()
+        );
+        assert!(!err.to_string().contains("synthetic-access-token"));
+        assert_eq!(1, calls.load(Ordering::SeqCst));
+    }
 }

@@ -192,6 +192,14 @@ impl Timestamp {
             Err(_) => Self(jiff::Timestamp::MAX),
         }
     }
+
+    /// Add a duration, returning `None` if the result is out of range.
+    ///
+    /// Use this instead of [`Timestamp::saturating_add`] when an unrepresentable
+    /// result must be rejected, such as a server-provided token lifetime.
+    pub fn checked_add(self, rhs: Duration) -> Option<Self> {
+        self.0.checked_add(rhs).ok().map(Self)
+    }
 }
 
 impl Add<Duration> for Timestamp {
@@ -327,5 +335,14 @@ mod tests {
 
         assert_eq!(base.saturating_add(Duration::MAX), max);
         assert_eq!(base.saturating_add(Duration::from_secs(u64::MAX)), max);
+    }
+
+    #[test]
+    fn checked_add_reports_overflow() {
+        let base = test_time();
+        let duration = Duration::from_millis(1_500);
+
+        assert_eq!(base.checked_add(duration), Some(base + duration));
+        assert_eq!(base.checked_add(Duration::MAX), None);
     }
 }

@@ -23,7 +23,6 @@ use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::time::Duration;
 
 /// AzurePipelinesCredentialProvider provides credentials using Azure Pipelines workload identity
 ///
@@ -220,8 +219,7 @@ impl ProvideCredential for AzurePipelinesCredentialProvider {
             .await?;
 
         // Calculate expiration time
-        let expires_in = Duration::from_secs(token_response.expires_in);
-        let expires_on = Timestamp::now() + expires_in;
+        let expires_on = token_response.expires_at(Timestamp::now())?;
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,

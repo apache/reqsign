@@ -22,7 +22,6 @@ use crate::provide_credential::entra::{
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use std::fmt::{Debug, Formatter};
-use std::time::Duration;
 
 #[derive(Clone)]
 struct LoadedSubjectToken {
@@ -216,7 +215,7 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
         )
         .await?;
 
-        let expires_on = Timestamp::now() + Duration::from_secs(token_response.expires_in);
+        let expires_on = token_response.expires_at(Timestamp::now())?;
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,
@@ -290,6 +289,7 @@ async fn load_file_subject_token(ctx: &Context, path: &str) -> Result<Option<Loa
 mod tests {
     use super::*;
     use reqsign_core::ErrorKind;
+    use std::time::Duration;
 
     #[test]
     fn caller_provided_subject_token_is_redacted_from_debug() {
