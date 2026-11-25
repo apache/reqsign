@@ -34,14 +34,14 @@ cargo add reqsign --features aliyun-drive
 cargo add http@1
 ```
 
-The default provider has no ambient source. Supply the identity explicitly:
+Aliyun Drive has no ambient source, so the facade entry takes the access token
+explicitly:
 
 ```rust
 use reqsign::{aliyun_drive, default_context};
 
 let ctx = default_context();
-let signer = aliyun_drive::default_signer(ctx)
-    .with_credential_provider(aliyun_drive::StaticCredentialProvider::new("access-token"));
+let signer = aliyun_drive::default_signer(ctx, "access-token");
 
 // The caller owns the drive ID, file path, and request body.
 let mut req = http::Request::builder()
@@ -60,9 +60,11 @@ signer.sign(&mut req, None).await?;
 
 Aliyun Drive Open Platform documents OAuth authorization and its token endpoint,
 but no CLI, SDK, environment-variable, or local-file credential discovery
-contract. Reqsign therefore does not invent an ambient source. Use
-`StaticCredentialProvider` for a caller-managed access token, or
-`RefreshCredentialProvider` for a confidential-client refresh token.
+contract. Reqsign therefore does not invent an ambient source, and this crate
+exports no default provider or builder. Use `StaticCredentialProvider` for a
+caller-managed access token, or `RefreshCredentialProvider` for a
+confidential-client refresh token. Pass the provider directly to `Signer::new`;
+the facade entry above selects the static provider.
 
 When constructing a `Credential` directly, `Credential::new(token)` validates
 the token and the consuming `with_expires_at(expires_at)` builder records its
@@ -105,6 +107,8 @@ have been consumed. Restarting with that original value can therefore fail.
 Restart with a fresh authorized grant, or let the application manage and persist
 its own refresh exchange and supply the resulting access token through
 `StaticCredentialProvider`.
+
+Use `Signer::new` for a refresh provider, without a dummy access token:
 
 ```rust
 use reqsign::{Signer, aliyun_drive, default_context};

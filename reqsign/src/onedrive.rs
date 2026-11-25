@@ -18,49 +18,51 @@
 //! OneDrive service support with convenience APIs.
 //!
 //! Microsoft documents no automatic Microsoft Graph credential source, so the
-//! default signer composes a default provider with an empty automatic chain.
-//! Prepend an explicit provider before signing.
+//! default signer takes an explicit access token and this crate exports no
+//! default provider. For the documented refresh exchange or another provider,
+//! assemble a [`Signer`] directly.
 
 pub use reqsign_onedrive::*;
 
 use crate::{Context, Signer};
 
-/// Default OneDrive signer type with the documented default credential chain.
+/// Default OneDrive signer type with an explicit static access token.
 pub type DefaultSigner = Signer<Credential>;
 
-/// Create a default OneDrive signer with the supplied runtime context.
+/// Create a OneDrive signer with an explicit Microsoft Graph access token.
 ///
-/// This composes:
-/// - The caller-supplied [`Context`] (for example `reqsign::default_context()`
-///   when `default-context` is enabled)
-/// - [`DefaultCredentialProvider`], whose automatic chain is empty because
-///   Microsoft documents no ambient Microsoft Graph user-token source
-/// - [`RequestSigner`], which adds a sensitive `Authorization: Bearer` header
+/// Microsoft documents no ambient Microsoft Graph user-token source, so there
+/// is no default provider to discover one. This helper selects
+/// [`StaticCredentialProvider`] and [`RequestSigner`], which adds a sensitive
+/// `Authorization: Bearer` header. Tokens are short lived; use
+/// [`StaticCredentialProvider::with_expires_at`] when the caller knows the
+/// expiration.
 ///
-/// Configure the credential through the default provider instead of letting
-/// Reqsign guess. Prepend the provider for the flow you chose with
-/// `DefaultCredentialProvider::push_front`, or replace the provider entirely:
+/// For the documented Microsoft Entra refresh-token exchange or another
+/// explicit provider, assemble the signer directly instead of passing a dummy
+/// token:
 ///
-/// - `DefaultCredentialProvider::new().push_front(RefreshCredentialProvider::new(..)?)`
-///   for the documented Microsoft Entra refresh-token exchange
-/// - `DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(..))`
-///   for a caller-managed access token
+/// ```no_run
+/// # #[cfg(feature = "default-context")]
+/// # fn example(ctx: reqsign::Context) -> reqsign_core::Result<()> {
+/// use reqsign::{Signer, onedrive};
 ///
-/// Both paths replace the signer's provider with
-/// [`Signer::with_credential_provider`](reqsign_core::Signer::with_credential_provider),
-/// which also resets the credential cache.
+/// let provider = onedrive::RefreshCredentialProvider::new("client-id", "refresh-token")?;
+/// let signer = Signer::new(ctx, provider, onedrive::RequestSigner);
+/// # let _ = signer;
+/// # Ok(())
+/// # }
+/// ```
 ///
 /// # Example
 ///
 /// ```no_run
 /// # #[cfg(feature = "default-context")]
 /// # async fn example() -> reqsign_core::Result<()> {
-/// use reqsign::onedrive::{DefaultCredentialProvider, StaticCredentialProvider, default_signer};
+/// use reqsign::onedrive::default_signer;
 ///
 /// let ctx = reqsign::default_context();
-/// let provider = DefaultCredentialProvider::new()
-///     .push_front(StaticCredentialProvider::new("graph-access-token"));
-/// let signer = default_signer(ctx).with_credential_provider(provider);
+/// let signer = default_signer(ctx, "graph-access-token");
 ///
 /// // The caller owns the Microsoft Graph endpoint, drive path, and query.
 /// let mut req = http::Request::get("https://graph.microsoft.com/v1.0/me/drive")
@@ -73,6 +75,10 @@ pub type DefaultSigner = Signer<Credential>;
 /// # Ok(())
 /// # }
 /// ```
-pub fn default_signer(ctx: Context) -> DefaultSigner {
-    Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner)
+pub fn default_signer(ctx: Context, access_token: impl Into<String>) -> DefaultSigner {
+    Signer::new(
+        ctx,
+        StaticCredentialProvider::new(access_token),
+        RequestSigner,
+    )
 }

@@ -346,6 +346,39 @@ The caller still owns request policy, such as the `User-Agent` Baidu requires
 on download requests. Reqsign only signs the `access_token` query parameter and
 preserves the rest of the wire query.
 
+Aliyun Drive, OneDrive, and Yandex Disk also have no documented ambient token
+source. Their facade entries take the access token explicitly:
+
+```rust
+use reqsign::{aliyun_drive, default_context, onedrive, yandex_disk};
+
+let ctx = default_context();
+let signer = aliyun_drive::default_signer(ctx.clone(), access_token.clone());
+let signer = onedrive::default_signer(ctx.clone(), access_token.clone());
+let signer = yandex_disk::default_signer(ctx, access_token);
+```
+
+For a refresh provider or another explicit source, assemble the signer directly
+instead of passing a dummy token:
+
+```rust
+use reqsign::{Signer, aliyun_drive, default_context};
+
+let provider = aliyun_drive::RefreshCredentialProvider::new(
+    "client-id",
+    "client-secret",
+    "refresh-token",
+)?;
+let signer = Signer::new(default_context(), provider, aliyun_drive::RequestSigner);
+```
+
+These three crates do not export an empty `DefaultCredentialProvider` or its
+builder. A single explicit provider passed to `Signer::new` keeps its own error
+behavior. `ProvideCredentialChain` remains available for an intentional
+multi-source chain and keeps its permissive error policy; it is not equivalent
+to the fail-closed, last-added-first ordering that an empty default provider's
+`push_front` used to provide.
+
 ## OBS and TOS credentials carry an absolute expiry
 
 The Huawei Cloud OBS and Volcengine TOS `Credential` types gained

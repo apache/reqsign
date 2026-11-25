@@ -19,15 +19,23 @@
 
 use bytes::Bytes;
 use reqsign::aliyun_drive::{
-    DefaultSigner, RefreshCredentialProvider, StaticCredentialProvider, default_signer,
+    DefaultSigner, RefreshCredentialProvider, RequestSigner, default_signer,
 };
-use reqsign::{Context, ErrorKind, HttpSend, Result, StaticEnv};
-use std::collections::HashMap;
+use reqsign::{Context, ErrorKind, HttpSend, Result, Signer};
 use std::sync::{Arc, Mutex};
 
-#[derive(Clone, Debug)]
+const ACCESS_TOKEN: &str = "fake-facade-access-token";
+const ROTATED_REFRESH_TOKEN: &str = "fake-facade-rotated-token";
+
+#[derive(Clone, Debug, Default)]
 struct MockHttpSend {
     requests: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl MockHttpSend {
+    fn requests(&self) -> Vec<Vec<u8>> {
+        self.requests.lock().expect("request lock").clone()
+    }
 }
 
 impl HttpSend for MockHttpSend {
@@ -39,9 +47,9 @@ impl HttpSend for MockHttpSend {
 
         Ok(http::Response::builder()
             .status(http::StatusCode::OK)
-            .body(Bytes::from_static(
-                br#"{"access_token":"fake-facade-access-token","token_type":"Bearer","expires_in":3600,"refresh_token":"fake-facade-rotated-token"}"#,
-            ))
+            .body(Bytes::from(format!(
+                r#"{{"access_token":"{ACCESS_TOKEN}","token_type":"Bearer","expires_in":3600,"refresh_token":"{ROTATED_REFRESH_TOKEN}"}}"#
+            )))
             .expect("response must build"))
     }
 }
@@ -56,11 +64,14 @@ fn request() -> http::request::Parts {
 }
 
 #[tokio::test]
-async fn facade_static_override_signs_with_bearer() -> Result<()> {
+async fn facade_default_signer_uses_the_explicit_static_token() -> Result<()> {
+    let http = MockHttpSend::default();
     let original = request();
     let mut parts = original.clone();
-    let signer: DefaultSigner = default_signer(Context::new())
-        .with_credential_provider(StaticCredentialProvider::new("fake-facade-static-token"));
+    let signer: DefaultSigner = default_signer(
+        Context::new().with_http_send(http.clone()),
+        "fake-facade-static-token",
+    );
 
     signer.sign(&mut parts, None).await?;
 
@@ -72,54 +83,47 @@ async fn facade_static_override_signs_with_bearer() -> Result<()> {
         parts.headers[http::header::USER_AGENT],
         "facade-aliyun-drive-test"
     );
+    assert!(http.requests().is_empty());
     Ok(())
 }
 
 #[tokio::test]
-async fn facade_default_provider_reads_no_ambient_source() -> Result<()> {
-    let ctx = Context::new().with_env(StaticEnv {
-        home_dir: None,
-        envs: HashMap::from([(
-            "ALIYUN_DRIVE_ACCESS_TOKEN".to_string(),
-            "fake-facade-env-token".to_string(),
-        )]),
-    });
-    let signer = default_signer(ctx);
+async fn facade_default_signer_rejects_an_invalid_token_without_mutating_the_request() {
+    let signer = default_signer(Context::new(), "fake token with space");
     let original = request();
     let mut parts = original.clone();
 
     let error = signer
         .sign(&mut parts, None)
         .await
-        .expect_err("Aliyun Drive has no ambient credential source");
-    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+        .expect_err("an invalid explicit token must fail");
+    assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
     assert_eq!(parts.uri, original.uri);
     assert_eq!(parts.headers, original.headers);
-    Ok(())
 }
 
 #[tokio::test]
-async fn facade_refresh_provider_uses_the_context_transport() -> Result<()> {
-    let http = MockHttpSend {
-        requests: Arc::new(Mutex::new(Vec::new())),
-    };
+async fn facade_refresh_provider_uses_the_context_transport_and_cache() -> Result<()> {
+    let http = MockHttpSend::default();
     let ctx = Context::new().with_http_send(http.clone());
     let provider = RefreshCredentialProvider::new(
         "fake-client-id",
         "fake-client-secret",
         "fake-refresh-token",
     )?;
-    let signer = default_signer(ctx).with_credential_provider(provider);
-    let mut parts = request();
+    let signer = Signer::new(ctx, provider, RequestSigner);
 
-    signer.sign(&mut parts, None).await?;
+    for _ in 0..2 {
+        let mut parts = request();
+        signer.sign(&mut parts, None).await?;
+        assert_eq!(
+            parts.headers[http::header::AUTHORIZATION],
+            format!("Bearer {ACCESS_TOKEN}")
+        );
+    }
 
-    assert_eq!(
-        parts.headers[http::header::AUTHORIZATION],
-        "Bearer fake-facade-access-token"
-    );
-    let requests = http.requests.lock().expect("request lock");
-    assert_eq!(requests.len(), 1);
+    let requests = http.requests();
+    assert_eq!(requests.len(), 1, "the signer must reuse the cached token");
     let body: serde_json::Value =
         serde_json::from_slice(&requests[0]).expect("token request body must be JSON");
     assert_eq!(body["client_id"], "fake-client-id");

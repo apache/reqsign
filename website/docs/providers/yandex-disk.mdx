@@ -57,11 +57,11 @@ authenticates requests with `Authorization: OAuth <access token>`. The token
 is issued by Yandex OAuth to an app for a specific user's Disk.
 
 Yandex documents no environment variable, CLI token store, or well-known
-credential file for these tokens, so Reqsign does not infer one.
-`default_signer` therefore takes the token explicitly, and
-`DefaultCredentialProvider::new()` has an empty automatic chain. Compose
-`StaticCredentialProvider` with `push_front`, or supply a dynamic
-`ProvideCredential` when the token rotates:
+credential file for these tokens, so Reqsign does not infer one, and this crate
+exports no default provider or builder. `default_signer` therefore takes the
+token explicitly and selects `StaticCredentialProvider`. Supply a dynamic
+`ProvideCredential` when the token rotates, passing it directly to
+`Signer::new`:
 
 ```rust
 use reqsign::{Context, Signer};

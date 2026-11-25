@@ -4,14 +4,16 @@ Yandex Disk OAuth access-token credentials and request signing for Reqsign.
 
 The Yandex Disk REST API authenticates requests with
 `Authorization: OAuth <access token>`. This crate supplies an opaque access
-token type, a static credential provider, an empty default provider that can be
-composed with explicit providers, and a request signer that adds the header.
+token type, a static credential provider, and a request signer that adds the
+header.
 
 ## Credential discovery
 
 Yandex Disk documents no environment variable, CLI token store, or well-known
-credential file for OAuth access tokens. Reqsign does not invent one, so the
-default provider has no automatic source. Supply the token explicitly:
+credential file for OAuth access tokens. Reqsign does not invent one, and this
+crate exports no default provider or builder. Supply the token explicitly, or
+use the facade's `default_signer(ctx, access_token)`, which selects
+`StaticCredentialProvider`:
 
 ```rust,no_run
 use reqsign_core::{Context, Result, Signer};
@@ -36,22 +38,13 @@ signer.sign(&mut req, None).await?;
 # }
 ```
 
-The default provider is the composition point when you want a provider chain:
-
-```rust,no_run
-use reqsign_core::{Context, Result, Signer};
-use reqsign_yandex_disk::{
-    DefaultCredentialProvider, RequestSigner, StaticCredentialProvider,
-};
-
-# fn example(context: Context) -> Result<()> {
-let provider = DefaultCredentialProvider::new()
-    .push_front(StaticCredentialProvider::new("yandex-disk-oauth-token"));
-let signer = Signer::new(context, provider, RequestSigner);
-# let _ = signer;
-# Ok(())
-# }
-```
+Pass one provider directly to `Signer::new`; a single provider keeps its own
+error behavior. For several sources, the caller owns the composition.
+`ProvideCredentialChain` tries providers in insertion order and logs a provider
+error before continuing. It is not equivalent to fail-closed, last-added-first
+ordering; keep that ordering in a caller-owned `ProvideCredential`
+implementation when it is required. A deliberate empty `ProvideCredentialChain`
+yields no credential.
 
 Token issuance, refresh, revocation, and the permissions attached to the OAuth
 app stay with the caller and Yandex OAuth. This crate does not implement

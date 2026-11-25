@@ -25,9 +25,9 @@ use crate::Credential;
 
 /// Loads an explicit Yandex Disk OAuth access token.
 ///
-/// Use this provider with [`reqsign_core::Signer::with_credential_provider`] or
-/// [`crate::DefaultCredentialProvider::push_front`]. An invalid explicit value
-/// fails instead of falling back to another source. `Debug` output never
+/// Pass this provider to [`reqsign_core::Signer::new`] or
+/// [`reqsign_core::Signer::with_credential_provider`]. An invalid explicit
+/// value fails instead of falling back to another source. `Debug` output never
 /// contains the token.
 #[derive(Clone)]
 pub struct StaticCredentialProvider {

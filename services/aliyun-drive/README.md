@@ -10,8 +10,16 @@ This crate provides:
 - `RefreshCredentialProvider` for Aliyun Drive's JSON refresh-token exchange,
   including serialized refresh-token rotation.
 - `RequestSigner`, which inserts `Authorization: Bearer <token>`.
-- `DefaultCredentialProvider`, an empty default chain because Aliyun Drive
-  documents no ambient CLI, SDK, environment, or file credential contract.
+
+Aliyun Drive documents no ambient CLI, SDK, environment, or file credential
+contract, so this crate exports no default provider or builder. Pass the chosen
+provider directly to `Signer::new`; the facade's
+`default_signer(ctx, access_token)` selects `StaticCredentialProvider` for a
+caller-managed token.
+
+A single explicit provider keeps its own error behavior. If you combine several
+sources, pass an intentional `ProvideCredentialChain` or caller-owned
+`ProvideCredential` implementation to `Signer::new`.
 
 The drive ID, file paths, upload URLs, request bodies, and storage API requests
 stay with the caller. The first-party storage API requires a caller-supplied

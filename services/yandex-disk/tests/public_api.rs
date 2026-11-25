@@ -17,17 +17,14 @@
 
 #![cfg(not(target_arch = "wasm32"))]
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use reqsign_core::time::Timestamp;
 use reqsign_core::{
     Context, ErrorKind, ProvideCredential, ProvideCredentialChain, Result, SignRequest, Signer,
-    SigningCredential, StaticEnv,
+    SigningCredential,
 };
-use reqsign_yandex_disk::{
-    AccessToken, Credential, DefaultCredentialProvider, RequestSigner, StaticCredentialProvider,
-};
+use reqsign_yandex_disk::{AccessToken, Credential, RequestSigner, StaticCredentialProvider};
 
 const STATIC_TOKEN: &str = "fake-yandex-disk-static-token-A1";
 const STALE_TOKEN: &str = "fake-yandex-disk-stale-token-B2";
@@ -48,22 +45,6 @@ fn request() -> http::request::Parts {
         .0;
     parts.extensions.insert(CallerExtension("caller-owned"));
     parts
-}
-
-fn context_with_fabricated_environment() -> Context {
-    Context::new().with_env(StaticEnv {
-        home_dir: Some("/tmp/fake-yandex-disk-home".into()),
-        envs: HashMap::from([
-            (
-                "YANDEX_DISK_ACCESS_TOKEN".to_string(),
-                "fake-yandex-disk-ambient-token-C3".to_string(),
-            ),
-            (
-                "YANDEX_DISK_TOKEN".to_string(),
-                "fake-yandex-disk-ambient-token-D4".to_string(),
-            ),
-        ]),
-    })
 }
 
 #[tokio::test]
@@ -129,49 +110,32 @@ async fn signing_replaces_stale_authorization() -> Result<()> {
 }
 
 #[tokio::test]
-async fn default_provider_has_no_implicit_source() -> Result<()> {
-    let context = context_with_fabricated_environment();
-
-    for provider in [
-        DefaultCredentialProvider::new(),
-        DefaultCredentialProvider::default(),
-        DefaultCredentialProvider::builder().build(),
-    ] {
-        assert!(
-            provider.provide_credential(&context).await?.is_none(),
-            "the default provider must not invent an environment or file source"
-        );
-    }
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn default_provider_composes_explicit_sources_and_fails_closed() -> Result<()> {
+async fn explicit_provider_and_caller_chain_preserve_their_error_policy() -> Result<()> {
     let context = Context::new();
-    let provider =
-        DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(STATIC_TOKEN));
+    let provider = StaticCredentialProvider::new(STATIC_TOKEN);
     let credential = provider
         .provide_credential(&context)
         .await?
-        .expect("the prepended static provider must supply a credential");
+        .expect("the explicit provider must supply a credential");
     assert_eq!(credential.access_token().as_str(), STATIC_TOKEN);
 
-    let chain = ProvideCredentialChain::new().push(StaticCredentialProvider::new(STATIC_TOKEN));
-    let provider = DefaultCredentialProvider::with_chain(chain);
-    let credential = provider
-        .provide_credential(&context)
-        .await?
-        .expect("the caller-supplied chain must supply a credential");
-    assert_eq!(credential.access_token().as_str(), STATIC_TOKEN);
+    let chain = ProvideCredentialChain::new()
+        .push(StaticCredentialProvider::new(""))
+        .push(StaticCredentialProvider::new(STATIC_TOKEN));
+    let signer = Signer::new(Context::new(), chain, RequestSigner);
+    let mut parts = request();
+    signer.sign(&mut parts, None).await?;
+    assert_eq!(
+        parts.headers[AUTHORIZATION],
+        format!("OAuth {STATIC_TOKEN}")
+    );
 
     let secret = "fake-yandex-disk-invalid-token-\u{00e9}";
-    let provider =
-        DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(secret));
+    let provider = StaticCredentialProvider::new(secret);
     let error = provider
         .provide_credential(&context)
         .await
-        .expect_err("an invalid prepended provider must not fall through");
+        .expect_err("an invalid explicit provider must not fall through");
     assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
     assert!(!format!("{error}").contains(secret));
     assert!(!format!("{error:?}").contains(secret));
@@ -295,14 +259,8 @@ async fn debug_output_redacts_tokens() -> Result<()> {
     let access_token = AccessToken::new(token)?;
     let credential = Credential::from_access_token(access_token);
     let static_provider = StaticCredentialProvider::new(token);
-    let default_provider =
-        DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(token));
 
-    for debug in [
-        format!("{credential:?}"),
-        format!("{static_provider:?}"),
-        format!("{default_provider:?}"),
-    ] {
+    for debug in [format!("{credential:?}"), format!("{static_provider:?}")] {
         assert!(!debug.contains(token), "Debug must not reveal the token");
     }
     assert!(!format!("{:?}", credential.access_token()).contains(token));
@@ -321,14 +279,14 @@ async fn missing_credentials_and_expires_in_fail_without_mutating_the_request() 
 
     let signer = Signer::new(
         Context::new(),
-        DefaultCredentialProvider::new(),
+        ProvideCredentialChain::<Credential>::new(),
         RequestSigner,
     );
     let mut parts = original.clone();
     let error = signer
         .sign(&mut parts, None)
         .await
-        .expect_err("an empty default chain must not sign");
+        .expect_err("a deliberate empty chain must not sign");
     assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
     assert_eq!(parts.uri, original.uri);
     assert_eq!(parts.headers, original.headers);
@@ -360,14 +318,11 @@ async fn missing_credentials_and_expires_in_fail_without_mutating_the_request() 
 }
 
 #[tokio::test]
-async fn empty_default_provider_and_invalid_static_token_do_not_leak_into_the_request() -> Result<()>
-{
+async fn invalid_static_token_does_not_leak_into_the_request() -> Result<()> {
     let original = request();
     let signer = Signer::new(
         Context::new(),
-        DefaultCredentialProvider::new().push_front(StaticCredentialProvider::new(
-            "fake-yandex-disk-invalid-\u{00e9}",
-        )),
+        StaticCredentialProvider::new("fake-yandex-disk-invalid-\u{00e9}"),
         RequestSigner,
     );
 
