@@ -16,7 +16,7 @@
 // under the License.
 
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::credential::Credential;
 use crate::provide_credential::entra::{
@@ -330,7 +330,7 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
             .await?;
 
         // Calculate expiration time
-        let expires_on = Timestamp::now() + Duration::from_secs(token_response.expires_in);
+        let expires_on = token_response.expires_at(Timestamp::now())?;
 
         Ok(Some(Credential::with_bearer_token(
             &token_response.access_token,
