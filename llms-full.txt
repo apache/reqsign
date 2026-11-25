@@ -2094,7 +2094,7 @@ let uri = format!(
 
     "{}/b2api/v4/b2_list_buckets?accountId={account_id}",
 
-    credential.api_url
+    credential.api_url()
 
 );
 
@@ -2144,6 +2144,21 @@ These crates and facade features are published for the first time at `1.0.0`. Th
 | yandex-disk    | reqsign-yandex-disk   | Yandex Disk OAuth credentials and signing            |
 
 `reqsign-http-message-signatures` (RFC 9421, facade feature`http-message-signatures`) is also new; it joins the lockstep line and starts at`4.0.0` so it composes with `reqsign-core` 4.
+
+### Credential construction[​](#credential-construction "Direct link to Credential construction")
+
+These crates have no earlier published API to migrate from. Their credential types are built through constructors and builders and read through accessors instead of public fields:
+
+```
+
+let credential = aliyun_drive::Credential::new(access_token)?
+
+    .with_expires_at(expires_at);
+
+
+```
+
+Aliyun Drive's `Credential::new(access_token)` rejects an invalid token immediately; `with_expires_at` records the optional expiry. B2 credentials are created with `Credential::new(token, api_url, download_url)` and read with`authorization_token()`, `api_url()`, `download_url()`, and `expires_at()`. Upyun credentials are created with `Credential::new(operator, password)` and read with `operator()` and `bucket()`. B2 and Upyun can construct incomplete values, which are rejected by the B2 static provider or the signer at use. The password is not exposed outside the signer.
 
 Baidu Netdisk has no ambient credential source, so the caller supplies the token:
 
@@ -2275,6 +2290,8 @@ signer.sign(&mut req, None).await?;
 ## Credentials[​](#credentials "Direct link to Credentials")
 
 Aliyun Drive Open Platform documents OAuth authorization and its token endpoint, but no CLI, SDK, environment-variable, or local-file credential discovery contract. Reqsign therefore does not invent an ambient source. Use`StaticCredentialProvider` for a caller-managed access token, or`RefreshCredentialProvider` for a confidential-client refresh token.
+
+When constructing a `Credential` directly, `Credential::new(token)` validates the token and the consuming `with_expires_at(expires_at)` builder records its optional absolute expiration.
 
 An explicit provider fails closed: an invalid token or refresh configuration returns an error instead of silently switching to a different identity.
 
@@ -2754,7 +2771,7 @@ let uri = format!(
 
     "{}/b2api/v4/b2_list_buckets?accountId=account-id",
 
-    credential.api_url
+    credential.api_url()
 
 );
 
