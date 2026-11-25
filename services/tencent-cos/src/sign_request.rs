@@ -332,6 +332,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn presign_rejects_unbounded_lifetime_for_a_finite_credential() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new().with_time(now);
+        let credential = Credential {
+            secret_id: "secret_id".to_string(),
+            secret_key: "secret_key".to_string(),
+            security_token: None,
+            expires_in: Some(now + Duration::from_secs(3600)),
+        };
+        let mut parts = http::Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+        let original = parts.clone();
+
+        let err = signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&credential),
+                Some(Duration::MAX),
+            )
+            .await
+            .expect_err("a finite credential cannot cover an unbounded lifetime");
+
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_parts_unchanged(&parts, &original);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn presign_keeps_the_ordinary_q_key_time() -> Result<()> {
         let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
         let signer = RequestSigner::new().with_time(now);
