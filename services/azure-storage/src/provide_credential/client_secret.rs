@@ -21,6 +21,9 @@ use crate::provide_credential::entra::{
 };
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
+use std::fmt::{Debug, Formatter};
+
+const REDACTED: &str = "REDACTED";
 
 /// Load credential from Azure Client Secret.
 ///
@@ -29,12 +32,26 @@ use reqsign_core::{Context, ProvideCredential, Result};
 /// a client ID and client secret.
 ///
 /// Reference: <https://learn.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-client-creds-grant-flow>
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct ClientSecretCredentialProvider {
     tenant_id: Option<String>,
     client_id: Option<String>,
     client_secret: Option<String>,
     authority_host: Option<String>,
+}
+
+impl Debug for ClientSecretCredentialProvider {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientSecretCredentialProvider")
+            .field("tenant_id", &self.tenant_id)
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| REDACTED),
+            )
+            .field("authority_host", &self.authority_host)
+            .finish()
+    }
 }
 
 impl ClientSecretCredentialProvider {
@@ -195,6 +212,30 @@ mod tests {
                 .status(http::StatusCode::OK)
                 .body(Bytes::from_static(self.body))
                 .expect("mock token response must build"))
+        }
+    }
+
+    #[test]
+    fn debug_redacts_client_secret_as_opaque_for_all_lengths() {
+        const TENANT_ID: &str = "synthetic-tenant-id";
+        const CLIENT_ID: &str = "synthetic-client-id";
+        const AUTHORITY_HOST: &str = "https://synthetic.example.invalid";
+        let expected = format!(
+            "ClientSecretCredentialProvider {{ tenant_id: Some(\"{TENANT_ID}\"), client_id: Some(\"{CLIENT_ID}\"), client_secret: Some(\"{REDACTED}\"), authority_host: Some(\"{AUTHORITY_HOST}\") }}"
+        );
+
+        for client_secret in [
+            "synthetic-client-secret-with-long-prefix-and-suffix",
+            "short",
+            "秘密のクライアント値",
+        ] {
+            let provider = ClientSecretCredentialProvider::new()
+                .with_tenant_id(TENANT_ID)
+                .with_client_id(CLIENT_ID)
+                .with_client_secret(client_secret)
+                .with_authority_host(AUTHORITY_HOST);
+
+            assert_eq!(format!("{provider:?}"), expected);
         }
     }
 
