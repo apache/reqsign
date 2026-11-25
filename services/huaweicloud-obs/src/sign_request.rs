@@ -25,6 +25,8 @@ use http::header::AUTHORIZATION;
 use http::header::CONTENT_TYPE;
 use http::header::DATE;
 use http::{HeaderValue, Uri};
+use jiff::ToSpan;
+use jiff::tz::TimeZone;
 use log::debug;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use reqsign_core::Result;
@@ -46,9 +48,15 @@ static OBS_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
 ///
 /// - [User Signature Authentication](https://support.huaweicloud.com/intl/en-us/api-obs/obs_04_0009.html)
 ///
-/// Query signing embeds an absolute `Expires` second. A lifetime that the
-/// timestamp cannot represent returns `RequestInvalid` before changing the
-/// request.
+/// Query signing embeds an absolute `Expires` second. Reqsign applies a local
+/// signing rule: the encoded second must be later than the signing second and
+/// strictly earlier than the same UTC calendar time 20 years later. February 29
+/// clamps to February 28 when the target year does not have it. Values outside
+/// that window or the representable timestamp range return `RequestInvalid`
+/// before changing the request. This is Reqsign's signing rule, not a claim
+/// about the OBS server's validation.
+///
+/// - [Query string authentication](https://support.huaweicloud.com/intl/en-us/api-obs/obs_04_0011.html)
 #[derive(Debug)]
 pub struct RequestSigner {
     bucket: String,
@@ -122,13 +130,7 @@ impl SignRequest for RequestSigner {
         let original_uri = parts.uri.clone();
         let mut ctx = SigningRequest::build(parts)?;
         let query_expiration = expires_in
-            .map(|expires| {
-                now.checked_add(expires).ok_or_else(|| {
-                    reqsign_core::Error::request_invalid(
-                        "OBS signature expiration exceeds the representable time range",
-                    )
-                })
-            })
+            .map(|expires| presign_expiration(now, expires))
             .transpose()?;
 
         let string_to_sign = string_to_sign(&mut ctx, cred, now, query_expiration, &self.bucket)?;
@@ -178,6 +180,49 @@ impl SignRequest for RequestSigner {
         }
         Ok(())
     }
+}
+
+fn presign_expiration(now: Timestamp, expires: Duration) -> Result<Timestamp> {
+    let expiration = now.checked_add(expires).ok_or_else(|| {
+        reqsign_core::Error::request_invalid(
+            "OBS signature expiration exceeds the representable time range",
+        )
+    })?;
+    let expiration_second = expiration.as_second();
+    if expiration_second <= now.as_second() {
+        return Err(reqsign_core::Error::request_invalid(
+            "OBS signature expiration must advance to a later second",
+        ));
+    }
+
+    if let Some(bound) = twenty_year_bound(now)? {
+        let encoded_expiration = jiff::Timestamp::from_second(expiration_second).map_err(|_| {
+            reqsign_core::Error::request_invalid(
+                "OBS signature expiration exceeds the representable time range",
+            )
+        })?;
+        if encoded_expiration >= bound {
+            return Err(reqsign_core::Error::request_invalid(
+                "OBS signature expiration must be less than 20 UTC calendar years after the signing time",
+            ));
+        }
+    }
+
+    Ok(expiration)
+}
+
+fn twenty_year_bound(now: Timestamp) -> Result<Option<jiff::Timestamp>> {
+    let now: jiff::Timestamp = now.to_string().parse().map_err(|e| {
+        reqsign_core::Error::unexpected("failed to parse OBS signing time").with_source(e)
+    })?;
+    let datetime = now.to_zoned_datetime(TimeZone::UTC).datetime();
+    let Ok(date) = datetime.date().checked_add(20.years()) else {
+        return Ok(None);
+    };
+    let Ok(bound) = TimeZone::UTC.to_timestamp(date.to_datetime(datetime.time())) else {
+        return Ok(None);
+    };
+    Ok(Some(bound))
 }
 
 /// Construct string to sign
@@ -659,6 +704,143 @@ mod tests {
 
         let query = parts.uri.query().expect("presigned URL must have a query");
         assert!(query.contains("Expires=1660582272"));
+        assert!(query.contains("Signature="));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_expiration_that_does_not_advance_a_second() -> Result<()> {
+        let credential = Credential::new("access_key".to_string(), "123456".to_string(), None);
+
+        for (now, expires_in) in [
+            ("2022-08-15T16:50:12Z", Duration::ZERO),
+            ("2022-08-15T16:50:12.700Z", Duration::ZERO),
+            ("2022-08-15T16:50:12.700Z", Duration::from_millis(200)),
+        ] {
+            let now: Timestamp = now.parse()?;
+            let signer = RequestSigner::new("bucket").with_time(now);
+            let mut parts =
+                http::Request::get("http://bucket.obs.cn-north-4.myhuaweicloud.com/object.txt")
+                    .body(())?
+                    .into_parts()
+                    .0;
+            let original = parts.clone();
+
+            let err = signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    Some(expires_in),
+                )
+                .await
+                .expect_err("expiration must advance to a later second");
+
+            assert_eq!(err.kind(), ErrorKind::RequestInvalid);
+            assert_parts_unchanged(&parts, &original);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_accepts_subsecond_expiration_that_advances_a_second() -> Result<()> {
+        let now: Timestamp = "2022-08-15T16:50:12.700Z".parse()?;
+        let signer = RequestSigner::new("bucket").with_time(now);
+        let credential = Credential::new("access_key".to_string(), "123456".to_string(), None);
+        let mut parts =
+            http::Request::get("http://bucket.obs.cn-north-4.myhuaweicloud.com/object.txt")
+                .body(())?
+                .into_parts()
+                .0;
+
+        signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&credential),
+                Some(Duration::from_millis(300)),
+            )
+            .await?;
+
+        let query = parts.uri.query().expect("presigned URL must have a query");
+        assert!(query.contains("Expires=1660582213"));
+        assert!(query.contains("Signature="));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_enforces_the_twenty_year_calendar_bound() -> Result<()> {
+        let now: Timestamp = "2080-02-29T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("bucket").with_time(now);
+        let credential = Credential::new("access_key".to_string(), "123456".to_string(), None);
+        let twenty_years = Duration::from_secs(631_065_600);
+
+        let mut accepted =
+            http::Request::get("http://bucket.obs.cn-north-4.myhuaweicloud.com/object.txt")
+                .body(())?
+                .into_parts()
+                .0;
+        signer
+            .sign_request(
+                &crate::test_context(),
+                &mut accepted,
+                Some(&credential),
+                Some(twenty_years - Duration::from_secs(1)),
+            )
+            .await?;
+        let query = accepted
+            .uri
+            .query()
+            .expect("presigned URL must have a query");
+        assert!(query.contains("Expires=4107455999"));
+
+        for expires_in in [twenty_years, twenty_years + Duration::from_secs(1)] {
+            let mut parts =
+                http::Request::get("http://bucket.obs.cn-north-4.myhuaweicloud.com/object.txt")
+                    .body(())?
+                    .into_parts()
+                    .0;
+            let original = parts.clone();
+
+            let err = signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    Some(expires_in),
+                )
+                .await
+                .expect_err("expiration must be strictly earlier than the 20-year bound");
+
+            assert_eq!(err.kind(), ErrorKind::RequestInvalid);
+            assert_parts_unchanged(&parts, &original);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_accepts_a_representable_expiration_near_the_timestamp_maximum() -> Result<()> {
+        let max: Timestamp = jiff::Timestamp::MAX.to_string().parse()?;
+        let now = max - Duration::from_secs(1);
+        let signer = RequestSigner::new("bucket").with_time(now);
+        let credential = Credential::new("access_key".to_string(), "123456".to_string(), None);
+        let mut parts =
+            http::Request::get("http://bucket.obs.cn-north-4.myhuaweicloud.com/object.txt")
+                .body(())?
+                .into_parts()
+                .0;
+
+        signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&credential),
+                Some(Duration::from_secs(1)),
+            )
+            .await?;
+
+        let query = parts.uri.query().expect("presigned URL must have a query");
+        assert!(query.contains(&format!("Expires={}", max.as_second())));
         assert!(query.contains("Signature="));
         Ok(())
     }
