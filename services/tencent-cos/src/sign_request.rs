@@ -387,6 +387,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn presign_keeps_absolute_q_key_time_without_a_relative_cap() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new().with_time(now);
+        let credential = test_credential();
+
+        for (expires_in, expected_end) in [
+            (Duration::ZERO, 1_784_678_400),
+            (Duration::from_secs(604_801), 1_785_283_201),
+        ] {
+            let mut parts = http::Request::get("https://example.com/object")
+                .body(())?
+                .into_parts()
+                .0;
+
+            signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    Some(expires_in),
+                )
+                .await?;
+
+            let query = parts.uri.query().expect("presigned URL must have a query");
+            assert!(query.contains(&format!("q-key-time=1784678400;{expected_end}")));
+            assert!(query.contains("q-signature="));
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn canonicalization_and_signing_preserve_wire_uri() -> Result<()> {
         let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
         let signer = RequestSigner::new().with_time(now);
