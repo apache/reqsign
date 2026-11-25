@@ -49,7 +49,7 @@ pub type DefaultSigner = Signer<Credential>;
 /// let credential = signer.credential_for(None).await?;
 /// let uri = format!(
 ///     "{}/b2api/v4/b2_list_buckets?accountId=account-id",
-///     credential.api_url
+///     credential.api_url()
 /// );
 ///
 /// let mut req = http::Request::get(uri).body(()).unwrap().into_parts().0;

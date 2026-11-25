@@ -60,8 +60,8 @@ mod tests {
             .await?
             .expect("static provider always returns a credential");
 
-        assert_eq!(credential.operator, "operator");
-        assert_eq!(credential.password, "password");
+        assert_eq!(credential.operator(), "operator");
+        assert_eq!(credential.password(), "password");
         Ok(())
     }
 }

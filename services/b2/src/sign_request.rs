@@ -61,7 +61,8 @@ impl SignRequest for RequestSigner {
             ));
         }
 
-        let mut value: http::HeaderValue = credential.authorization_token.parse().map_err(|e| {
+        let token = credential.authorization_token();
+        let mut value: http::HeaderValue = token.parse().map_err(|e| {
             Error::credential_invalid("B2 authorization token cannot be encoded as a header value")
                 .with_source(e)
         })?;

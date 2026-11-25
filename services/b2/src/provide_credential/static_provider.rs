@@ -24,7 +24,7 @@ use crate::credential::Credential;
 ///
 /// Use this provider when the caller obtains the token and its Native API base
 /// URLs from elsewhere. The credential must carry a non-empty authorization token,
-/// `api_url`, and `download_url`; an expired token is rejected before signing.
+/// Native API URL, and download URL; an expired token is rejected before signing.
 #[derive(Clone, Debug)]
 pub struct StaticCredentialProvider {
     credential: Credential,
@@ -37,13 +37,13 @@ impl StaticCredentialProvider {
     }
 
     fn validate(&self) -> Result<()> {
-        if self.credential.authorization_token.is_empty() {
+        if self.credential.authorization_token().is_empty() {
             return Err(Error::config_invalid(
                 "static B2 credential has an empty authorization token",
             ));
         }
-        validate_endpoint("api_url", &self.credential.api_url)?;
-        validate_endpoint("download_url", &self.credential.download_url)?;
+        validate_endpoint("api_url", self.credential.api_url())?;
+        validate_endpoint("download_url", self.credential.download_url())?;
         if !self.credential.is_valid_at(Timestamp::now()) {
             return Err(Error::credential_invalid(
                 "static B2 credential has expired",
@@ -105,9 +105,12 @@ mod tests {
             .expect("static credential must load")
             .expect("static credential must be present");
 
-        assert_eq!(credential.authorization_token, loaded.authorization_token);
-        assert_eq!(credential.api_url, loaded.api_url);
-        assert_eq!(credential.download_url, loaded.download_url);
+        assert_eq!(
+            credential.authorization_token(),
+            loaded.authorization_token()
+        );
+        assert_eq!(credential.api_url(), loaded.api_url());
+        assert_eq!(credential.download_url(), loaded.download_url());
     }
 
     #[tokio::test]

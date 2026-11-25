@@ -100,7 +100,7 @@ impl SignRequest for RequestSigner {
         let Some(credential) = credential else {
             return Ok(());
         };
-        if credential.operator.is_empty() || credential.password.is_empty() {
+        if credential.operator().is_empty() || credential.password().is_empty() {
             return Err(Error::credential_invalid(
                 "Upyun operator and password must both be non-empty",
             ));
@@ -117,7 +117,7 @@ impl SignRequest for RequestSigner {
         let date = signing_time.format_http_date();
 
         let mut signing_req = SigningRequest::build(req)?;
-        if let Some(bucket) = credential.bucket.as_deref() {
+        if let Some(bucket) = credential.bucket() {
             let path_bucket = signing_req
                 .path
                 .strip_prefix('/')
@@ -160,13 +160,13 @@ impl SignRequest for RequestSigner {
         }
         let string_to_sign = elements.join("&");
 
-        let signing_key = hex::encode(provider.md5(credential.password.as_bytes())?);
+        let signing_key = hex::encode(provider.md5(credential.password().as_bytes())?);
         let signature =
             base64_encode(&provider.hmac_sha1(signing_key.as_bytes(), string_to_sign.as_bytes())?);
 
         let date = HeaderValue::from_str(&date)?;
         let mut authorization =
-            HeaderValue::from_str(&format!("UPYUN {}:{signature}", credential.operator))?;
+            HeaderValue::from_str(&format!("UPYUN {}:{signature}", credential.operator()))?;
         // The signature authenticates requests for 30 minutes, so keep it out of
         // header-map `Debug` output and other diagnostic formatting.
         authorization.set_sensitive(true);
@@ -364,7 +364,7 @@ mod tests {
         let signer = RequestSigner::new().with_time(signing_time());
 
         for credential in [
-            Credential::default(),
+            Credential::new("", ""),
             Credential::new("operator123", "password123").with_bucket(""),
         ] {
             let mut req = http::Request::get("https://v0.api.upyun.com/")

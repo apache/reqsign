@@ -256,9 +256,9 @@ mod tests {
             .await?
             .expect("the fixture session must load");
 
-        assert_eq!(credential.operator, "operator123");
-        assert_eq!(credential.password, "password123");
-        assert_eq!(credential.bucket.as_deref(), Some("example-bucket"));
+        assert_eq!(credential.operator(), "operator123");
+        assert_eq!(credential.password(), "password123");
+        assert_eq!(credential.bucket(), Some("example-bucket"));
         Ok(())
     }
 
@@ -280,9 +280,9 @@ mod tests {
             .await?
             .expect("the active session must load");
 
-        assert_eq!(credential.operator, "second-operator");
-        assert_eq!(credential.password, "second-password");
-        assert_eq!(credential.bucket.as_deref(), Some("second"));
+        assert_eq!(credential.operator(), "second-operator");
+        assert_eq!(credential.password(), "second-password");
+        assert_eq!(credential.bucket(), Some("second"));
         Ok(())
     }
 
@@ -305,8 +305,8 @@ mod tests {
                 .provide_credential(&ctx)
                 .await?
                 .expect("the matching session must load");
-            assert_eq!(credential.operator, expected);
-            assert_eq!(credential.bucket.as_deref(), Some(bucket));
+            assert_eq!(credential.operator(), expected);
+            assert_eq!(credential.bucket(), Some(bucket));
         }
 
         let credential = UpxConfigCredentialProvider::new()
@@ -336,7 +336,7 @@ mod tests {
             .await?
             .expect("the bucket session must load");
 
-        assert_eq!(credential.operator, "operator");
+        assert_eq!(credential.operator(), "operator");
         Ok(())
     }
 
@@ -359,8 +359,8 @@ mod tests {
             .await?
             .expect("the default session must load");
 
-        assert_eq!(credential.operator, "operator");
-        assert_eq!(credential.password, "password");
+        assert_eq!(credential.operator(), "operator");
+        assert_eq!(credential.password(), "password");
         Ok(())
     }
 

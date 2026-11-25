@@ -20,18 +20,16 @@ use reqsign_core::time::Timestamp;
 use std::fmt::{Debug, Formatter};
 
 /// Credential for Upyun.
-#[derive(Default, Clone)]
+///
+/// The operator name and password are used to compute the `Authorization` header.
+/// Once built, the credential is read-only: [`Credential::operator`] and
+/// [`Credential::bucket`] expose the routing metadata, while the password stays
+/// private to the signer. `Debug` output never contains either value.
+#[derive(Clone)]
 pub struct Credential {
-    /// Upyun operator name.
-    pub operator: String,
-    /// Upyun operator password.
-    pub password: String,
-    /// Bucket this credential was discovered for.
-    ///
-    /// When set, the first segment of the request's wire path must exactly
-    /// equal this bucket. Explicit credentials created by [`Credential::new`]
-    /// are unscoped and can sign any bucket.
-    pub bucket: Option<String>,
+    operator: String,
+    password: String,
+    bucket: Option<String>,
 }
 
 impl Credential {
@@ -53,6 +51,28 @@ impl Credential {
     pub fn with_bucket(mut self, bucket: impl Into<String>) -> Self {
         self.bucket = Some(bucket.into());
         self
+    }
+
+    /// Return the Upyun operator name.
+    pub fn operator(&self) -> &str {
+        &self.operator
+    }
+
+    /// Return the bucket this credential is scoped to, if any.
+    ///
+    /// When set, the first segment of the request's wire path must exactly
+    /// equal this bucket. Explicit credentials created by [`Credential::new`]
+    /// are unscoped and can sign any bucket.
+    pub fn bucket(&self) -> Option<&str> {
+        self.bucket.as_deref()
+    }
+
+    /// Return the operator password for signing.
+    ///
+    /// Kept crate-private so signing remains the only reader and the value does
+    /// not become part of the public API.
+    pub(crate) fn password(&self) -> &str {
+        &self.password
     }
 
     fn is_usable(&self) -> bool {
@@ -103,11 +123,20 @@ mod tests {
 
     #[test]
     fn requires_both_credential_fields() {
-        assert!(!Credential::default().is_valid());
+        assert!(!Credential::new("", "").is_valid());
 
         assert!(!Credential::new("operator", "").is_valid());
         assert!(!Credential::new("", "password").is_valid());
         assert!(Credential::new("密码操作员", "密码密码密码").is_valid());
+    }
+
+    #[test]
+    fn accessors_return_the_routing_metadata() {
+        let credential = Credential::new("fabricated-operator", "fabricated-password")
+            .with_bucket("fabricated-bucket");
+
+        assert_eq!("fabricated-operator", credential.operator());
+        assert_eq!(Some("fabricated-bucket"), credential.bucket());
     }
 
     #[test]
