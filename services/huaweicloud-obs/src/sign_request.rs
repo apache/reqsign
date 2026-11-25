@@ -610,6 +610,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn presign_rejects_unbounded_lifetime_for_a_finite_credential() -> Result<()> {
+        let now = Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?;
+        let signer = RequestSigner::new("bucket").with_time(now);
+        let credential = Credential::new("access_key".to_string(), "123456".to_string(), None)
+            .with_expires_at(now + Duration::from_secs(3600));
+        let mut parts =
+            http::Request::get("http://bucket.obs.cn-north-4.myhuaweicloud.com/object.txt")
+                .body(())?
+                .into_parts()
+                .0;
+        let original = parts.clone();
+
+        let err = signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&credential),
+                Some(Duration::MAX),
+            )
+            .await
+            .expect_err("a finite credential cannot cover an unbounded lifetime");
+
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_parts_unchanged(&parts, &original);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn presign_keeps_the_ordinary_expiration() -> Result<()> {
         let now = Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?;
         let signer = RequestSigner::new("bucket").with_time(now);
