@@ -48,9 +48,11 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 /// Request signer implementing
 /// [AWS Signature Version 4A](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html).
 ///
-/// Presigned query authentication accepts a lifetime from 1 through 604800
-/// seconds (seven days). Other values return `RequestInvalid` before changing
-/// the request.
+/// Presigned query authentication writes `X-Amz-Expires` in whole seconds and
+/// accepts 1 through 604800 seconds (seven days). Other encoded values return
+/// `RequestInvalid` before changing the request.
+///
+/// - [AWS authentication methods](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-authentication-methods.html)
 #[derive(Debug)]
 pub struct RequestSigner {
     service: String,
@@ -664,24 +666,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn presign_accepts_the_seven_day_limit() -> AnyResult<()> {
-        let mut parts = Request::get("https://example.amazonaws.com/")
-            .body(())?
-            .into_parts()
-            .0;
+    async fn presign_accepts_the_encoded_lifetime_boundaries() -> AnyResult<()> {
+        for (expires_in, encoded_seconds) in [
+            (Duration::from_secs(1), "1"),
+            (
+                Duration::from_secs(604_800) + Duration::from_millis(500),
+                "604800",
+            ),
+        ] {
+            let mut parts = Request::get("https://example.amazonaws.com/")
+                .body(())?
+                .into_parts()
+                .0;
 
-        signer()
-            .sign_request(
-                &crate::test_context(),
-                &mut parts,
-                Some(&credential()),
-                Some(Duration::from_secs(604_800)),
-            )
-            .await?;
+            signer()
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential()),
+                    Some(expires_in),
+                )
+                .await?;
 
-        let query = parts.uri.query().expect("presigned request has query");
-        assert!(query.contains("X-Amz-Expires=604800"));
-        assert!(query.contains("X-Amz-Signature="));
+            let query = parts.uri.query().expect("presigned request has query");
+            assert!(query.contains(&format!("X-Amz-Expires={encoded_seconds}")));
+            assert!(query.contains("X-Amz-Signature="));
+        }
         Ok(())
     }
 
