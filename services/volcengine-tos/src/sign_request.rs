@@ -129,7 +129,8 @@ impl SignRequest for RequestSigner {
             ));
         }
         if let Some(expires) = expires_in {
-            if expires.as_secs() == 0 || expires > MAX_PRESIGN_LIFETIME {
+            let seconds = expires.as_secs();
+            if seconds == 0 || seconds > MAX_PRESIGN_LIFETIME.as_secs() {
                 return Err(reqsign_core::Error::request_invalid(
                     "TOS presigned URL lifetime must be between 1 and 604800 seconds",
                 ));
