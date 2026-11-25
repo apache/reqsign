@@ -52,10 +52,6 @@ where
         match self.inner.provide_credential(ctx).await {
             Ok(Some(cred)) => {
                 info!("Successfully loaded credentials from: {}", self.name);
-                debug!(
-                    "Loaded credential with secret_id: {}...",
-                    &cred.secret_id[..3.min(cred.secret_id.len())]
-                );
                 if cred.security_token.is_some() {
                     debug!("Credential includes security token");
                 }
@@ -104,10 +100,10 @@ async fn main() -> Result<()> {
     match chain.provide_credential(&ctx).await? {
         Some(cred) => {
             info!("Successfully resolved credentials!");
-            println!("Secret ID: {}...", &cred.secret_id[..3]);
-            if let Some(token) = &cred.security_token {
-                println!("Security Token: {}...", &token[..10.min(token.len())]);
-            }
+            println!(
+                "Resolved credentials (security token present: {})",
+                cred.security_token.is_some()
+            );
         }
         None => {
             info!("No credentials found in any provider");
