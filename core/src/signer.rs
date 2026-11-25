@@ -177,12 +177,14 @@ impl<K: SigningCredential> Signer<K> {
     /// waiting never satisfies it this way, so a stale credential is refreshed
     /// instead of reused.
     async fn credential_arc_for(&self, expires_in: Option<Duration>) -> Result<Arc<K>> {
-        let observed = self.cached_arc();
-        if let Some(credential) = observed.as_ref() {
-            if self.is_fresh_and_usable(credential, expires_in) {
-                return Ok(Arc::clone(credential));
+        // Hand the cached snapshot straight to the caller on a warm hit;
+        // cloning it again would add a second refcount update per sign.
+        let observed = match self.cached_arc() {
+            Some(credential) if self.is_fresh_and_usable(&credential, expires_in) => {
+                return Ok(credential);
             }
-        }
+            observed => observed,
+        };
 
         let refresh = self.credential.refresh.lock().await;
 
