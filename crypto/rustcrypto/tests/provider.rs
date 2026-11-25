@@ -16,20 +16,29 @@
 // under the License.
 
 use hmac::{Hmac, KeyInit, Mac};
+#[cfg(feature = "p256")]
 use p256::ecdsa::signature::Verifier;
+#[cfg(feature = "p256")]
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use reqsign_core::crypto::{CryptoProvider, get_default};
 use reqsign_core::{ErrorKind, Result};
 use reqsign_crypto_rustcrypto::RustCryptoProvider;
+#[cfg(feature = "rsa")]
 use rsa::PrivateKey;
+#[cfg(feature = "rsa")]
 use rsa::pkcs1v15::{Signature as RsaSignature, VerifyingKey as RsaVerifyingKey};
+#[cfg(feature = "rsa")]
 use rsa::pkcs8::DecodePrivateKey;
+#[cfg(feature = "rsa")]
 use rsa::sha2::Sha256 as RsaSha256;
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "rsa")]
 const RSA_PKCS8: &[u8] = include_bytes!("fixtures/rsa_pkcs8.pem");
+#[cfg(feature = "rsa")]
 const RSA_PKCS1: &[u8] = include_bytes!("fixtures/rsa_pkcs1.pem");
+#[cfg(feature = "rsa")]
 const EC_PKCS8: &[u8] = include_bytes!("fixtures/ec_p256_pkcs8.pem");
 
 fn provider() -> RustCryptoProvider {
@@ -199,6 +208,7 @@ fn hmac_sha512_matches_published_vectors() {
     }
 }
 
+#[cfg(feature = "rsa")]
 #[test]
 fn rsa_signs_both_pkcs8_and_pkcs1_pem() {
     let provider = provider();
@@ -216,13 +226,13 @@ fn rsa_signs_both_pkcs8_and_pkcs1_pem() {
             assert_eq!(signature.len(), 256);
             let signature =
                 RsaSignature::try_from(signature.as_slice()).expect("signature must parse");
-            verifying_key
-                .verify(message, &signature)
+            rsa::signature::Verifier::verify(&verifying_key, message, &signature)
                 .expect("signature must verify");
         }
     }
 }
 
+#[cfg(feature = "rsa")]
 #[test]
 fn rsa_signature_is_deterministic_for_both_pem_formats() {
     const EXPECTED: &str = "6be8116e69987bb4dd2048520ab3ac580e5f4f0c872d6f7b6223e24dc58d86037b524e8fadd8b608ef97f0f44ab6011c05275cefb2fb43deb0bb9569634aac7ff0ae3e019979a15c455a4c1bc6d0b722bb5d17bfb9e4d9886e32678afa048e3af03f5c37c33d9dfab9229edf5ae9140c2440ca18a92a8d47e3994e04e4171b375c556c3c14632642510c1b7f2e464b1bf765a1e795490391653d384f25ed7da415709197da7b81f3ba5d8c23b9594d7e420ee1142cefe70664bd63fa3c2f84ac97884d278a4c4ef5ee3e0427601a76fbe20880231a00771f997151ab77d2d8e3260e397ba4c1f08f697ae80cd8fab9ff4eeaa20d4424e4c9cc793a35041e526d";
@@ -236,6 +246,7 @@ fn rsa_signature_is_deterministic_for_both_pem_formats() {
     }
 }
 
+#[cfg(feature = "rsa")]
 #[test]
 fn rsa_rejects_malformed_and_non_rsa_keys() {
     let provider = provider();
@@ -255,6 +266,7 @@ fn rsa_rejects_malformed_and_non_rsa_keys() {
     );
 }
 
+#[cfg(feature = "p256")]
 #[test]
 fn ecdsa_signature_verifies_with_p256() {
     let provider = provider();
@@ -274,6 +286,7 @@ fn ecdsa_signature_verifies_with_p256() {
     }
 }
 
+#[cfg(feature = "p256")]
 #[test]
 fn ecdsa_rejects_invalid_scalars() {
     let provider = provider();
@@ -293,6 +306,7 @@ fn ecdsa_rejects_invalid_scalars() {
     }
 }
 
+#[cfg(feature = "aes-gcm")]
 #[test]
 fn aes_gcm_matches_nist_vectors() {
     let provider = provider();
@@ -334,6 +348,7 @@ fn aes_gcm_matches_nist_vectors() {
     );
 }
 
+#[cfg(feature = "aes-gcm")]
 #[test]
 fn aes_gcm_rejects_invalid_key_lengths() {
     let provider = provider();
@@ -348,6 +363,7 @@ fn aes_gcm_rejects_invalid_key_lengths() {
     }
 }
 
+#[cfg(feature = "aes-gcm")]
 #[test]
 fn fill_random_produces_distinct_nonzero_bytes() {
     let provider = provider();
@@ -364,6 +380,47 @@ fn fill_random_produces_distinct_nonzero_bytes() {
     provider
         .fill_random(&mut [])
         .expect("filling an empty buffer must succeed");
+}
+
+#[cfg(not(feature = "rsa"))]
+#[test]
+fn rsa_reports_the_missing_feature() {
+    let err = provider()
+        .rsa_pkcs1v15_sha256_sign(b"pem", b"message")
+        .expect_err("RSA must be unavailable without its feature");
+    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+    assert!(err.to_string().contains("`rsa`"), "{err}");
+}
+
+#[cfg(not(feature = "p256"))]
+#[test]
+fn ecdsa_reports_the_missing_feature() {
+    let err = provider()
+        .ecdsa_p256_sha256_sign(&[1; 32], b"message")
+        .expect_err("ECDSA P-256 must be unavailable without its feature");
+    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+    assert!(err.to_string().contains("`p256`"), "{err}");
+}
+
+#[cfg(not(feature = "aes-gcm"))]
+#[test]
+fn aes_gcm_reports_the_missing_feature() {
+    let err = provider()
+        .aes_gcm_encrypt(&[0; 16], &[0; 12], b"", b"message")
+        .expect_err("AES-GCM must be unavailable without its feature");
+    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+    assert!(err.to_string().contains("`aes-gcm`"), "{err}");
+}
+
+#[cfg(not(feature = "aes-gcm"))]
+#[test]
+fn random_generation_reports_the_missing_aes_gcm_feature() {
+    let mut dest = [0; 8];
+    let err = provider()
+        .fill_random(&mut dest)
+        .expect_err("random generation must be unavailable without the aes-gcm feature");
+    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+    assert!(err.to_string().contains("`aes-gcm`"), "{err}");
 }
 
 #[derive(Debug)]

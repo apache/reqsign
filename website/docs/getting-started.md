@@ -48,7 +48,6 @@ cargo add http anyhow
 | `dropbox` | Dropbox |
 | `github` | GitHub.com |
 | `google` | Google Cloud |
-| `google-credential-access-boundary-client-side` | Client-side CAB downscoping (implies `google`) |
 | `aliyun` | Aliyun OSS |
 | `aliyun-drive` | Aliyun Drive Open Platform |
 | `huaweicloud` | Huawei Cloud OBS |
@@ -68,9 +67,18 @@ cargo add http anyhow
 The default features include `default-context`, which wires a ready-to-use
 runtime (Tokio file reading, reqwest HTTP, Tokio command execution), and
 `default-crypto`, which lets `default_context()` bind RustCrypto when no
-process-wide provider is installed. Keep `default-context` unless you are
+process-wide provider is installed. The facade has no algorithm features: with
+`default-crypto`, `aws-v4a` selects `p256`; `azure`, `google`, `oracle`, and
+`http-message-signatures` select `rsa`; other service features use only the
+unconditional hash and HMAC operations. A service feature alone does not pull
+the crypto backend. Keep `default-context` unless you are
 [bringing your own runtime](/docs/guides/custom-runtimes/); a custom context
-must bind a `CryptoProvider` explicitly. Requires Rust 1.87.0+.
+must bind a `CryptoProvider` explicitly. Client-side Google Credential Access
+Boundary generation requires the `credential-access-boundary-client-side`
+feature on `reqsign-google` directly, a provider that supports AES-GCM, and an
+`HttpSend` transport for the STS exchange; the facade `google` feature covers
+request signing and server-side CAB. Requires
+Rust 1.87.0+.
 
 ## 2. Sign your first request
 

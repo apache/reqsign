@@ -126,8 +126,10 @@ RustCryptoProvider::install_default()
 A bare `Context::new()` starts unbound and returns `ConfigInvalid` when signing
 needs crypto without a global provider. The facade's `default-crypto` feature
 makes `default_context()` bind RustCrypto only when the process-wide slot is
-empty at construction; it never writes the slot. A context that already binds
-RustCrypto keeps it, and an explicit `with_crypto` binding always wins.
+empty at construction; it never writes the slot. Its service features weakly
+select only the backend algorithms they need, and a service feature alone does
+not pull the backend. A context that already binds RustCrypto keeps it, and an
+explicit `with_crypto` binding always wins.
 Applications choose the provider, and integrating middleware such as OpenDAL
 must not install a global default. See
 [CryptoProvider](https://github.com/apache/reqsign/blob/main/docs/crypto-provider.md)

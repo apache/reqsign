@@ -187,13 +187,16 @@ application's choice and can race with the application's own initialization.
 | --- | --- | --- |
 | No provider resolvable through the context | `ConfigInvalid` | no |
 | Installed provider does not support the operation | `ConfigInvalid` | no |
+| A backend feature for the operation is disabled | `ConfigInvalid` | no |
 | Provider policy excludes the operation, such as MD5 in a FIPS build | `ConfigInvalid` | no |
 | Unencrypted-key material is malformed, not RSA, out of range, or has an invalid AES key length | `CredentialInvalid` | no |
 | Backend, FFI, allocator, or random-source failure | `Unexpected` | no |
 
 `ConfigInvalid` is a configuration/ownership error, not a transient failure. A
 caller that retries it without binding, installing, or changing a provider
-cannot succeed. `CredentialInvalid` identifies key material supplied by the
+cannot succeed. A feature-disabled operation names the missing backend feature
+in its message, so the caller can enable it or choose another provider.
+`CredentialInvalid` identifies key material supplied by the
 caller or loaded from a credential source.
 
 Reqsign must not panic when no provider resolves, an operation is unsupported,
@@ -250,13 +253,25 @@ version line, starting at `1.0.0`.
 `RustCryptoProvider::new()`, `Default`, and
 `RustCryptoProvider::install_default()` are the public entry points.
 
-| Operation | Native | `wasm32-unknown-unknown` |
-| --- | --- | --- |
-| MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512 | yes | yes |
-| ECDSA P-256 with SHA-256 | yes | yes |
-| RSA PKCS#1 v1.5 with SHA-256 | yes | unsupported (`ConfigInvalid`) |
-| AES-128/256-GCM | yes | unsupported (`ConfigInvalid`) |
-| Secure random bytes | yes | unsupported (`ConfigInvalid`) |
+MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512 are unconditional. The remaining
+operations are selected by three additive features, all enabled by default:
+
+| Feature | Default | Operation | Native | `wasm32-unknown-unknown` |
+| --- | --- | --- | --- | --- |
+| — | — | MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512 | yes | yes |
+| `p256` | yes | ECDSA P-256 with SHA-256 | yes | yes |
+| `rsa` | yes | RSA PKCS#1 v1.5 with SHA-256 | yes | unsupported (`ConfigInvalid`) |
+| `aes-gcm` | yes | AES-128/256-GCM | yes | unsupported (`ConfigInvalid`) |
+| `aes-gcm` | yes | Secure random bytes (via `getrandom`) | yes | unsupported (`ConfigInvalid`) |
+
+When a feature is disabled, its operations return `ConfigInvalid` and name the
+missing feature. When a native-only feature is enabled on `wasm32`, the
+operation keeps returning `ConfigInvalid` with a target-specific message. The
+`aes-gcm` feature also enables `getrandom`; there is no separate random feature.
+
+Consumers that only need hashes and MACs set `default-features = false`. The
+facade does this and weakly enables only the algorithms selected by its service
+features.
 
 The native RSA path accepts PKCS#8 and PKCS#1 PEM and uses OS randomness for
 blinding. The WASM subset matches the services reqsign supports on
@@ -292,6 +307,35 @@ The `reqsign` facade adds:
 default = ["default-context", "default-crypto"]
 default-crypto = ["dep:reqsign-crypto-rustcrypto"]
 ```
+
+The facade has no algorithm features. Its workspace dependency on the backend
+sets `default-features = false`, and service features weakly enable only the
+operations those services need:
+
+```toml
+aws-v4a = ["dep:reqsign-aws-v4a", "reqsign-crypto-rustcrypto?/p256"]
+azure = ["dep:reqsign-azure-storage", "reqsign-crypto-rustcrypto?/rsa"]
+google = ["dep:reqsign-google", "reqsign-crypto-rustcrypto?/rsa"]
+oracle = ["dep:reqsign-oracle", "reqsign-crypto-rustcrypto?/rsa"]
+http-message-signatures = [
+  "dep:reqsign-http-message-signatures",
+  "reqsign-crypto-rustcrypto?/rsa",
+]
+```
+
+The weak `?` mapping enables the algorithm only when `default-crypto` has
+already pulled the backend. A service feature without `default-crypto` does not
+pull the backend. With `default-crypto`, `aws-v4a` selects `p256`; `azure`,
+`google`, `oracle`, and `http-message-signatures` select `rsa`; every other
+service feature uses only the unconditional hash and HMAC operations. `full`
+selects `rsa` and `p256`, not `aes-gcm`. There is no facade feature for
+`aes-gcm` or for client-side Google Credential Access Boundary generation.
+Enabling `reqsign-google/credential-access-boundary-client-side` directly adds
+the API. If the same graph also enables the facade `google` feature, Cargo
+unifies features on the single `reqsign-google` package, so facade re-exports
+can still expose the type; that is feature unification, not a facade feature.
+Bind a provider that supports AES-GCM and secure random generation, and supply
+an `HttpSend` transport for the STS exchange.
 
 `default-crypto` re-exports `RustCryptoProvider`. When it is enabled,
 `default_context()` checks the process-wide registration at construction. If
@@ -402,8 +446,46 @@ Notable service-specific details:
   service-account key material returns `CredentialInvalid` while signing the
   exchange JWT.
 
+### Backend feature selection
+
+`reqsign-crypto-rustcrypto` keeps MD5, SHA-1, SHA-256, and the HMAC operations
+unconditional. `rsa`, `p256`, and `aes-gcm` are additive features and all three
+are enabled by default. A hash/HMAC-only caller disables default features:
+
+```toml
+[dependencies]
+reqsign-crypto-rustcrypto = { version = "1", default-features = false }
+```
+
+A caller that only needs P-256 ECDSA selects that feature alone:
+
+```toml
+[dependencies]
+reqsign-crypto-rustcrypto = { version = "1", default-features = false, features = ["p256"] }
+```
+
+Disabled operations return `ConfigInvalid` and name the missing feature. The
+`aes-gcm` feature also enables `getrandom`; secure random generation is
+therefore disabled when `aes-gcm` is disabled.
+
+The facade disables backend defaults and weakly maps its service features:
+`aws-v4a` selects `p256`; `azure`, `google`, `oracle`, and
+`http-message-signatures` select `rsa`. Other services need only hashes and
+HMACs. A service feature without `default-crypto` does not pull the backend.
+The facade never exposes `rsa`, `p256`, or `aes-gcm` as features, and `full`
+does not select `aes-gcm`.
+
+Client-side Google Credential Access Boundary generation is no longer a facade
+feature. Depend on `reqsign-google` with
+`credential-access-boundary-client-side` and bind a provider that supports
+AES-GCM and secure random generation, for example `RustCryptoProvider` with its
+default `aes-gcm` feature.
+
 ### Removed APIs
 
+- The facade's `google-credential-access-boundary-client-side` feature is
+  removed. Use `reqsign-google` directly with
+  `credential-access-boundary-client-side` and an AES-GCM-capable provider.
 - The public `reqsign_core::jwt` module and `jwt` feature are removed. Azure
   and Google own their private RS256 JWS formatting and sign through the
   resolved provider.
@@ -420,7 +502,8 @@ The repository verifies this contract with:
   context, early global lookup, rejected second installation, concurrent
   installation, and context resolution priority. The priority test covers
   explicit priority over global and independent providers on distinct
-  contexts.
+  contexts. The `Arc<T>` forwarding impl is checked through generic dispatch and
+  a separate global-installation test binary.
 - Facade tests with and without `default-crypto`, including installation before
   and after context construction, OnceLock non-occupation, a default signer
   using its bound provider, and a signer whose explicitly selected provider is
@@ -429,6 +512,22 @@ The repository verifies this contract with:
   HMAC-SHA-1/256/512 vectors, block-size key boundaries, both RSA PEM formats,
   AES-128/256-GCM with and without AAD, ECDSA verification, invalid scalars,
   invalid AES key lengths, random output, and unsupported-operation defaults.
+- A backend feature matrix runs the provider tests with default features, no
+  default features, each algorithm feature alone, and all three together. The
+  no-feature and individual-feature cases assert `ConfigInvalid` messages that
+  name the missing `rsa`, `p256`, or `aes-gcm` feature, including random
+  generation. WASM checks cover the default, no-default, and per-feature
+  combinations.
+- A downstream facade probe builds and runs every service feature in its own
+  Cargo invocation with `default-crypto`. It exercises the actual RSA, P-256,
+  AES-GCM, random, hash, and HMAC operations, verifies that `aws-v4a` selects
+  P-256 and `azure`, `google`, `oracle`, and `http-message-signatures` select
+  RSA, and confirms every other service remains hash/HMAC-only. The same probe
+  checks that each service feature alone does not pull the backend.
+- Google's client-side Credential Access Boundary tests run with the direct
+  `reqsign-google` feature; its dev-dependency enables the RustCrypto `rsa` and
+  `aes-gcm` operations. A runnable rustdoc example drives `Granter::grant(None)`
+  against a mock STS with only the `aes-gcm` backend feature.
 - BoringSSL parity tests against `reqsign-crypto-rustcrypto` for byte-identical
   hashes, HMACs, RSA signatures, and AES-GCM output; cross-backend ECDSA
   verification; MD5 availability outside FIPS and `ConfigInvalid` in FIPS mode;

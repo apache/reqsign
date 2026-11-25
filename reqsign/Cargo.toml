@@ -78,30 +78,31 @@ default-context = [
   "dep:reqsign-http-send-reqwest",
 ]
 
-# Service features
+# Service features. The weak `?` mappings select backend algorithms only when
+# `default-crypto` has already enabled the backend; a service feature alone must
+# not pull it. The facade intentionally exposes no algorithm features.
 aliyun = ["dep:reqsign-aliyun-oss"]
 aliyun-drive = ["dep:reqsign-aliyun-drive"]
 aws = ["aws-v4"]
 aws-v4 = ["dep:reqsign-aws-v4"]
-aws-v4a = ["dep:reqsign-aws-v4a"]
-azure = ["dep:reqsign-azure-storage"]
+aws-v4a = ["dep:reqsign-aws-v4a", "reqsign-crypto-rustcrypto?/p256"]
+azure = ["dep:reqsign-azure-storage", "reqsign-crypto-rustcrypto?/rsa"]
 b2 = ["dep:reqsign-b2"]
 baidu-netdisk = ["dep:reqsign-baidu-netdisk"]
 cloudflare = ["dep:reqsign-cloudflare"]
 dropbox = ["dep:reqsign-dropbox", "oauth2"]
 github = ["dep:reqsign-github"]
-google = ["dep:reqsign-google"]
-google-credential-access-boundary-client-side = [
-  "google",
-  "reqsign-google/credential-access-boundary-client-side",
-]
+google = ["dep:reqsign-google", "reqsign-crypto-rustcrypto?/rsa"]
 huaweicloud = ["dep:reqsign-huaweicloud-obs"]
-http-message-signatures = ["dep:reqsign-http-message-signatures"]
+http-message-signatures = [
+  "dep:reqsign-http-message-signatures",
+  "reqsign-crypto-rustcrypto?/rsa",
+]
 koofr = ["dep:reqsign-koofr"]
 oauth2 = ["dep:reqsign-oauth2"]
 onedrive = ["dep:reqsign-onedrive", "oauth2"]
 openstack = ["dep:reqsign-openstack-keystone"]
-oracle = ["dep:reqsign-oracle"]
+oracle = ["dep:reqsign-oracle", "reqsign-crypto-rustcrypto?/rsa"]
 seafile = ["dep:reqsign-seafile"]
 tencent = ["dep:reqsign-tencent-cos"]
 upyun = ["dep:reqsign-upyun"]
@@ -122,7 +123,6 @@ full = [
   "dropbox",
   "github",
   "google",
-  "google-credential-access-boundary-client-side",
   "http-message-signatures",
   "huaweicloud",
   "koofr",

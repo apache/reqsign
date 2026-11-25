@@ -120,7 +120,10 @@ let ctx = Context::new()
 Implement `reqsign_core::crypto::CryptoProvider`. `sha1`, `sha256`,
 `hmac_sha1`, and `hmac_sha256` are mandatory; the remaining operations have
 default implementations that return `ConfigInvalid` so a minimal provider can
-serve the services that only need hashing and MACs.
+serve the services that only need hashing and MACs. `CryptoProvider` is also
+implemented for `Arc<T>`, so a caller that already holds an
+`Arc<dyn CryptoProvider>` can pass it directly to both `Context::with_crypto`
+and `crypto::install_default`. Existing forwarding newtypes can be removed.
 
 A provider or operation that is missing is a non-retryable `ConfigInvalid`.
 Malformed key material is `CredentialInvalid`. Backend failures are
@@ -153,15 +156,120 @@ loading credentials to see the `ConfigInvalid` failure itself.
   `sas.token(ctx.crypto_provider()?)?`.
 - Base64 helpers (`base64_encode`, `base64_decode`) are unchanged.
 
-### Backend crates
+### Backend crates and features
 
-- `reqsign-crypto-rustcrypto` implements all operations and supports
-  `wasm32-unknown-unknown` for MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512, and
-  P-256 ECDSA. RSA, AES-GCM, and random generation report `ConfigInvalid` there.
+- `reqsign-crypto-rustcrypto` keeps MD5, SHA-1, SHA-256, and HMAC-SHA-1/256/512
+  unconditional. `rsa`, `p256`, and `aes-gcm` are additive features, all
+  enabled by default. `aes-gcm` also enables `getrandom` for secure random
+  generation. A hash/HMAC-only build uses `default-features = false`.
+- Disabled operations return `ConfigInvalid` and name the missing feature. On
+  `wasm32-unknown-unknown`, RSA, AES-GCM, and random generation remain
+  unsupported even when their feature is enabled, and report `ConfigInvalid`.
 - `reqsign-crypto-boring` is native-only, excluded from the main workspace,
   and forwards an optional `fips` feature. It is published to crates.io from
   the explicit standalone release-plan entry after `reqsign-core`. Bind it
   explicitly: `Context::new().with_crypto(BoringCryptoProvider::new())`.
+
+The facade has no algorithm features. With `default-crypto`, it disables backend
+defaults and weakly enables only what each service feature needs:
+
+| Facade feature | Backend feature |
+| --- | --- |
+| `aws-v4a` | `p256` |
+| `azure` | `rsa` |
+| `google` | `rsa` |
+| `oracle` | `rsa` |
+| `http-message-signatures` | `rsa` |
+| all other service features | none (hashes and HMACs) |
+
+`full` therefore selects `rsa` and `p256`, not `aes-gcm`. A service feature
+without `default-crypto` does not pull the crypto backend. If you need
+`aes-gcm`, depend on `reqsign-crypto-rustcrypto` directly or use a backend that
+provides it.
+
+The facade's `google-credential-access-boundary-client-side` feature is
+removed. Enable `reqsign-google/credential-access-boundary-client-side`
+directly; the facade `google` feature no longer turns it on. Because Cargo
+unifies features on the single `reqsign-google` package, a graph that also
+enables the facade `google` feature can still see the type through
+`reqsign::google` re-exports. That is feature unification, not a facade feature;
+depend on `reqsign-google` directly for this API.
+
+Only the `aes-gcm` backend feature is required. Bind a provider with AES-GCM and
+secure random support, and supply an `HttpSend` transport for the STS exchange:
+
+```toml
+[dependencies]
+reqsign-core = "4"
+reqsign-google = { version = "4", features = ["credential-access-boundary-client-side"] }
+reqsign-crypto-rustcrypto = { version = "1", default-features = false, features = ["aes-gcm"] }
+bytes = "1"
+http = "1"
+tokio = { version = "1", features = ["macros", "rt"] }
+```
+
+The following program uses a mock STS transport; it does not contact Google and
+uses a public test vector instead of credentials:
+
+```rust
+use std::time::Duration;
+
+use bytes::Bytes;
+use reqsign_core::time::Timestamp;
+use reqsign_core::{Context, Granter, HttpSend, Result};
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
+use reqsign_google::{
+    ClientSideCredentialAccessBoundaryGranter, CredentialAccessBoundaryGrant,
+    CredentialAccessBoundaryPermissions, TokenCredentialProvider,
+};
+
+#[derive(Debug)]
+struct MockSts;
+
+impl HttpSend for MockSts {
+    async fn http_send(&self, request: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+        assert_eq!(request.method(), http::Method::POST);
+        assert_eq!(request.uri(), "https://sts.googleapis.com/v1/token");
+        let response = concat!(
+            "{\"access_token\":\"intermediary\",",
+            "\"issued_token_type\":\"urn:ietf:params:oauth:token-type:access_boundary_intermediary_token\",",
+            "\"token_type\":\"Bearer\",\"expires_in\":3600,",
+            "\"access_boundary_session_key\":\"CPaEhYsKEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIMx8syvGIGGu5yvrdq/I0Q9ZWIR1oqJXFnDFxHuwX4SEGAEQARj2hIWLCiAB\"}"
+        );
+        Ok(http::Response::new(Bytes::from_static(response.as_bytes())))
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    let context = Context::new()
+        .with_crypto(RustCryptoProvider::new())
+        .with_http_send(MockSts);
+    let source = TokenCredentialProvider::new("source-token")
+        .with_expires_at(Timestamp::now() + Duration::from_secs(7200));
+    let grant = CredentialAccessBoundaryGrant::for_object_prefix(
+        "example-bucket",
+        "customer-a/",
+        CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
+    );
+    let granter = Granter::new(
+        context,
+        source,
+        ClientSideCredentialAccessBoundaryGranter::new(grant),
+    );
+    let first = granter.grant(None).await?.token.expect("CAB token");
+    let second = granter.grant(None).await?.token.expect("CAB token");
+    assert!(first.access_token.starts_with("intermediary."));
+    assert!(second.access_token.starts_with("intermediary."));
+    assert_ne!(first.access_token, second.access_token);
+    println!("client-side CAB token generated with a mock STS response");
+    Ok(())
+}
+```
+
+The same example is in the
+[`ClientSideCredentialAccessBoundaryGranter`](https://docs.rs/reqsign-google/latest/reqsign_google/struct.ClientSideCredentialAccessBoundaryGranter.html)
+rustdoc.
 
 ## Default signers take an explicit `Context`
 

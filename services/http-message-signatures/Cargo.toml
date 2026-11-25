@@ -36,7 +36,7 @@ reqsign-core = { workspace = true }
 jiff = { workspace = true, features = ["js"] }
 
 [dev-dependencies]
-reqsign-crypto-rustcrypto = { workspace = true }
+reqsign-crypto-rustcrypto = { workspace = true, features = ["rsa"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

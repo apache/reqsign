@@ -90,6 +90,42 @@ jobs:
           python3 .github/scripts/check_crypto_dependencies.py
           python3 -m unittest discover -s .github/scripts -p 'test_check_crypto_dependencies.py'
 
+  crypto_features:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the backend feature surface
+        run: python3 .github/scripts/check_crypto_features.py
+      - name: Test backend feature combinations
+        run: |
+          cargo test -p reqsign-crypto-rustcrypto --no-default-features --test provider
+          cargo test -p reqsign-crypto-rustcrypto --no-default-features --features rsa --test provider
+          cargo test -p reqsign-crypto-rustcrypto --no-default-features --features p256 --test provider
+          cargo test -p reqsign-crypto-rustcrypto --no-default-features --features aes-gcm --test provider
+          cargo test -p reqsign-crypto-rustcrypto --no-default-features --features rsa,p256,aes-gcm --test provider
+          cargo test -p reqsign-crypto-rustcrypto --test provider
+      - name: Check WASM feature combinations
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown
+          cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown --no-default-features
+          cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown --no-default-features --features rsa
+          cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown --no-default-features --features p256
+          cargo check -p reqsign-crypto-rustcrypto --target wasm32-unknown-unknown --no-default-features --features aes-gcm
+
+  facade_feature_isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and behavior-test each facade service in isolation
+        run: python3 .github/scripts/test_facade_features.py
+
   licenses:
     runs-on: ubuntu-latest
     timeout-minutes: 10

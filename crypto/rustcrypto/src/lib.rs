@@ -17,21 +17,40 @@
 
 //! Pure Rust [`CryptoProvider`] for reqsign based on the RustCrypto crates.
 //!
-//! The provider supports MD5, SHA-1, SHA-256, HMAC-SHA-1, HMAC-SHA-256,
-//! HMAC-SHA-512, and ECDSA P-256 on every target. RSA PKCS#1 v1.5, AES-GCM and
-//! secure random generation are available on native targets. On `wasm32` those
-//! operations inherit the trait's unsupported-operation error.
+//! MD5, SHA-1, SHA-256, HMAC-SHA-1, HMAC-SHA-256, and HMAC-SHA-512 are always
+//! available. The optional `rsa`, `p256`, and `aes-gcm` features, all enabled
+//! by default, add RSA PKCS#1 v1.5 signing, ECDSA P-256 signing, and AES-GCM
+//! encryption plus secure random generation. An operation whose feature is
+//! disabled returns [`reqsign_core::ErrorKind::ConfigInvalid`] and names the
+//! missing feature. RSA, AES-GCM, and secure random generation are native-only;
+//! on `wasm32` they return `ConfigInvalid` even when their feature is enabled.
 
 use std::sync::Arc;
 
 use hmac::{Hmac, KeyInit, Mac};
 use md5::Md5;
+#[cfg(feature = "p256")]
 use p256::ecdsa::signature::Signer;
+#[cfg(feature = "p256")]
 use p256::ecdsa::{DerSignature, SigningKey};
 use reqsign_core::crypto::{self, CryptoProvider};
 use reqsign_core::{Error, Result};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
+
+#[cfg(any(not(feature = "rsa"), not(feature = "p256"), not(feature = "aes-gcm")))]
+fn missing_feature(operation: &str, feature: &str) -> Error {
+    Error::config_invalid(format!(
+        "{operation} requires the `{feature}` feature of reqsign-crypto-rustcrypto"
+    ))
+}
+
+#[cfg(all(any(feature = "rsa", feature = "aes-gcm"), target_arch = "wasm32"))]
+fn unsupported_on_wasm32(operation: &str) -> Error {
+    Error::config_invalid(format!(
+        "{operation} is not supported on wasm32-unknown-unknown by reqsign-crypto-rustcrypto"
+    ))
+}
 
 /// RustCrypto implementation of [`CryptoProvider`].
 #[derive(Debug, Default)]
@@ -86,7 +105,7 @@ impl CryptoProvider for RustCryptoProvider {
         Ok(mac.finalize().into_bytes().into())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "rsa", not(target_arch = "wasm32")))]
     fn rsa_pkcs1v15_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
         use rsa::PrivateKey;
         use rsa::pkcs1::DecodeRsaPrivateKey;
@@ -111,6 +130,17 @@ impl CryptoProvider for RustCryptoProvider {
         Ok(signature.to_bytes().to_vec())
     }
 
+    #[cfg(all(feature = "rsa", target_arch = "wasm32"))]
+    fn rsa_pkcs1v15_sha256_sign(&self, _: &[u8], _: &[u8]) -> Result<Vec<u8>> {
+        Err(unsupported_on_wasm32("RSA PKCS#1 v1.5 SHA-256 signing"))
+    }
+
+    #[cfg(not(feature = "rsa"))]
+    fn rsa_pkcs1v15_sha256_sign(&self, _: &[u8], _: &[u8]) -> Result<Vec<u8>> {
+        Err(missing_feature("RSA PKCS#1 v1.5 SHA-256 signing", "rsa"))
+    }
+
+    #[cfg(feature = "p256")]
     fn ecdsa_p256_sha256_sign(
         &self,
         private_key_scalar: &[u8; 32],
@@ -123,7 +153,12 @@ impl CryptoProvider for RustCryptoProvider {
         Ok(signature.as_bytes().to_vec())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(feature = "p256"))]
+    fn ecdsa_p256_sha256_sign(&self, _: &[u8; 32], _: &[u8]) -> Result<Vec<u8>> {
+        Err(missing_feature("ECDSA P-256 SHA-256 signing", "p256"))
+    }
+
+    #[cfg(all(feature = "aes-gcm", not(target_arch = "wasm32")))]
     fn aes_gcm_encrypt(
         &self,
         key: &[u8],
@@ -165,9 +200,29 @@ impl CryptoProvider for RustCryptoProvider {
         Ok(ciphertext)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "aes-gcm", target_arch = "wasm32"))]
+    fn aes_gcm_encrypt(&self, _: &[u8], _: &[u8; 12], _: &[u8], _: &[u8]) -> Result<Vec<u8>> {
+        Err(unsupported_on_wasm32("AES-GCM encryption"))
+    }
+
+    #[cfg(not(feature = "aes-gcm"))]
+    fn aes_gcm_encrypt(&self, _: &[u8], _: &[u8; 12], _: &[u8], _: &[u8]) -> Result<Vec<u8>> {
+        Err(missing_feature("AES-GCM encryption", "aes-gcm"))
+    }
+
+    #[cfg(all(feature = "aes-gcm", not(target_arch = "wasm32")))]
     fn fill_random(&self, dest: &mut [u8]) -> Result<()> {
         getrandom::fill(dest)
             .map_err(|e| Error::unexpected(format!("secure random generation failed: {e}")))
+    }
+
+    #[cfg(all(feature = "aes-gcm", target_arch = "wasm32"))]
+    fn fill_random(&self, _: &mut [u8]) -> Result<()> {
+        Err(unsupported_on_wasm32("secure random generation"))
+    }
+
+    #[cfg(not(feature = "aes-gcm"))]
+    fn fill_random(&self, _: &mut [u8]) -> Result<()> {
+        Err(missing_feature("secure random generation", "aes-gcm"))
     }
 }

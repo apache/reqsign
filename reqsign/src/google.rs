@@ -23,50 +23,20 @@
 //! ## Credential Access Boundary downscoping
 //!
 //! [`ServerSideCredentialAccessBoundaryGranter`] performs an STS exchange for
-//! every output and is available with the `google` feature. Enable
-//! `google-credential-access-boundary-client-side` to use
-//! `ClientSideCredentialAccessBoundaryGranter`, which caches intermediary
-//! material and generates each downscoped token locally. Callers choose the
-//! mode explicitly; there is no implicit fallback between them.
-//!
-//! A control plane can obtain reusable intermediary material from Google STS and
-//! locally generate distinct tokens restricted to selected Cloud Storage buckets
-//! or object prefixes:
-//!
-//! ```no_run
-//! # #[cfg(feature = "google-credential-access-boundary-client-side")]
-//! # mod credential_access_boundary_example {
-//! use std::time::Duration;
-//!
-//! use reqsign::{Context, Granter, time::Timestamp};
-//! use reqsign::google::{
-//!     ClientSideCredentialAccessBoundaryGranter, CredentialAccessBoundaryGrant,
-//!     CredentialAccessBoundaryPermissions, TokenCredentialProvider,
-//! };
-//!
-//! # async fn example() -> reqsign_core::Result<()> {
-//! let source = TokenCredentialProvider::new("source-oauth-token")
-//!     .with_expires_at(Timestamp::now() + Duration::from_secs(3600));
-//! let grant = CredentialAccessBoundaryGrant::for_object_prefix(
-//!     "example-bucket",
-//!     "customer-a/",
-//!     CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
-//! );
-//! // The context must be configured with an HttpSend implementation. When the
-//! // `default-context` feature is enabled, use `reqsign::default_context()`.
-//! let context = Context::new();
-//! let downscoped = Granter::new(
-//!     context,
-//!     source,
-//!     ClientSideCredentialAccessBoundaryGranter::new(grant),
-//! )
-//! .grant(None)
-//! .await?;
-//! # let _ = downscoped;
-//! # Ok(())
-//! # }
-//! # }
-//! ```
+//! every output and is available with the `google` feature. The facade no
+//! longer declares a `google-credential-access-boundary-client-side` feature.
+//! Enable `reqsign-google/credential-access-boundary-client-side` directly,
+//! bind a [`CryptoProvider`](reqsign_core::crypto::CryptoProvider) that supports
+//! AES-GCM and secure random generation, and supply an `HttpSend` transport for
+//! the STS exchange. For example, bind
+//! `reqsign_crypto_rustcrypto::RustCryptoProvider` with its `aes-gcm` feature.
+//! If the graph also enables the facade `google` feature, Cargo
+//! unifies features on the single `reqsign-google` package, so
+//! `reqsign::google` re-exports can still expose the type; that is feature
+//! unification, not a facade feature. The facade's `google` feature selects
+//! only the RSA operation used by Google service-account JWT and request
+//! signing. See the `ClientSideCredentialAccessBoundaryGranter` rustdoc for a
+//! runnable mock-STS example.
 
 // Re-export all Google Cloud signing types
 pub use reqsign_google::*;
