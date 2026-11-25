@@ -49,6 +49,9 @@ pub enum SasResourceKind {
 /// RequestSigner that implement Azure Storage Shared Key Authorization.
 ///
 /// - [Authorize with Shared Key](https://docs.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key)
+///
+/// Shared Key query signing creates a Service SAS. Its lifetime must reach a
+/// future wire second and remain representable in the SAS timestamp.
 pub struct RequestSigner {
     time: Option<Timestamp>,
     service_sas_permissions: Option<String>,
@@ -454,13 +457,19 @@ impl SignRequest for RequestSigner {
 
                         let resource = service_sas_resource(&sctx.path)?;
                         let provider = context.crypto_provider()?;
+                        let expiry = crate::service_sas::expiry_at_wire_second(signing_time, d)?;
+                        if expiry <= signing_time {
+                            return Err(reqsign_core::Error::request_invalid(
+                                "Azure Service SAS lifetime does not reach a future wire timestamp",
+                            ));
+                        }
 
                         let mut signer = crate::service_sas::ServiceSharedAccessSignature::new(
                             account_name.clone(),
                             account_key.clone(),
                             resource,
                             permissions.to_string(),
-                            signing_time + d,
+                            expiry,
                         );
                         if let Some(start) = self.service_sas_start {
                             signer = signer.with_start(start);
@@ -995,6 +1004,38 @@ mod tests {
                 "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&sig=CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D"
             )
         );
+    }
+
+    #[tokio::test]
+    async fn shared_key_presign_rejects_invalid_lifetimes_without_changing_the_request() {
+        let ctx = crate::test_context();
+        let now = Timestamp::from_str("2022-03-01T08:12:34Z").unwrap();
+        let key = reqsign_core::hash::base64_encode(b"key");
+        let cred = Credential::with_shared_key("account", &key);
+        let signer = RequestSigner::new()
+            .with_time(now)
+            .with_service_sas_permissions("r");
+
+        for expires_in in [Duration::ZERO, Duration::from_millis(400), Duration::MAX] {
+            let mut parts =
+                Request::get("https://account.blob.core.windows.net/container/path/to/blob.txt")
+                    .body(())
+                    .unwrap()
+                    .into_parts()
+                    .0;
+            let original = parts.clone();
+
+            let err = signer
+                .sign_request(&ctx, &mut parts, Some(&cred), Some(expires_in))
+                .await
+                .expect_err("invalid Service SAS lifetime must be rejected");
+
+            assert_eq!(err.kind(), reqsign_core::ErrorKind::RequestInvalid);
+            assert_eq!(parts.method, original.method);
+            assert_eq!(parts.uri, original.uri);
+            assert_eq!(parts.version, original.version);
+            assert_eq!(parts.headers, original.headers);
+        }
     }
 
     #[tokio::test]
