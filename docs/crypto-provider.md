@@ -344,8 +344,16 @@ before loading, such as AWS SSO, propagate that identity's errors instead. A
 context without a provider found through the generic chain can therefore surface
 as credential absence, and `Signer::sign` reports `CredentialInvalid` ("failed
 to load signing credential") with the request unchanged. This preserves the
-existing chain and `Ok(None)` contract; providing a provider before credential
-loading is what makes the missing-provider `ConfigInvalid` visible.
+existing chain and `Ok(None)` contract; a missing-provider `ConfigInvalid` is
+visible only outside the chain, which reports credential absence instead.
+
+Chain fall-through is deliberate discovery: a source that returns an error is
+treated as unavailable so a later source can supply the credential. When one
+provider is the intended credential source, pass it directly to `Signer::new`
+instead of wrapping it in a chain; its error, including `ConfigInvalid` from a
+missing or unsupported provider, is then returned unchanged. Use
+`ProvideCredentialChain` only when a failed source should be skipped in favor
+of the next one.
 
 ### Core and Service Crates
 
