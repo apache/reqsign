@@ -25,6 +25,7 @@ use reqsign_aws_core::Credential;
 use reqsign_aws_core::signing::{
     append_query_fragment, append_query_pairs, canonical_request_string_with_encoding,
     canonicalize_headers_with_standard_session_token, canonicalize_query,
+    validate_presign_lifetime,
 };
 use reqsign_core::crypto;
 use reqsign_core::hash::{hex_sha256, hmac_sha256};
@@ -46,6 +47,10 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 
 /// Request signer implementing
 /// [AWS Signature Version 4A](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-create-signed-request.html).
+///
+/// Presigned query authentication accepts a lifetime from 1 through 604800
+/// seconds (seven days). Other values return `RequestInvalid` before changing
+/// the request.
 #[derive(Debug)]
 pub struct RequestSigner {
     service: String,
@@ -106,7 +111,7 @@ impl RequestSigner {
         signing_time: Timestamp,
         expires_in: Option<Duration>,
     ) -> Timestamp {
-        signing_time + expires_in.unwrap_or(CREDENTIAL_OPERATION_HEADROOM)
+        signing_time.saturating_add(expires_in.unwrap_or(CREDENTIAL_OPERATION_HEADROOM))
     }
 }
 
@@ -140,6 +145,7 @@ impl SignRequest for RequestSigner {
                 "credential expires before the requested signing operation deadline",
             ));
         }
+        validate_presign_lifetime(expires_in)?;
 
         let original_uri = req.uri.clone();
         let mut signing_request = SigningRequest::build(req)?;
@@ -576,6 +582,106 @@ mod tests {
         assert!(query.contains("X-Amz-Region-Set=us-east-1"));
         assert!(query.contains("X-Amz-Signature="));
         assert!(!parts.headers.contains_key(X_AMZ_REGION_SET));
+        Ok(())
+    }
+
+    fn assert_parts_unchanged(actual: &http::request::Parts, expected: &http::request::Parts) {
+        assert_eq!(actual.method, expected.method);
+        assert_eq!(actual.uri, expected.uri);
+        assert_eq!(actual.version, expected.version);
+        assert_eq!(actual.headers, expected.headers);
+    }
+
+    #[test]
+    fn presign_deadline_saturates_for_duration_max() {
+        let max = signer()
+            .required_valid_until(&credential(), Some(Duration::ZERO))
+            .saturating_add(Duration::MAX);
+
+        assert_eq!(
+            signer().required_valid_until(&credential(), Some(Duration::MAX)),
+            max
+        );
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_invalid_lifetimes_without_changing_the_request() -> AnyResult<()> {
+        for expires_in in [
+            Duration::from_millis(500),
+            Duration::from_secs(604_801),
+            Duration::MAX,
+        ] {
+            let mut parts = Request::get("https://example.amazonaws.com/")
+                .body(())?
+                .into_parts()
+                .0;
+            let original = parts.clone();
+
+            let err = signer()
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential()),
+                    Some(expires_in),
+                )
+                .await
+                .expect_err("invalid presigned URL lifetime must be rejected");
+
+            assert_eq!(err.kind(), ErrorKind::RequestInvalid);
+            assert_parts_unchanged(&parts, &original);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_oversized_lifetime_after_credential_validation() -> AnyResult<()> {
+        let now: Timestamp = "2015-08-30T12:36:00Z"
+            .parse()
+            .expect("timestamp must parse");
+        let finite = Credential {
+            expires_in: Some(now + Duration::from_secs(3600)),
+            ..credential()
+        };
+        let mut parts = Request::get("https://example.amazonaws.com/")
+            .body(())?
+            .into_parts()
+            .0;
+        let original = parts.clone();
+
+        let err = signer()
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&finite),
+                Some(Duration::MAX),
+            )
+            .await
+            .expect_err("a finite credential cannot cover an unbounded lifetime");
+
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_parts_unchanged(&parts, &original);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_accepts_the_seven_day_limit() -> AnyResult<()> {
+        let mut parts = Request::get("https://example.amazonaws.com/")
+            .body(())?
+            .into_parts()
+            .0;
+
+        signer()
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&credential()),
+                Some(Duration::from_secs(604_800)),
+            )
+            .await?;
+
+        let query = parts.uri.query().expect("presigned request has query");
+        assert!(query.contains("X-Amz-Expires=604800"));
+        assert!(query.contains("X-Amz-Signature="));
         Ok(())
     }
 
