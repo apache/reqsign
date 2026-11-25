@@ -5,7 +5,7 @@ release; every other crate keeps its own line. Migration steps for the current
 major are in
 [Upgrading to Reqsign 0.21](website/docs/guides/upgrading-to-0.21.md).
 
-## 0.21.0 - Unreleased
+## 0.21.0 - 2026-11-25
 
 0.21 is a coordinated major for the core and the established service crates,
 and the first crates.io release of the provider crates added since 0.20.8. It
