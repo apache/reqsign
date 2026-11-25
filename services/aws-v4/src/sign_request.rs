@@ -28,6 +28,12 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 ///
 /// - [Signature Version 4 signing process](https://docs.aws.amazon.com/general/latest/gr/signature-version-4.html)
 ///
+/// Presigned query authentication writes `X-Amz-Expires` in whole seconds and
+/// accepts 1 through 604800 seconds (seven days). Other encoded values return
+/// `RequestInvalid` before changing the request.
+///
+/// - [AWS authentication methods](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-authentication-methods.html)
+///
 /// # Payload signing
 ///
 /// The signer receives an `http::request::Parts` and does not read the body.
@@ -198,7 +204,7 @@ impl RequestSigner {
         signing_time: Timestamp,
         expires_in: Option<Duration>,
     ) -> Timestamp {
-        signing_time + expires_in.unwrap_or(CREDENTIAL_OPERATION_HEADROOM)
+        signing_time.saturating_add(expires_in.unwrap_or(CREDENTIAL_OPERATION_HEADROOM))
     }
 }
 impl SignRequest for RequestSigner {
@@ -403,6 +409,128 @@ mod tests {
             signer.required_valid_until(&credential, None),
             now + CREDENTIAL_OPERATION_HEADROOM
         );
+    }
+
+    fn presign_credential(expires_in: Option<Timestamp>) -> Credential {
+        Credential {
+            access_key_id: "test-access-key".to_string(),
+            secret_access_key: "test-secret-key".to_string(),
+            session_token: None,
+            expires_in,
+        }
+    }
+
+    fn assert_parts_unchanged(actual: &http::request::Parts, expected: &http::request::Parts) {
+        assert_eq!(actual.method, expected.method);
+        assert_eq!(actual.uri, expected.uri);
+        assert_eq!(actual.version, expected.version);
+        assert_eq!(actual.headers, expected.headers);
+    }
+
+    #[test]
+    fn presign_deadline_saturates_for_duration_max() {
+        let now: Timestamp = "2026-07-22T00:00:00Z"
+            .parse()
+            .expect("timestamp must parse");
+        let signer = RequestSigner::new("s3", "test").with_time(now);
+        let max = now.saturating_add(Duration::MAX);
+
+        assert_eq!(
+            signer.required_valid_until(&presign_credential(None), Some(Duration::MAX)),
+            max
+        );
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_invalid_lifetimes_without_changing_the_request() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("s3", "test").with_time(now);
+        let credential = presign_credential(None);
+
+        for expires_in in [
+            Duration::from_millis(500),
+            Duration::from_secs(604_801),
+            Duration::MAX,
+        ] {
+            let mut parts = Request::get("https://example.com/object")
+                .body(())?
+                .into_parts()
+                .0;
+            let original = parts.clone();
+
+            let err = signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    Some(expires_in),
+                )
+                .await
+                .expect_err("invalid presigned URL lifetime must be rejected");
+
+            assert_eq!(err.kind(), ErrorKind::RequestInvalid);
+            assert_parts_unchanged(&parts, &original);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_oversized_lifetime_after_credential_validation() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("s3", "test").with_time(now);
+        let finite = presign_credential(Some(now + Duration::from_secs(3600)));
+        let mut parts = Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+        let original = parts.clone();
+
+        let err = signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&finite),
+                Some(Duration::MAX),
+            )
+            .await
+            .expect_err("a finite credential cannot cover an unbounded lifetime");
+
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_parts_unchanged(&parts, &original);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_accepts_the_encoded_lifetime_boundaries() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("s3", "test").with_time(now);
+
+        for (expires_in, encoded_seconds) in [
+            (Duration::from_secs(1), "1"),
+            (
+                Duration::from_secs(604_800) + Duration::from_millis(500),
+                "604800",
+            ),
+        ] {
+            let mut parts = Request::get("https://example.com/object")
+                .body(())?
+                .into_parts()
+                .0;
+
+            signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&presign_credential(None)),
+                    Some(expires_in),
+                )
+                .await?;
+
+            let query = parts.uri.query().expect("presigned URL must have a query");
+            assert!(query.contains(&format!("X-Amz-Expires={encoded_seconds}")));
+            assert!(query.contains("X-Amz-Signature="));
+        }
+        Ok(())
     }
 
     #[tokio::test]

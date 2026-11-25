@@ -990,7 +990,7 @@ impl GrantCredential for ServiceSasGranter {
     }
 }
 
-fn expiry_at_wire_second(now: Timestamp, expires_in: Duration) -> Result<Timestamp> {
+pub(crate) fn expiry_at_wire_second(now: Timestamp, expires_in: Duration) -> Result<Timestamp> {
     let duration_seconds = i64::try_from(expires_in.as_secs()).map_err(|_| {
         Error::request_invalid("Azure Service SAS lifetime exceeds the wire time range")
     })?;

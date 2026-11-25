@@ -83,6 +83,12 @@ through the `Context`, passes the `Context` explicitly to facade
 - `reqsign-azure-storage` accepts SAS tokens with a leading `?`. SAS values
   copied from a full URL now sign the same query text as values without the
   delimiter.
+- Presigning now rejects unrepresentable or out-of-contract lifetimes before
+  changing the request. AWS SigV4/SigV4a and Aliyun OSS V4 use encoded seconds
+  (OSS temporary credentials are limited to 12 hours), Volcengine TOS has no
+  fixed upper bound, Huawei Cloud OBS applies a 20 UTC calendar year signing
+  rule, and Azure Storage Shared Key Service SAS uses whole wire seconds.
+  Tencent COS and OSS V1/V2 keep their absolute Unix-second expirations.
 
 ### Carried over from the v0.20.9 release
 

@@ -33,6 +33,8 @@ use crate::{Credential, PercentEncodingMode};
 
 static AWS_URI_DOUBLE_ENCODE_SET: AsciiSet = AWS_URI_ENCODE_SET.remove(b'/');
 
+const MAX_PRESIGN_LIFETIME: Duration = Duration::from_secs(604_800);
+
 /// Build the canonical request shared by AWS SigV4-family algorithms.
 pub fn canonical_request_string(
     request: &SigningRequest,
@@ -295,6 +297,26 @@ pub struct SigV4SigningOptions<'a> {
     pub uses_s3_express_session_token: bool,
 }
 
+/// Validate a caller-supplied AWS presigned URL lifetime.
+///
+/// AWS query authentication writes `X-Amz-Expires` in whole seconds and accepts
+/// values from 1 through 604800 (seven days).
+#[doc(hidden)]
+pub fn validate_presign_lifetime(expires_in: Option<Duration>) -> Result<()> {
+    let Some(expires_in) = expires_in else {
+        return Ok(());
+    };
+
+    let seconds = expires_in.as_secs();
+    if seconds == 0 || seconds > MAX_PRESIGN_LIFETIME.as_secs() {
+        return Err(reqsign_core::Error::request_invalid(
+            "AWS SigV4 presigned URL lifetime must be between 1 and 604800 seconds",
+        ));
+    }
+
+    Ok(())
+}
+
 /// Sign a wire-ready request with AWS Signature Version 4.
 ///
 /// This is the shared implementation used by the public SigV4 signer and by
@@ -313,12 +335,13 @@ pub fn sign_request_parts(
 ) -> Result<()> {
     use reqsign_core::SigningCredential;
 
-    let required_until = now + expires_in.unwrap_or(Duration::from_secs(10));
+    let required_until = now.saturating_add(expires_in.unwrap_or(Duration::from_secs(10)));
     if !credential.is_valid_at(required_until) {
         return Err(reqsign_core::Error::credential_invalid(
             "credential expires before the requested signing operation deadline",
         ));
     }
+    validate_presign_lifetime(expires_in)?;
 
     let original_uri = req.uri.clone();
     let mut signed_req = SigningRequest::build(req)?;

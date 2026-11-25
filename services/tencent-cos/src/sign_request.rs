@@ -31,6 +31,10 @@ use std::time::Duration;
 /// RequestSigner that implements Tencent COS signing.
 ///
 /// - [Tencent COS Signature](https://cloud.tencent.com/document/product/436/7778)
+///
+/// Query signing embeds the signature interval in `q-key-time`. A lifetime that
+/// the timestamp cannot represent returns `RequestInvalid` before changing the
+/// request.
 #[derive(Debug, Default)]
 pub struct RequestSigner {
     time: Option<Timestamp>,
@@ -64,7 +68,7 @@ impl RequestSigner {
         expires_in: Option<Duration>,
     ) -> Timestamp {
         let signature_lifetime = expires_in.unwrap_or_else(|| Duration::from_secs(3600));
-        signing_time + signature_lifetime
+        signing_time.saturating_add(signature_lifetime)
     }
 }
 impl SignRequest for RequestSigner {
@@ -156,7 +160,12 @@ fn build_signature(
     now: Timestamp,
     expires: Duration,
 ) -> Result<String> {
-    let key_time = format!("{};{}", now.as_second(), (now + expires).as_second());
+    let expiration = now.checked_add(expires).ok_or_else(|| {
+        reqsign_core::Error::request_invalid(
+            "COS signature expiration exceeds the representable time range",
+        )
+    })?;
+    let key_time = format!("{};{}", now.as_second(), expiration.as_second());
     let sign_key = hex_hmac_sha1(provider, cred.secret_key.as_bytes(), key_time.as_bytes())?;
 
     let (param_list, param_string) = canonical_query(ctx);
@@ -260,6 +269,7 @@ fn append_query_fragment(uri: &Uri, fragment: &str) -> Result<Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reqsign_core::ErrorKind;
 
     const RAW_QUERY: &str = "versionId=a%2Bb%3Dc%2525%26e&slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
 
@@ -277,6 +287,133 @@ mod tests {
             signer.required_valid_until(&credential, Some(Duration::from_secs(60))),
             now + Duration::from_secs(60)
         );
+        Ok(())
+    }
+
+    fn test_credential() -> Credential {
+        Credential {
+            secret_id: "secret_id".to_string(),
+            secret_key: "secret_key".to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn assert_parts_unchanged(actual: &http::request::Parts, expected: &http::request::Parts) {
+        assert_eq!(actual.method, expected.method);
+        assert_eq!(actual.uri, expected.uri);
+        assert_eq!(actual.version, expected.version);
+        assert_eq!(actual.headers, expected.headers);
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_unrepresentable_expiration_without_changing_the_request() -> Result<()>
+    {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new().with_time(now);
+        let mut parts = http::Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+        let original = parts.clone();
+
+        let err = signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&test_credential()),
+                Some(Duration::MAX),
+            )
+            .await
+            .expect_err("unrepresentable expiration must be rejected");
+
+        assert_eq!(err.kind(), ErrorKind::RequestInvalid);
+        assert_parts_unchanged(&parts, &original);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_unbounded_lifetime_for_a_finite_credential() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new().with_time(now);
+        let credential = Credential {
+            secret_id: "secret_id".to_string(),
+            secret_key: "secret_key".to_string(),
+            security_token: None,
+            expires_in: Some(now + Duration::from_secs(3600)),
+        };
+        let mut parts = http::Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+        let original = parts.clone();
+
+        let err = signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&credential),
+                Some(Duration::MAX),
+            )
+            .await
+            .expect_err("a finite credential cannot cover an unbounded lifetime");
+
+        assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
+        assert_parts_unchanged(&parts, &original);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_keeps_the_ordinary_q_key_time() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new().with_time(now);
+        let mut parts = http::Request::get("https://example.com/object")
+            .body(())?
+            .into_parts()
+            .0;
+
+        signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&test_credential()),
+                Some(Duration::from_secs(60)),
+            )
+            .await?;
+
+        let query = parts.uri.query().expect("presigned URL must have a query");
+        assert!(query.contains("q-key-time=1784678400;1784678460"));
+        assert!(query.contains("q-signature="));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_keeps_absolute_q_key_time_without_a_relative_cap() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new().with_time(now);
+        let credential = test_credential();
+
+        for (expires_in, expected_end) in [
+            (Duration::ZERO, 1_784_678_400),
+            (Duration::from_secs(604_801), 1_785_283_201),
+        ] {
+            let mut parts = http::Request::get("https://example.com/object")
+                .body(())?
+                .into_parts()
+                .0;
+
+            signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    Some(expires_in),
+                )
+                .await?;
+
+            let query = parts.uri.query().expect("presigned URL must have a query");
+            assert!(query.contains(&format!("q-key-time=1784678400;{expected_end}")));
+            assert!(query.contains("q-signature="));
+        }
         Ok(())
     }
 
