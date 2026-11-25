@@ -34,7 +34,7 @@ use super::credential::Credential;
 use reqsign_core::hash::base64_hmac_sha1;
 use reqsign_core::time::Timestamp;
 use reqsign_core::utils::Redact;
-use reqsign_core::{SignRequest, SigningCredential, SigningMethod, SigningRequest};
+use reqsign_core::{SignRequest, SigningCredential, SigningRequest};
 
 static OBS_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
     .remove(b'-')
@@ -45,6 +45,10 @@ static OBS_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
 /// RequestSigner that implement Huawei Cloud Object Storage Service Authorization.
 ///
 /// - [User Signature Authentication](https://support.huaweicloud.com/intl/en-us/api-obs/obs_04_0009.html)
+///
+/// Query signing embeds an absolute `Expires` second. A lifetime that the
+/// timestamp cannot represent returns `RequestInvalid` before changing the
+/// request.
 #[derive(Debug)]
 pub struct RequestSigner {
     bucket: String,
@@ -81,7 +85,7 @@ impl RequestSigner {
         signing_time: Timestamp,
         expires_in: Option<Duration>,
     ) -> Timestamp {
-        signing_time + expires_in.unwrap_or_default()
+        signing_time.saturating_add(expires_in.unwrap_or_default())
     }
 }
 impl SignRequest for RequestSigner {
@@ -115,57 +119,57 @@ impl SignRequest for RequestSigner {
             ));
         }
 
-        let method = if let Some(expires_in) = expires_in {
-            SigningMethod::Query(expires_in)
-        } else {
-            SigningMethod::Header
-        };
-
         let original_uri = parts.uri.clone();
         let mut ctx = SigningRequest::build(parts)?;
+        let query_expiration = expires_in
+            .map(|expires| {
+                now.checked_add(expires).ok_or_else(|| {
+                    reqsign_core::Error::request_invalid(
+                        "OBS signature expiration exceeds the representable time range",
+                    )
+                })
+            })
+            .transpose()?;
 
-        let string_to_sign = string_to_sign(&mut ctx, cred, now, method, &self.bucket)?;
+        let string_to_sign = string_to_sign(&mut ctx, cred, now, query_expiration, &self.bucket)?;
         let signature = base64_hmac_sha1(
             provider,
             cred.secret_access_key.as_bytes(),
             string_to_sign.as_bytes(),
         )?;
 
-        let final_uri = match method {
-            SigningMethod::Header => {
-                ctx.headers.insert(DATE, now.format_http_date().parse()?);
-                ctx.headers.insert(AUTHORIZATION, {
-                    let mut value: HeaderValue =
-                        format!("OBS {}:{}", cred.access_key_id, signature).parse()?;
-                    value.set_sensitive(true);
+        let final_uri = if let Some(expiration) = query_expiration {
+            ctx.headers.insert(DATE, now.format_http_date().parse()?);
+            let mut authentication = Vec::new();
+            if let Some(token) = &cred.security_token {
+                authentication.push(format!(
+                    "security-token={}",
+                    utf8_percent_encode(token, &OBS_QUERY_ENCODE_SET)
+                ));
+            }
+            authentication.push(format!(
+                "AccessKeyId={}",
+                utf8_percent_encode(&cred.access_key_id, &OBS_QUERY_ENCODE_SET)
+            ));
+            authentication.push(format!("Expires={}", expiration.as_second()));
+            authentication.push(format!(
+                "Signature={}",
+                utf8_percent_encode(&signature, &OBS_QUERY_ENCODE_SET)
+            ));
+            Some(append_query_fragment(
+                &original_uri,
+                &authentication.join("&"),
+            )?)
+        } else {
+            ctx.headers.insert(DATE, now.format_http_date().parse()?);
+            ctx.headers.insert(AUTHORIZATION, {
+                let mut value: HeaderValue =
+                    format!("OBS {}:{}", cred.access_key_id, signature).parse()?;
+                value.set_sensitive(true);
 
-                    value
-                });
-                None
-            }
-            SigningMethod::Query(expire) => {
-                ctx.headers.insert(DATE, now.format_http_date().parse()?);
-                let mut authentication = Vec::new();
-                if let Some(token) = &cred.security_token {
-                    authentication.push(format!(
-                        "security-token={}",
-                        utf8_percent_encode(token, &OBS_QUERY_ENCODE_SET)
-                    ));
-                }
-                authentication.push(format!(
-                    "AccessKeyId={}",
-                    utf8_percent_encode(&cred.access_key_id, &OBS_QUERY_ENCODE_SET)
-                ));
-                authentication.push(format!("Expires={}", (now + expire).as_second()));
-                authentication.push(format!(
-                    "Signature={}",
-                    utf8_percent_encode(&signature, &OBS_QUERY_ENCODE_SET)
-                ));
-                Some(append_query_fragment(
-                    &original_uri,
-                    &authentication.join("&"),
-                )?)
-            }
+                value
+            });
+            None
         };
 
         ctx.apply(parts)?;
@@ -196,7 +200,7 @@ fn string_to_sign(
     ctx: &mut SigningRequest,
     cred: &Credential,
     now: Timestamp,
-    method: SigningMethod,
+    expires_at: Option<Timestamp>,
     bucket: &str,
 ) -> Result<String> {
     let mut s = String::new();
@@ -212,17 +216,17 @@ fn string_to_sign(
     s.write_str("\n")?;
     s.write_str(ctx.header_get_or_default(&CONTENT_TYPE)?)?;
     s.write_str("\n")?;
-    match method {
-        SigningMethod::Header => {
-            writeln!(&mut s, "{}", now.format_http_date())?;
+    match expires_at {
+        Some(expiration) => {
+            writeln!(&mut s, "{}", expiration.as_second())?;
         }
-        SigningMethod::Query(expires) => {
-            writeln!(&mut s, "{}", (now + expires).as_second())?;
+        None => {
+            writeln!(&mut s, "{}", now.format_http_date())?;
         }
     }
 
     {
-        let headers = canonicalize_header(ctx, method, cred)?;
+        let headers = canonicalize_header(ctx, expires_at.is_none(), cred)?;
         if !headers.is_empty() {
             writeln!(&mut s, "{headers}",)?;
         }
@@ -249,10 +253,10 @@ fn string_to_sign(
 /// - [Authentication of Signature in a Header](https://support.huaweicloud.com/intl/en-us/api-obs/obs_04_0010.html)
 fn canonicalize_header(
     ctx: &mut SigningRequest,
-    method: SigningMethod,
+    is_header: bool,
     cred: &Credential,
 ) -> Result<String> {
-    if method == SigningMethod::Header {
+    if is_header {
         // Insert security token
         if let Some(token) = &cred.security_token {
             let mut value: HeaderValue = token.parse()?;
@@ -363,8 +367,7 @@ mod tests {
 
     use http::Uri;
     use http::header::HeaderName;
-    use reqsign_core::Result;
-    use reqsign_core::{OsEnv, Signer};
+    use reqsign_core::{ErrorKind, OsEnv, Result, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
 
@@ -435,13 +438,7 @@ mod tests {
                 .0;
 
         let mut signing_request = SigningRequest::build(&mut parts)?;
-        let string = string_to_sign(
-            &mut signing_request,
-            &credential,
-            now,
-            SigningMethod::Header,
-            "bucket",
-        )?;
+        let string = string_to_sign(&mut signing_request, &credential, now, None, "bucket")?;
         assert!(string.contains(TOKEN));
 
         start_log_capture();
@@ -577,6 +574,67 @@ mod tests {
         Ok(())
     }
 
+    fn assert_parts_unchanged(actual: &http::request::Parts, expected: &http::request::Parts) {
+        assert_eq!(actual.method, expected.method);
+        assert_eq!(actual.uri, expected.uri);
+        assert_eq!(actual.version, expected.version);
+        assert_eq!(actual.headers, expected.headers);
+    }
+
+    #[tokio::test]
+    async fn presign_rejects_unrepresentable_expiration_without_changing_the_request() -> Result<()>
+    {
+        let now = Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?;
+        let signer = RequestSigner::new("bucket").with_time(now);
+        let credential = Credential::new("access_key".to_string(), "123456".to_string(), None);
+        let mut parts =
+            http::Request::get("http://bucket.obs.cn-north-4.myhuaweicloud.com/object.txt")
+                .body(())?
+                .into_parts()
+                .0;
+        let original = parts.clone();
+
+        let err = signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&credential),
+                Some(Duration::MAX),
+            )
+            .await
+            .expect_err("unrepresentable expiration must be rejected");
+
+        assert_eq!(err.kind(), ErrorKind::RequestInvalid);
+        assert_parts_unchanged(&parts, &original);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn presign_keeps_the_ordinary_expiration() -> Result<()> {
+        let now = Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?;
+        let signer = RequestSigner::new("bucket").with_time(now);
+        let credential = Credential::new("access_key".to_string(), "123456".to_string(), None);
+        let mut parts =
+            http::Request::get("http://bucket.obs.cn-north-4.myhuaweicloud.com/object.txt")
+                .body(())?
+                .into_parts()
+                .0;
+
+        signer
+            .sign_request(
+                &crate::test_context(),
+                &mut parts,
+                Some(&credential),
+                Some(Duration::from_secs(60)),
+            )
+            .await?;
+
+        let query = parts.uri.query().expect("presigned URL must have a query");
+        assert!(query.contains("Expires=1660582272"));
+        assert!(query.contains("Signature="));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn canonicalization_and_signing_preserve_wire_uri() -> Result<()> {
         let now = Timestamp::parse_rfc2822("Mon, 15 Aug 2022 16:50:12 GMT")?;
@@ -587,13 +645,7 @@ mod tests {
 
         let mut canonical_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
         let mut signing_req = SigningRequest::build(&mut canonical_parts)?;
-        let string = string_to_sign(
-            &mut signing_req,
-            &credential,
-            now,
-            SigningMethod::Header,
-            "bucket",
-        )?;
+        let string = string_to_sign(&mut signing_req, &credential, now, None, "bucket")?;
         assert!(string.ends_with("/bucket/object%2Fname?versionId=a+b=c%25&e"));
 
         let mut header_parts = http::Request::get(&original_uri).body(())?.into_parts().0;
