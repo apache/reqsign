@@ -26,7 +26,7 @@ use crate::SigningCredential;
 use asyncband::mutex::Mutex;
 use std::any::type_name;
 use std::fmt::{Debug, Formatter};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
 /// Loads credentials and atomically signs request heads.
@@ -45,8 +45,10 @@ pub struct Signer<K: SigningCredential> {
 ///
 /// Valid credentials are read from `current` without awaiting, so concurrent
 /// signing doesn't serialize. `refresh` only serializes loading a new credential.
+/// The cache holds an [`Arc`] snapshot so the signing path borrows the credential
+/// instead of cloning it; only [`Signer::credential_for`] returns an owned value.
 struct CredentialCache<K> {
-    current: RwLock<Option<K>>,
+    current: RwLock<Option<Arc<K>>>,
     refresh: Mutex<()>,
 }
 
@@ -140,7 +142,7 @@ impl<K: SigningCredential> Signer<K> {
         req: &mut http::request::Parts,
         expires_in: Option<Duration>,
     ) -> Result<()> {
-        let credential = self.credential_for(expires_in).await?;
+        let credential = self.credential_arc_for(expires_in).await?;
         self.sign_candidate(req, &credential, expires_in).await
     }
 
@@ -156,6 +158,17 @@ impl<K: SigningCredential> Signer<K> {
     /// routing metadata, then pass the same credential to
     /// [`Signer::sign_with_credential`] so the URI and its authentication agree.
     pub async fn credential_for(&self, expires_in: Option<Duration>) -> Result<K> {
+        self.credential_arc_for(expires_in)
+            .await
+            .map(|credential| (*credential).clone())
+    }
+
+    /// Load or reuse a cached credential while keeping it in the shared cache.
+    ///
+    /// The returned [`Arc`] borrows the cached credential, so the signing path
+    /// does not clone `K`. Callers that need an owned value use
+    /// [`Signer::credential_for`].
+    async fn credential_arc_for(&self, expires_in: Option<Duration>) -> Result<Arc<K>> {
         if let Some(credential) = self.usable_cached(expires_in) {
             return Ok(credential);
         }
@@ -165,41 +178,58 @@ impl<K: SigningCredential> Signer<K> {
             return Ok(credential);
         }
 
-        let credential = self
-            .loader
-            .provide_credential_dyn(&self.ctx)
-            .await?
-            .ok_or_else(|| {
-                Error::credential_invalid("failed to load signing credential")
-                    .with_context(format!("credential_type: {}", type_name::<K>()))
-            })?;
-
-        *self
-            .credential
-            .current
-            .write()
-            .expect("credential cache poisoned") = Some(credential.clone());
+        let credential = Arc::new(
+            self.loader
+                .provide_credential_dyn(&self.ctx)
+                .await?
+                .ok_or_else(|| {
+                    Error::credential_invalid("failed to load signing credential")
+                        .with_context(format!("credential_type: {}", type_name::<K>()))
+                })?,
+        );
+        self.publish(&credential);
         drop(refresh);
 
-        self.validate_refreshed_credential(credential, expires_in)
+        self.validate_refreshed_credential(&credential, expires_in)?;
+        Ok(credential)
     }
 
-    fn usable_cached(&self, expires_in: Option<Duration>) -> Option<K> {
-        let current = self
-            .credential
+    fn usable_cached(&self, expires_in: Option<Duration>) -> Option<Arc<K>> {
+        let credential = self.cached_arc()?;
+        let required_until = self
+            .builder
+            .required_valid_until_dyn(&credential, expires_in);
+        if credential.is_valid() && credential.is_valid_at(required_until) {
+            Some(credential)
+        } else {
+            None
+        }
+    }
+
+    /// Read the cached credential and release the read guard before any user or
+    /// service code observes the snapshot.
+    fn cached_arc(&self) -> Option<Arc<K>> {
+        self.credential
             .current
             .read()
-            .expect("credential cache poisoned");
-        current
+            .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
-            .filter(|credential| {
-                credential.is_valid()
-                    && credential.is_valid_at(
-                        self.builder
-                            .required_valid_until_dyn(credential, expires_in),
-                    )
-            })
-            .cloned()
+            .map(Arc::clone)
+    }
+
+    /// Replace the cached credential with a newly loaded snapshot.
+    ///
+    /// The previous snapshot is dropped after the write lock is released.
+    fn publish(&self, credential: &Arc<K>) {
+        let previous = {
+            let mut current = self
+                .credential
+                .current
+                .write()
+                .unwrap_or_else(PoisonError::into_inner);
+            current.replace(Arc::clone(credential))
+        };
+        drop(previous);
     }
 
     /// Sign a wire-ready request head with a caller-supplied credential.
@@ -259,12 +289,12 @@ impl<K: SigningCredential> Signer<K> {
 
     fn validate_refreshed_credential(
         &self,
-        credential: K,
+        credential: &K,
         expires_in: Option<Duration>,
-    ) -> Result<K> {
+    ) -> Result<()> {
         let required_until = self
             .builder
-            .required_valid_until_dyn(&credential, expires_in);
+            .required_valid_until_dyn(credential, expires_in);
         if !credential.is_valid_at(required_until) {
             return Err(Error::credential_invalid(
                 "refreshed signing credential expires before the requested operation deadline",
@@ -273,7 +303,7 @@ impl<K: SigningCredential> Signer<K> {
             .with_context(format!("required_valid_until: {required_until}")));
         }
 
-        Ok(credential)
+        Ok(())
     }
 }
 
@@ -641,7 +671,7 @@ mod tests {
             .credential
             .current
             .write()
-            .expect("credential cache poisoned") = Some(credential);
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(credential));
     }
 
     #[test]
@@ -725,6 +755,88 @@ mod tests {
             parts.headers.get("authorization"),
             Some(&HeaderValue::from_static("signed"))
         );
+    }
+
+    #[derive(Debug)]
+    struct CloneCountingCredential {
+        clones: Arc<AtomicUsize>,
+    }
+
+    impl Clone for CloneCountingCredential {
+        fn clone(&self) -> Self {
+            self.clones.fetch_add(1, Ordering::SeqCst);
+            Self {
+                clones: Arc::clone(&self.clones),
+            }
+        }
+    }
+
+    impl SigningCredential for CloneCountingCredential {
+        fn is_valid(&self) -> bool {
+            true
+        }
+    }
+
+    #[derive(Debug)]
+    struct CloneCountingProvider {
+        clones: Arc<AtomicUsize>,
+    }
+
+    impl ProvideCredential for CloneCountingProvider {
+        type Credential = CloneCountingCredential;
+
+        async fn provide_credential(&self, _ctx: &Context) -> Result<Option<Self::Credential>> {
+            Ok(Some(CloneCountingCredential {
+                clones: Arc::clone(&self.clones),
+            }))
+        }
+    }
+
+    #[derive(Debug)]
+    struct CloneCountingRequestSigner;
+
+    impl SignRequest for CloneCountingRequestSigner {
+        type Credential = CloneCountingCredential;
+
+        async fn sign_request(
+            &self,
+            _ctx: &Context,
+            req: &mut http::request::Parts,
+            _credential: Option<&Self::Credential>,
+            _expires_in: Option<Duration>,
+        ) -> Result<()> {
+            req.headers
+                .insert("x-signed", HeaderValue::from_static("signed"));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn warm_signing_reuses_cached_credential_without_cloning_it() {
+        let clones = Arc::new(AtomicUsize::new(0));
+        let signer = Signer::new(
+            Context::new(),
+            CloneCountingProvider {
+                clones: Arc::clone(&clones),
+            },
+            CloneCountingRequestSigner,
+        );
+
+        for _ in 0..64 {
+            let mut parts = request_parts();
+            futures::executor::block_on(signer.sign(&mut parts, None))
+                .expect("signing must succeed");
+            assert_eq!(
+                parts.headers.get("x-signed"),
+                Some(&HeaderValue::from_static("signed"))
+            );
+        }
+        assert_eq!(clones.load(Ordering::SeqCst), 0);
+
+        let credential = futures::executor::block_on(signer.credential_for(None))
+            .expect("credential_for must return the cached credential");
+        assert!(credential.is_valid());
+        assert_eq!(clones.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -1226,7 +1338,7 @@ mod tests {
                 .credential
                 .current
                 .read()
-                .expect("credential cache poisoned")
+                .unwrap_or_else(PoisonError::into_inner)
                 .is_none()
         );
     }
