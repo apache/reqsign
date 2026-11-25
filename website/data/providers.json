@@ -656,7 +656,7 @@
         },
         {
           "name": "Credential Access Boundary (client-side)",
-          "mechanism": "Derives a downscoped token locally without a round-trip to the STS API. Requires the credential-access-boundary-client-side feature on reqsign-google and a CryptoProvider that supports AES-GCM.",
+          "mechanism": "Derives a downscoped token locally without a round-trip to the STS API. Requires the credential-access-boundary-client-side feature on reqsign-google, a CryptoProvider that supports AES-GCM, and an HttpSend transport for the STS exchange.",
           "source_refs": [
             "services/google/src/credential_access_boundary/client_side.rs"
           ]

@@ -23,15 +23,20 @@
 //! ## Credential Access Boundary downscoping
 //!
 //! [`ServerSideCredentialAccessBoundaryGranter`] performs an STS exchange for
-//! every output and is available with the `google` feature. Client-side
-//! Credential Access Boundary generation is not re-exported by the facade.
-//! Depend on the `reqsign-google` crate directly, enable its
-//! `credential-access-boundary-client-side` feature, and bind a
-//! [`CryptoProvider`](reqsign_core::crypto::CryptoProvider) that supports
-//! AES-GCM and secure random generation (for example
-//! `reqsign_crypto_rustcrypto::RustCryptoProvider` with its default
-//! `aes-gcm` feature). The facade's `google` feature selects only the RSA
-//! operation used by Google service-account JWT and request signing.
+//! every output and is available with the `google` feature. The facade no
+//! longer declares a `google-credential-access-boundary-client-side` feature.
+//! Enable `reqsign-google/credential-access-boundary-client-side` directly,
+//! bind a [`CryptoProvider`](reqsign_core::crypto::CryptoProvider) that supports
+//! AES-GCM and secure random generation, and supply an `HttpSend` transport for
+//! the STS exchange. For example, bind
+//! `reqsign_crypto_rustcrypto::RustCryptoProvider` with its `aes-gcm` feature.
+//! If the graph also enables the facade `google` feature, Cargo
+//! unifies features on the single `reqsign-google` package, so
+//! `reqsign::google` re-exports can still expose the type; that is feature
+//! unification, not a facade feature. The facade's `google` feature selects
+//! only the RSA operation used by Google service-account JWT and request
+//! signing. See the `ClientSideCredentialAccessBoundaryGranter` rustdoc for a
+//! runnable mock-STS example.
 
 // Re-export all Google Cloud signing types
 pub use reqsign_google::*;

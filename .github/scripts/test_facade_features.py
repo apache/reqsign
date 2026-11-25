@@ -36,40 +36,11 @@ import sys
 import tempfile
 import tomllib
 
+from facade_features import NON_SERVICE_FEATURES, SERVICE_ALGORITHMS
+
 ROOT = Path(__file__).resolve().parents[2]
 FACADE_MANIFEST = ROOT / "reqsign/Cargo.toml"
 RSA_FIXTURE = ROOT / "crypto/rustcrypto/tests/fixtures/rsa_pkcs8.pem"
-
-# Facade service feature -> backend algorithm features. Keep in sync with
-# reqsign/Cargo.toml; the script fails when a facade feature is added or removed.
-SERVICE_ALGORITHMS = {
-    "aliyun": set(),
-    "aliyun-drive": set(),
-    "aws": set(),
-    "aws-v4": set(),
-    "aws-v4a": {"p256"},
-    "azure": {"rsa"},
-    "b2": set(),
-    "baidu-netdisk": set(),
-    "cloudflare": set(),
-    "dropbox": set(),
-    "github": set(),
-    "google": {"rsa"},
-    "huaweicloud": set(),
-    "http-message-signatures": {"rsa"},
-    "koofr": set(),
-    "oauth2": set(),
-    "onedrive": set(),
-    "openstack": set(),
-    "oracle": {"rsa"},
-    "seafile": set(),
-    "tencent": set(),
-    "upyun": set(),
-    "vercel": set(),
-    "volcengine": set(),
-    "yandex-disk": set(),
-}
-NON_SERVICE_FEATURES = {"default", "default-context", "default-crypto", "full"}
 
 PROBE_MAIN = r'''
 #[cfg(feature = "default-crypto")]

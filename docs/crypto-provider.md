@@ -330,9 +330,12 @@ pull the backend. With `default-crypto`, `aws-v4a` selects `p256`; `azure`,
 service feature uses only the unconditional hash and HMAC operations. `full`
 selects `rsa` and `p256`, not `aes-gcm`. There is no facade feature for
 `aes-gcm` or for client-side Google Credential Access Boundary generation.
-Client-side CAB requires depending on `reqsign-google` directly with its
-`credential-access-boundary-client-side` feature and binding a provider that
-supports AES-GCM and secure random generation.
+Enabling `reqsign-google/credential-access-boundary-client-side` directly adds
+the API. If the same graph also enables the facade `google` feature, Cargo
+unifies features on the single `reqsign-google` package, so facade re-exports
+can still expose the type; that is feature unification, not a facade feature.
+Bind a provider that supports AES-GCM and secure random generation, and supply
+an `HttpSend` transport for the STS exchange.
 
 `default-crypto` re-exports `RustCryptoProvider`. When it is enabled,
 `default_context()` checks the process-wide registration at construction. If
@@ -523,7 +526,8 @@ The repository verifies this contract with:
   checks that each service feature alone does not pull the backend.
 - Google's client-side Credential Access Boundary tests run with the direct
   `reqsign-google` feature; its dev-dependency enables the RustCrypto `rsa` and
-  `aes-gcm` operations.
+  `aes-gcm` operations. A runnable rustdoc example drives `Granter::grant(None)`
+  against a mock STS with only the `aes-gcm` backend feature.
 - BoringSSL parity tests against `reqsign-crypto-rustcrypto` for byte-identical
   hashes, HMACs, RSA signatures, and AES-GCM output; cross-backend ECDSA
   verification; MD5 availability outside FIPS and `ConfigInvalid` in FIPS mode;

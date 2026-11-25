@@ -26,16 +26,11 @@ import subprocess
 import sys
 import tomllib
 
+from facade_features import NON_SERVICE_FEATURES, SERVICE_ALGORITHMS
+
 BACKEND_FEATURES = {"default", "rsa", "p256", "aes-gcm"}
 BACKEND_DEFAULT = ["rsa", "p256", "aes-gcm"]
 FACADE_ALGORITHM_FEATURES = {"rsa", "p256", "aes-gcm"}
-FACADE_WEAK_MAPPINGS = {
-    "aws-v4a": "p256",
-    "azure": "rsa",
-    "google": "rsa",
-    "oracle": "rsa",
-    "http-message-signatures": "rsa",
-}
 REMOVED_FACADE_FEATURES = {"google-credential-access-boundary-client-side"}
 
 
@@ -98,6 +93,32 @@ def check_backend(root: Path, metadata: dict) -> None:
     )
 
 
+def expand_features(features: dict[str, list[str]], roots: list[str]) -> set[str]:
+    """Expand local feature references from the given roots."""
+    expanded = set()
+    pending = list(roots)
+    while pending:
+        feature = pending.pop()
+        if feature in expanded or feature not in features:
+            continue
+        expanded.add(feature)
+        pending.extend(value for value in features[feature] if value in features)
+    return expanded
+
+
+def check_full_features(features: dict[str, list[str]]) -> None:
+    service_features = set(features) - NON_SERVICE_FEATURES
+    expected_services = set(SERVICE_ALGORITHMS)
+    assert service_features == expected_services, (
+        f"facade service features differ from the shared table: "
+        f"extra={sorted(service_features - expected_services)}, "
+        f"missing={sorted(expected_services - service_features)}"
+    )
+    expanded = expand_features(features, ["full"])
+    missing = sorted(service_features - expanded)
+    assert not missing, f"full does not enable service features: {missing}"
+
+
 def check_facade(root: Path) -> None:
     manifest = load_manifest(root / "reqsign/Cargo.toml")
     features = manifest["features"]
@@ -111,9 +132,10 @@ def check_facade(root: Path) -> None:
         "default-crypto must only enable the backend dependency"
     )
 
-    for feature, algorithm in FACADE_WEAK_MAPPINGS.items():
-        mapping = f"reqsign-crypto-rustcrypto?/{algorithm}"
-        assert mapping in features[feature], f"{feature} must include {mapping}"
+    for feature, algorithms in SERVICE_ALGORITHMS.items():
+        for algorithm in algorithms:
+            mapping = f"reqsign-crypto-rustcrypto?/{algorithm}"
+            assert mapping in features[feature], f"{feature} must include {mapping}"
 
     for feature, values in features.items():
         if feature == "default-crypto":
@@ -123,9 +145,8 @@ def check_facade(root: Path) -> None:
                 f"{feature} strongly enables the backend: {value}"
             )
             if value.startswith("reqsign-crypto-rustcrypto?/"):
-                expected = FACADE_WEAK_MAPPINGS.get(feature)
-                assert expected is not None, f"unexpected weak mapping in {feature}"
-                assert value == f"reqsign-crypto-rustcrypto?/{expected}", (
+                algorithm = value.rsplit("/", 1)[-1]
+                assert algorithm in SERVICE_ALGORITHMS.get(feature, set()), (
                     f"unexpected weak mapping in {feature}: {value}"
                 )
 
@@ -135,7 +156,7 @@ def check_facade(root: Path) -> None:
         "workspace backend dependency must disable default features"
     )
 
-    assert "google" in features["full"], "full must keep the google service feature"
+    check_full_features(features)
     assert "google-credential-access-boundary-client-side" not in features["full"], (
         "full must not include the removed CAB feature"
     )

@@ -259,37 +259,77 @@ impl Drop for RefreshLockLease {
 ///
 /// # Example
 ///
-/// ```no_run
+/// This example drives the public [`Granter`](reqsign_core::Granter) path with a
+/// mock STS response and no real credentials. It needs only the `aes-gcm`
+/// backend feature; RSA and P-256 are not used. The session key is a public test
+/// vector from `google-auth-library-java`, not a credential.
+///
+/// ```toml
+/// [dependencies]
+/// reqsign-core = "4"
+/// reqsign-google = { version = "4", features = ["credential-access-boundary-client-side"] }
+/// reqsign-crypto-rustcrypto = { version = "1", default-features = false, features = ["aes-gcm"] }
+/// bytes = "1"
+/// http = "1"
+/// tokio = { version = "1", features = ["macros", "rt"] }
+/// ```
+///
+/// ```rust
 /// use std::time::Duration;
 ///
-/// use reqsign_core::{Context, Granter, time::Timestamp};
+/// use bytes::Bytes;
+/// use reqsign_core::time::Timestamp;
+/// use reqsign_core::{Context, Granter, HttpSend, Result};
+/// use reqsign_crypto_rustcrypto::RustCryptoProvider;
 /// use reqsign_google::{
 ///     ClientSideCredentialAccessBoundaryGranter, CredentialAccessBoundaryGrant,
 ///     CredentialAccessBoundaryPermissions, TokenCredentialProvider,
 /// };
 ///
-/// # async fn example() -> reqsign_core::Result<()> {
-/// let source = TokenCredentialProvider::new("source-oauth-token")
-///     .with_expires_at(Timestamp::now() + Duration::from_secs(3600));
-/// let grant = CredentialAccessBoundaryGrant::for_object_prefix(
-///     "example-bucket",
-///     "customer-a/",
-///     CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
-/// );
-/// // Supply a Context with an HttpSend implementation and a crypto provider.
-/// let context = Context::new()
-///     .with_crypto(reqsign_crypto_rustcrypto::RustCryptoProvider::new());
-/// let credential = Granter::new(
-///     context,
-///     source,
-///     ClientSideCredentialAccessBoundaryGranter::new(grant),
-/// )
-/// .grant(None)
-/// .await?;
-/// # let _ = credential;
-/// # Ok(())
-/// # }
+/// #[derive(Debug)]
+/// struct MockSts;
+///
+/// impl HttpSend for MockSts {
+///     async fn http_send(&self, request: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+///         assert_eq!(request.method(), http::Method::POST);
+///         assert_eq!(request.uri(), "https://sts.googleapis.com/v1/token");
+///         let response = concat!(
+///             "{\"access_token\":\"intermediary\",",
+///             "\"issued_token_type\":\"urn:ietf:params:oauth:token-type:access_boundary_intermediary_token\",",
+///             "\"token_type\":\"Bearer\",\"expires_in\":3600,",
+///             "\"access_boundary_session_key\":\"CPaEhYsKEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIMx8syvGIGGu5yvrdq/I0Q9ZWIR1oqJXFnDFxHuwX4SEGAEQARj2hIWLCiAB\"}"
+///         );
+///         Ok(http::Response::new(Bytes::from_static(response.as_bytes())))
+///     }
+/// }
+///
+/// #[tokio::main(flavor = "current_thread")]
+/// async fn main() -> Result<()> {
+///     let context = Context::new()
+///         .with_crypto(RustCryptoProvider::new())
+///         .with_http_send(MockSts);
+///     let source = TokenCredentialProvider::new("source-token")
+///         .with_expires_at(Timestamp::now() + Duration::from_secs(7200));
+///     let grant = CredentialAccessBoundaryGrant::for_object_prefix(
+///         "example-bucket",
+///         "customer-a/",
+///         CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
+///     );
+///     let granter = Granter::new(
+///         context,
+///         source,
+///         ClientSideCredentialAccessBoundaryGranter::new(grant),
+///     );
+///     let first = granter.grant(None).await?.token.expect("CAB token");
+///     let second = granter.grant(None).await?.token.expect("CAB token");
+///     assert!(first.access_token.starts_with("intermediary."));
+///     assert!(second.access_token.starts_with("intermediary."));
+///     assert_ne!(first.access_token, second.access_token);
+///     println!("client-side CAB token generated with a mock STS response");
+///     Ok(())
+/// }
 /// ```
+///
 #[derive(Clone)]
 pub struct ClientSideCredentialAccessBoundaryGranter {
     grant: CredentialAccessBoundaryGrant,

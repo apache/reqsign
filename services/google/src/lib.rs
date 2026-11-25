@@ -25,7 +25,9 @@
 //! always available. Enable the `credential-access-boundary-client-side`
 //! feature for local client-side token generation. Client-side CAB also needs
 //! a `CryptoProvider` with AES-GCM and secure random support, such as
-//! `RustCryptoProvider` with its default `aes-gcm` feature.
+//! `RustCryptoProvider` with its `aes-gcm` feature, and an `HttpSend` for the
+//! STS exchange. See `ClientSideCredentialAccessBoundaryGranter` for a runnable
+//! mock-STS example.
 
 mod constants;
 

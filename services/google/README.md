@@ -34,20 +34,36 @@ let signer = Signer::new(
 );
 ```
 
-The crate supports server-side Cloud Storage Credential Access Boundary
-downscoping. For local client-side token generation, enable the
-`credential-access-boundary-client-side` feature and bind a `CryptoProvider`
-that supports AES-GCM and secure random generation, such as
-`RustCryptoProvider` with its default `aes-gcm` feature:
+### Client-side Credential Access Boundary
+
+Server-side CAB is available through the crate's normal API. For local
+client-side token generation, enable `credential-access-boundary-client-side`
+on `reqsign-google` directly, bind a `CryptoProvider` with AES-GCM and secure
+random support, and supply an `HttpSend` transport for the STS exchange. Only
+the `aes-gcm` backend feature is required:
 
 ```toml
 [dependencies]
+reqsign-core = "4"
 reqsign-google = { version = "4", features = ["credential-access-boundary-client-side"] }
-reqsign-crypto-rustcrypto = "1"
+reqsign-crypto-rustcrypto = { version = "1", default-features = false, features = ["aes-gcm"] }
+bytes = "1"
+http = "1"
+tokio = { version = "1", features = ["macros", "rt"] }
 ```
 
-The facade's `google` feature enables request signing and server-side CAB only;
-it does not select the AES-GCM or random operations that client-side CAB needs.
+The facade `google` feature still covers request signing and server-side CAB,
+but it no longer declares a client-side CAB feature. Enabling the service
+feature directly adds the API. If the same dependency graph also enables the
+facade `google` feature, Cargo unifies features on the single `reqsign-google`
+package, so `reqsign::google` re-exports can still expose the type. That is
+feature unification, not a facade feature; depend on `reqsign-google` directly
+for this API.
+
+For a complete runnable example that mocks the STS exchange and calls
+`Granter::grant(None)` with no real credentials, see the
+[`ClientSideCredentialAccessBoundaryGranter`](https://docs.rs/reqsign-google/latest/reqsign_google/struct.ClientSideCredentialAccessBoundaryGranter.html)
+rustdoc.
 
 For query signing, credential providers preserve a target service account email
 when they can determine it from impersonation or VM metadata configuration. The

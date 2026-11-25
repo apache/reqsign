@@ -42,11 +42,13 @@ through the `Context`, passes the `Context` explicitly to facade
   construction. Use `Credential::new` plus `with_expires_at` (and
   `with_session_token` for TOS).
 - **The facade `google-credential-access-boundary-client-side` feature is
-  removed.** Client-side Google Credential Access Boundary generation now
-  requires depending on `reqsign-google` directly with its
-  `credential-access-boundary-client-side` feature and binding a provider that
-  supports AES-GCM and secure random generation. The facade `google` feature
-  keeps request signing and server-side CAB.
+  removed.** Enable `reqsign-google/credential-access-boundary-client-side`
+  directly, bind a provider that supports AES-GCM and secure random generation,
+  and supply an `HttpSend` transport for the STS exchange. If the graph also
+  enables the facade `google` feature, Cargo unifies features on the single
+  `reqsign-google` package and facade re-exports can still expose the type. That
+  is feature unification, not a facade feature.
+  The facade `google` feature keeps request signing and server-side CAB.
 
 ### Added
 
@@ -58,8 +60,8 @@ through the `Context`, passes the `Context` explicitly to facade
   to crates.io from the explicit standalone release-plan entry after
   `reqsign-core`.
 - `CryptoProvider` is implemented for `Arc<T>`, so callers that already hold an
-  `Arc<dyn CryptoProvider>` can pass it directly to `Context::with_crypto` or
-  `install_default` without a forwarding newtype.
+  `Arc<dyn CryptoProvider>` can pass it directly to both `Context::with_crypto`
+  and `crypto::install_default`. Existing forwarding newtypes can be removed.
 - Provider crates and facade features, all first release at `1.0.0`:
   `reqsign-aliyun-drive`, `reqsign-b2` (facade feature `b2`),
   `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`,

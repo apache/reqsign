@@ -304,10 +304,12 @@ let signer = seafile::default_signer(ctx.clone());
 The facade has no algorithm features. With `default-crypto`, `aws-v4a` selects
 `p256`; `azure`, `google`, `oracle`, and `http-message-signatures` select `rsa`.
 Other service features use only the unconditional hash and HMAC operations.
-Client-side Google Credential Access Boundary generation is available from the
-`reqsign-google` crate directly: enable its
-`credential-access-boundary-client-side` feature and bind a `CryptoProvider`
-that supports AES-GCM and secure random generation.
+The facade also has no client-side Google Credential Access Boundary feature.
+Enable `reqsign-google/credential-access-boundary-client-side` directly; if the
+graph also enables the facade `google` feature, Cargo unification can expose the
+type through facade re-exports. Bind a `CryptoProvider` that supports AES-GCM
+and secure random generation, and supply an `HttpSend` transport for the STS
+exchange.
 
 ## WASM Support
 

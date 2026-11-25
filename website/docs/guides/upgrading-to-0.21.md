@@ -122,8 +122,8 @@ Implement `reqsign_core::crypto::CryptoProvider`. `sha1`, `sha256`,
 default implementations that return `ConfigInvalid` so a minimal provider can
 serve the services that only need hashing and MACs. `CryptoProvider` is also
 implemented for `Arc<T>`, so a caller that already holds an
-`Arc<dyn CryptoProvider>` can pass it directly to `Context::with_crypto` or
-`install_default` without a forwarding wrapper.
+`Arc<dyn CryptoProvider>` can pass it directly to both `Context::with_crypto`
+and `crypto::install_default`. Existing forwarding newtypes can be removed.
 
 A provider or operation that is missing is a non-retryable `ConfigInvalid`.
 Malformed key material is `CredentialInvalid`. Backend failures are
@@ -188,17 +188,88 @@ without `default-crypto` does not pull the crypto backend. If you need
 provides it.
 
 The facade's `google-credential-access-boundary-client-side` feature is
-removed. Client-side Google Credential Access Boundary generation now requires
-the service crate directly:
+removed. Enable `reqsign-google/credential-access-boundary-client-side`
+directly; the facade `google` feature no longer turns it on. Because Cargo
+unifies features on the single `reqsign-google` package, a graph that also
+enables the facade `google` feature can still see the type through
+`reqsign::google` re-exports. That is feature unification, not a facade feature;
+depend on `reqsign-google` directly for this API.
+
+Only the `aes-gcm` backend feature is required. Bind a provider with AES-GCM and
+secure random support, and supply an `HttpSend` transport for the STS exchange:
 
 ```toml
 [dependencies]
+reqsign-core = "4"
 reqsign-google = { version = "4", features = ["credential-access-boundary-client-side"] }
-reqsign-crypto-rustcrypto = "1"
+reqsign-crypto-rustcrypto = { version = "1", default-features = false, features = ["aes-gcm"] }
+bytes = "1"
+http = "1"
+tokio = { version = "1", features = ["macros", "rt"] }
 ```
 
-Bind a provider that supports AES-GCM and secure random generation. With
-`RustCryptoProvider`, the default features include `aes-gcm`.
+The following program uses a mock STS transport; it does not contact Google and
+uses a public test vector instead of credentials:
+
+```rust
+use std::time::Duration;
+
+use bytes::Bytes;
+use reqsign_core::time::Timestamp;
+use reqsign_core::{Context, Granter, HttpSend, Result};
+use reqsign_crypto_rustcrypto::RustCryptoProvider;
+use reqsign_google::{
+    ClientSideCredentialAccessBoundaryGranter, CredentialAccessBoundaryGrant,
+    CredentialAccessBoundaryPermissions, TokenCredentialProvider,
+};
+
+#[derive(Debug)]
+struct MockSts;
+
+impl HttpSend for MockSts {
+    async fn http_send(&self, request: http::Request<Bytes>) -> Result<http::Response<Bytes>> {
+        assert_eq!(request.method(), http::Method::POST);
+        assert_eq!(request.uri(), "https://sts.googleapis.com/v1/token");
+        let response = concat!(
+            "{\"access_token\":\"intermediary\",",
+            "\"issued_token_type\":\"urn:ietf:params:oauth:token-type:access_boundary_intermediary_token\",",
+            "\"token_type\":\"Bearer\",\"expires_in\":3600,",
+            "\"access_boundary_session_key\":\"CPaEhYsKEmQKWAowdHlwZS5nb29nbGVhcGlzLmNvbS9nb29nbGUuY3J5cHRvLnRpbmsuQWVzR2NtS2V5EiIaIMx8syvGIGGu5yvrdq/I0Q9ZWIR1oqJXFnDFxHuwX4SEGAEQARj2hIWLCiAB\"}"
+        );
+        Ok(http::Response::new(Bytes::from_static(response.as_bytes())))
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
+    let context = Context::new()
+        .with_crypto(RustCryptoProvider::new())
+        .with_http_send(MockSts);
+    let source = TokenCredentialProvider::new("source-token")
+        .with_expires_at(Timestamp::now() + Duration::from_secs(7200));
+    let grant = CredentialAccessBoundaryGrant::for_object_prefix(
+        "example-bucket",
+        "customer-a/",
+        CredentialAccessBoundaryPermissions::OBJECT_VIEWER,
+    );
+    let granter = Granter::new(
+        context,
+        source,
+        ClientSideCredentialAccessBoundaryGranter::new(grant),
+    );
+    let first = granter.grant(None).await?.token.expect("CAB token");
+    let second = granter.grant(None).await?.token.expect("CAB token");
+    assert!(first.access_token.starts_with("intermediary."));
+    assert!(second.access_token.starts_with("intermediary."));
+    assert_ne!(first.access_token, second.access_token);
+    println!("client-side CAB token generated with a mock STS response");
+    Ok(())
+}
+```
+
+The same example is in the
+[`ClientSideCredentialAccessBoundaryGranter`](https://docs.rs/reqsign-google/latest/reqsign_google/struct.ClientSideCredentialAccessBoundaryGranter.html)
+rustdoc.
 
 ## Default signers take an explicit `Context`
 

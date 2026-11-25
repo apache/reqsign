@@ -75,8 +75,9 @@ the crypto backend. Keep `default-context` unless you are
 [bringing your own runtime](/docs/guides/custom-runtimes/); a custom context
 must bind a `CryptoProvider` explicitly. Client-side Google Credential Access
 Boundary generation requires the `credential-access-boundary-client-side`
-feature on `reqsign-google` directly and a provider that supports AES-GCM; the
-facade `google` feature covers request signing and server-side CAB. Requires
+feature on `reqsign-google` directly, a provider that supports AES-GCM, and an
+`HttpSend` transport for the STS exchange; the facade `google` feature covers
+request signing and server-side CAB. Requires
 Rust 1.87.0+.
 
 ## 2. Sign your first request
