@@ -45,6 +45,8 @@ struct RecordedCommand {
 enum MockCommandResult {
     Output(CommandOutput),
     AdapterError(String),
+    AdapterIoError(std::io::ErrorKind),
+    CommandUnavailable(String),
 }
 
 #[derive(Clone)]
@@ -110,8 +112,19 @@ impl CommandExecute for MockCommandExecute {
         {
             MockCommandResult::Output(output) => Ok(output),
             MockCommandResult::AdapterError(message) => Err(Error::unexpected(message)),
+            MockCommandResult::AdapterIoError(kind) => {
+                Err(Error::unexpected("fabricated command execution failure")
+                    .with_source(std::io::Error::new(kind, "SENTINEL_IO_SOURCE")))
+            }
+            MockCommandResult::CommandUnavailable(message) => {
+                Err(Error::command_unavailable(message))
+            }
         }
     }
+}
+
+fn command_unavailable_result() -> MockCommandResult {
+    MockCommandResult::CommandUnavailable("SENTINEL_UNAVAILABLE_COMMAND".to_string())
 }
 
 fn user_result(user: &str) -> MockCommandResult {
@@ -134,6 +147,18 @@ fn failure_result(status: i32, stderr: impl Into<Vec<u8>>) -> MockCommandResult 
     MockCommandResult::Output(CommandOutput {
         status,
         stdout: Vec::new(),
+        stderr: stderr.into(),
+    })
+}
+
+fn output_result(
+    status: i32,
+    stdout: impl Into<Vec<u8>>,
+    stderr: impl Into<Vec<u8>>,
+) -> MockCommandResult {
+    MockCommandResult::Output(CommandOutput {
+        status,
+        stdout: stdout.into(),
         stderr: stderr.into(),
     })
 }
@@ -384,12 +409,26 @@ async fn gh_cli_discovery_is_host_scoped_and_env_independent() -> Result<()> {
 
 #[tokio::test]
 async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()> {
+    // A bare context has no command executor, so CLI discovery does not
+    // participate at all.
+    let parts = sign_parts(
+        DefaultCredentialProvider::new(),
+        context(HashMap::new()),
+        request(),
+    )
+    .await?;
+    assert!(!parts.headers.contains_key(AUTHORIZATION));
+
     let cases = vec![
-        MockCommandExecute::adapter_error("SENTINEL_CONFIG_ADAPTER"),
-        MockCommandExecute::failure(1, b"SENTINEL_CONFIG_STDERR".to_vec()),
-        MockCommandExecute::success(Vec::new()),
-        MockCommandExecute::sequence([user_result("--help")]),
-        MockCommandExecute::sequence([user_result("bad user")]),
+        // A command executor that reports the operation as unavailable cannot
+        // run commands in this context, such as the no-op adapter installed by
+        // `Context::new()`. The slot stays absent.
+        MockCommandExecute::sequence([command_unavailable_result()]),
+        // GitHub CLI 2.40.0 and 2.103.3 confirm a host without a stored
+        // account with exit status 1, empty stdout, and this exact diagnostic.
+        MockCommandExecute::failure(1, b"could not find key \"user\"\n".to_vec()),
+        // Line endings around the diagnostic are tolerated.
+        MockCommandExecute::failure(1, b"could not find key \"user\"\r\n".to_vec()),
         MockCommandExecute::sequence([
             user_result("cli-user"),
             failure_result(
@@ -403,6 +442,304 @@ async fn gh_cli_missing_account_or_token_falls_back_to_anonymous() -> Result<()>
         let ctx = context_with_command(HashMap::new(), command);
         let parts = sign_parts(DefaultCredentialProvider::new(), ctx, request()).await?;
         assert!(!parts.headers.contains_key(AUTHORIZATION));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn gh_cli_command_unavailable_during_token_lookup_is_reported() {
+    // The same marker permits anonymous access during the account lookup but
+    // must not hide a failure while the stored token is read.
+    let command =
+        MockCommandExecute::sequence([user_result("cli-user"), command_unavailable_result()]);
+    let ctx = context_with_command(HashMap::new(), command);
+    let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+    let original = stale_request();
+    let mut parts = original.clone();
+
+    let error = signer
+        .sign(&mut parts, None)
+        .await
+        .expect_err("a token-stage unavailable command must not become anonymous access");
+
+    assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+    assert!(error.to_string().contains("`gh auth token`"));
+    assert!(!format!("{error:?}").contains("SENTINEL_UNAVAILABLE_COMMAND"));
+    assert_eq!(parts.uri, original.uri);
+    assert_eq!(parts.headers, original.headers);
+}
+
+#[tokio::test]
+async fn gh_cli_config_lookup_failure_is_reported_without_leaking() {
+    let cases = [
+        // An arbitrary adapter failure without a source is a failure, not an
+        // absent account.
+        (
+            MockCommandExecute::adapter_error("SENTINEL_CONFIG_ADAPTER"),
+            ErrorKind::Unexpected,
+        ),
+        // A raw or nested `NotFound` inside a custom adapter error is
+        // ambiguous and must not be treated as the command-unavailable marker.
+        (
+            MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
+                std::io::ErrorKind::NotFound,
+            )]),
+            ErrorKind::Unexpected,
+        ),
+        // A permission failure must not fall back to anonymous access.
+        (
+            MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
+                std::io::ErrorKind::PermissionDenied,
+            )]),
+            ErrorKind::Unexpected,
+        ),
+        // Any other non-zero status means the CLI configuration could not be
+        // read.
+        (
+            MockCommandExecute::failure(
+                1,
+                b"failed to read config SENTINEL_CONFIG_STDERR".to_vec(),
+            ),
+            ErrorKind::ConfigInvalid,
+        ),
+        // The missing-key diagnostic must match exactly; a wrapped or extended
+        // message is a failure.
+        (
+            MockCommandExecute::failure(
+                1,
+                b"could not find key \"user\" (SENTINEL_EXTRA)\n".to_vec(),
+            ),
+            ErrorKind::ConfigInvalid,
+        ),
+        // The confirmed diagnostic requires empty stdout.
+        (
+            MockCommandExecute::sequence([output_result(
+                1,
+                b"cli-user\n".to_vec(),
+                b"could not find key \"user\"\n".to_vec(),
+            )]),
+            ErrorKind::ConfigInvalid,
+        ),
+        // The confirmed diagnostic requires exactly exit status 1.
+        (
+            MockCommandExecute::sequence([output_result(
+                0,
+                Vec::new(),
+                b"could not find key \"user\"\n".to_vec(),
+            )]),
+            ErrorKind::ConfigInvalid,
+        ),
+        (
+            MockCommandExecute::sequence([output_result(
+                2,
+                Vec::new(),
+                b"could not find key \"user\"\n".to_vec(),
+            )]),
+            ErrorKind::ConfigInvalid,
+        ),
+    ];
+
+    for (command, expected_kind) in cases {
+        let ctx = context_with_command(HashMap::new(), command);
+        let error = GhCliCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await
+            .expect_err("a config lookup failure must not become anonymous access");
+
+        assert_eq!(error.kind(), expected_kind);
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("SENTINEL_CONFIG_STDERR"));
+        assert!(!debug.contains("SENTINEL_EXTRA"));
+        assert!(!debug.contains("SENTINEL_IO_SOURCE"));
+    }
+}
+
+#[tokio::test]
+async fn gh_cli_malformed_active_user_is_reported_without_leaking() {
+    let cases = [
+        Vec::new(),
+        b"\n".to_vec(),
+        b" \n".to_vec(),
+        b"first\nsecond\n".to_vec(),
+        b"nonutf8\xff".to_vec(),
+    ];
+
+    for stdout in cases {
+        let command = MockCommandExecute::sequence([MockCommandResult::Output(CommandOutput {
+            status: 0,
+            stdout: stdout.clone(),
+            stderr: Vec::new(),
+        })]);
+        let ctx = context_with_command(HashMap::new(), command);
+        let error = GhCliCredentialProvider::new()
+            .provide_credential(&ctx)
+            .await
+            .expect_err("malformed account output must fail");
+
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid);
+        let debug = format!("{error:?}");
+        assert!(!debug.contains("first"));
+        assert!(!debug.contains("second"));
+        assert!(!debug.contains("nonutf8"));
+    }
+}
+
+#[tokio::test]
+async fn gh_cli_accepts_supported_account_names() -> Result<()> {
+    let names = vec![
+        // Ordinary GitHub.com logins, including mixed case and legacy accounts
+        // that predate the current registration rules.
+        "a".to_string(),
+        "octocat".to_string(),
+        "The-Octocat".to_string(),
+        "A-".to_string(),
+        "john--doe".to_string(),
+        // Enterprise managed user names are `IDP-USERNAME_SHORT-CODE`, and
+        // casing from the identity provider is preserved.
+        "mona-cat_octo".to_string(),
+        "The-Octocat_octo".to_string(),
+        // The setup user form is `SHORT-CODE_admin`, including data residency
+        // shortcodes.
+        "octo_admin".to_string(),
+        "2abvd19d_admin".to_string(),
+        // Minimum username and minimum shortcode.
+        "abc_abc".to_string(),
+        // A long ordinary login is accepted because current registration
+        // policy is not a validity check, and a managed name that is exactly
+        // 39 characters including the shortcode.
+        "a".repeat(40),
+        format!("{}_octo", "a".repeat(34)),
+    ];
+
+    for name in names {
+        let command = MockCommandExecute::sequence([user_result(&name), token_result(CLI_TOKEN)]);
+        let ctx = context_with_command(HashMap::new(), command.clone());
+
+        let parts = sign_parts(DefaultCredentialProvider::new(), ctx, request()).await?;
+
+        assert_eq!(
+            parts.headers[AUTHORIZATION].to_str().expect("header text"),
+            format!("Bearer {CLI_TOKEN}"),
+            "name {name}"
+        );
+        let calls = command.calls();
+        assert_eq!(calls.len(), 2, "name {name}");
+        assert_eq!(
+            calls[1].args,
+            [
+                "auth",
+                "token",
+                "--hostname",
+                GITHUB_HOST,
+                "--user",
+                name.as_str(),
+                "--no-refresh",
+            ]
+            .map(str::to_string)
+            .to_vec(),
+            "name {name}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn gh_cli_rejects_unsupported_account_names() {
+    let names = vec![
+        // Punctuation-only and embedded whitespace.
+        "...".to_string(),
+        "@@@".to_string(),
+        "_-_".to_string(),
+        "--help".to_string(),
+        "bad user".to_string(),
+        // Ordinary logins must not start with a dash or contain characters
+        // other than ASCII letters, digits, and hyphens. Legacy trailing and
+        // consecutive hyphens are accepted and covered above.
+        "-The-Octocat".to_string(),
+        "mona/the-octocat".to_string(),
+        // Managed name rules: one underscore, a username before it that
+        // follows GitHub's normalization rules, and a three-to-eight
+        // character alphanumeric shortcode after it.
+        "-mona_octo".to_string(),
+        "mona-_octo".to_string(),
+        "The--Octocat_octo".to_string(),
+        "_octo".to_string(),
+        "mona-cat_".to_string(),
+        "mona-cat_oc".to_string(),
+        "mona-cat_123456789".to_string(),
+        "mona_cat_octo".to_string(),
+        "octo_admin_extra".to_string(),
+        // A managed name over the 39 character limit.
+        format!("{}_octo", "a".repeat(35)),
+    ];
+
+    for name in names {
+        // A single mock result proves the provider stops before `gh auth
+        // token`: a token query would find no result and panic.
+        let command = MockCommandExecute::sequence([MockCommandResult::Output(CommandOutput {
+            status: 0,
+            stdout: format!("{name}\n").into_bytes(),
+            stderr: Vec::new(),
+        })]);
+        let ctx = context_with_command(HashMap::new(), command.clone());
+        let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+        let original = stale_request();
+        let mut parts = original.clone();
+
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("an unsupported account name must not become anonymous access");
+
+        assert_eq!(error.kind(), ErrorKind::ConfigInvalid, "name {name}");
+        assert_eq!(command.calls().len(), 1, "name {name}");
+        assert_eq!(parts.uri, original.uri, "name {name}");
+        assert_eq!(parts.headers, original.headers, "name {name}");
+        assert!(
+            !format!("{error:?}").contains(&name),
+            "the error leaked the account name {name}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn default_provider_rejects_config_lookup_failure_without_mutating_the_request() -> Result<()>
+{
+    let cases = [
+        MockCommandExecute::adapter_error("SENTINEL_CONFIG_ADAPTER"),
+        MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
+            std::io::ErrorKind::NotFound,
+        )]),
+        MockCommandExecute::sequence([MockCommandResult::AdapterIoError(
+            std::io::ErrorKind::PermissionDenied,
+        )]),
+        MockCommandExecute::failure(1, b"failed to read config SENTINEL_CONFIG_STDERR".to_vec()),
+        MockCommandExecute::failure(1, b"could not find key \"user\" (extra)".to_vec()),
+        MockCommandExecute::failure(2, b"could not find key \"user\"\n".to_vec()),
+        MockCommandExecute::success(Vec::new()),
+        MockCommandExecute::sequence([user_result("--help")]),
+        MockCommandExecute::sequence([user_result("bad user")]),
+        MockCommandExecute::sequence([user_result("...")]),
+        MockCommandExecute::sequence([user_result("The--Octocat_octo")]),
+    ];
+
+    for command in cases {
+        let ctx = context_with_command(HashMap::new(), command);
+        let signer = Signer::new(ctx, DefaultCredentialProvider::new(), RequestSigner);
+        let original = stale_request();
+        let mut parts = original.clone();
+
+        let error = signer
+            .sign(&mut parts, None)
+            .await
+            .expect_err("a config lookup failure must not become anonymous access");
+
+        assert!(!error.to_string().contains("SENTINEL_CONFIG"));
+        assert!(!format!("{error:?}").contains("SENTINEL_CONFIG"));
+        assert!(!format!("{error:?}").contains("SENTINEL_IO_SOURCE"));
+        assert_eq!(parts.uri, original.uri);
+        assert_eq!(parts.headers, original.headers);
+        assert_eq!(parts.headers[AUTHORIZATION], "Bearer stale-token-D4");
     }
     Ok(())
 }

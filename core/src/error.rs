@@ -33,6 +33,9 @@ pub struct Error {
 
     /// Whether this error is retryable
     retryable: bool,
+
+    /// Whether a command executor reports the operation as unavailable
+    command_unavailable: bool,
 }
 
 /// The kind of error that occurred
@@ -72,6 +75,27 @@ impl Error {
             source: None,
             context: Vec::new(),
             retryable: kind.default_retryable(),
+            command_unavailable: false,
+        }
+    }
+
+    /// Create an error for a command execution that is unavailable here.
+    ///
+    /// A [`CommandExecute`](crate::CommandExecute) adapter uses this
+    /// constructor when it cannot run commands at all: no executor is
+    /// configured, the executor does not support the current target, or the
+    /// requested program cannot be spawned. Command providers can then
+    /// distinguish an unavailable operation from an execution that ran and
+    /// failed without inspecting error sources or matching text.
+    ///
+    /// This marker is specific to command execution. File and HTTP adapters do
+    /// not set it. A consumer decides where unavailability is acceptable: it
+    /// may treat an optional command as absent, but a required command that
+    /// reports this marker must still fail.
+    pub fn command_unavailable(message: impl Into<String>) -> Self {
+        Self {
+            command_unavailable: true,
+            ..Self::new(ErrorKind::Unexpected, message)
         }
     }
 
@@ -96,6 +120,18 @@ impl Error {
     /// Get the error kind
     pub fn kind(&self) -> ErrorKind {
         self.kind
+    }
+
+    /// Check whether a command executor reports this operation as unavailable.
+    ///
+    /// Only [`CommandExecute`](crate::CommandExecute) adapters set this marker:
+    /// the no-op executor, adapters that do not support the target, and
+    /// adapters that confirm the requested program cannot be spawned. It does
+    /// not cover file or HTTP operations, and it is not set by an arbitrary
+    /// execution failure or by a `NotFound` source inside a custom adapter's
+    /// error.
+    pub fn is_command_unavailable(&self) -> bool {
+        self.command_unavailable
     }
 
     /// Check if this error is retryable
@@ -171,6 +207,11 @@ impl fmt::Debug for Error {
         }
 
         debug.field("retryable", &self.retryable);
+
+        if self.command_unavailable {
+            debug.field("command_unavailable", &true);
+        }
+
         debug.finish()
     }
 }
@@ -282,6 +323,20 @@ mod tests {
         let err = Error::credential_invalid("token expired");
         assert_eq!(err.kind(), ErrorKind::CredentialInvalid);
         assert!(!err.is_retryable());
+        assert!(!err.is_command_unavailable());
+    }
+
+    #[test]
+    fn test_command_unavailable_marker_is_typed() {
+        let err = Error::command_unavailable("no command executor configured");
+        assert!(err.is_command_unavailable());
+        assert_eq!(err.kind(), ErrorKind::Unexpected);
+        assert!(!err.is_retryable());
+        assert!(format!("{err:?}").contains("command_unavailable: true"));
+
+        let err = Error::unexpected("the executor failed");
+        assert!(!err.is_command_unavailable());
+        assert!(!format!("{err:?}").contains("command_unavailable"));
     }
 
     #[test]

@@ -93,15 +93,33 @@ pub struct TokioCommandExecute;
 #[cfg(not(target_family = "wasm"))]
 impl CommandExecute for TokioCommandExecute {
     async fn command_execute(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
-        let output = Command::new(program)
+        // `Command::output` forces stdout and stderr to pipes and leaves stdin
+        // at its inherited default. Keep that behavior while separating the
+        // spawn from the wait so only the actual spawn error can be classified.
+        let mut command = Command::new(program);
+        command
             .args(args)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| {
-                Error::unexpected(format!("failed to execute command '{program}'")).with_source(e)
-            })?;
+            .stderr(Stdio::piped());
+
+        let child = command.spawn().map_err(|error| {
+            // A missing program is the only spawn failure that confirms
+            // command execution is unavailable here. Every other spawn
+            // failure is an execution failure and stays unmarked.
+            if error.kind() == std::io::ErrorKind::NotFound {
+                Error::command_unavailable(format!("failed to execute command '{program}'"))
+                    .with_source(error)
+            } else {
+                Error::unexpected(format!("failed to execute command '{program}'"))
+                    .with_source(error)
+            }
+        })?;
+
+        // Waiting and collecting output are not spawn failures. Propagate
+        // these errors unmarked with the existing unexpected/source semantics.
+        let output = child.wait_with_output().await.map_err(|error| {
+            Error::unexpected(format!("failed to execute command '{program}'")).with_source(error)
+        })?;
 
         Ok(CommandOutput {
             status: output.status.code().unwrap_or(-1),
@@ -114,7 +132,7 @@ impl CommandExecute for TokioCommandExecute {
 #[cfg(target_family = "wasm")]
 impl CommandExecute for TokioCommandExecute {
     async fn command_execute(&self, _program: &str, _args: &[&str]) -> Result<CommandOutput> {
-        Err(Error::unexpected(
+        Err(Error::command_unavailable(
             "TokioCommandExecute is unsupported on wasm targets",
         ))
     }
@@ -142,6 +160,48 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_missing_command_reports_command_unavailable() {
+        let executor = TokioCommandExecute;
+        let error = executor
+            .command_execute("nonexistent_command_xyz", &[])
+            .await
+            .expect_err("a missing command must fail");
+
+        assert!(error.is_command_unavailable());
+        assert_eq!(error.kind(), reqsign_core::ErrorKind::Unexpected);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_execution_failure_is_not_command_unavailable() {
+        let executor = TokioCommandExecute;
+        // A directory exists but cannot be executed, so the spawn fails with a
+        // kind other than `NotFound`.
+        let error = executor
+            .command_execute("/", &[])
+            .await
+            .expect_err("an executable directory is not a program");
+
+        assert!(!error.is_command_unavailable());
+        assert_eq!(error.kind(), reqsign_core::ErrorKind::Unexpected);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_captures_stdout_stderr_and_status() {
+        let executor = TokioCommandExecute;
+
+        let output = executor
+            .command_execute("sh", &["-c", "printf out; printf err >&2; exit 7"])
+            .await
+            .expect("the command must run");
+
+        assert_eq!(output.status, 7);
+        assert_eq!(output.stdout, b"out");
+        assert_eq!(output.stderr, b"err");
     }
 
     #[tokio::test]
