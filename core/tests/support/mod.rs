@@ -17,6 +17,8 @@
 
 #![allow(dead_code)]
 
+pub mod crypto_arc;
+
 use reqsign_core::Result;
 use reqsign_core::crypto::CryptoProvider;
 

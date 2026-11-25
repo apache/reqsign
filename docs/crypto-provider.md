@@ -86,6 +86,13 @@ that return `ConfigInvalid`, so a minimal provider remains useful for services
 that only need the mandatory hashing and MAC operations. Adding an optional
 method does not require changes to existing providers.
 
+`CryptoProvider` has a blanket implementation for `Arc<T>` where
+`T: CryptoProvider + ?Sized`. A caller that already holds an
+`Arc<dyn CryptoProvider>` can pass it directly to `Context::with_crypto` or
+`install_default`; there are no separate `with_crypto_arc` or
+`install_default_arc` entry points. The implementation forwards every
+operation, including optional methods, to the wrapped provider.
+
 ### Operation Semantics
 
 - `sha1` and `sha256` return the digest as a fixed-width byte array.
