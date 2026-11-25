@@ -57,6 +57,9 @@ through the `Context`, passes the `Context` explicitly to facade
   `reqsign-crypto-boring` is included in the source release and is published
   to crates.io from the explicit standalone release-plan entry after
   `reqsign-core`.
+- `CryptoProvider` is implemented for `Arc<T>`, so callers that already hold an
+  `Arc<dyn CryptoProvider>` can pass it directly to `Context::with_crypto` or
+  `install_default` without a forwarding newtype.
 - Provider crates and facade features, all first release at `1.0.0`:
   `reqsign-aliyun-drive`, `reqsign-b2` (facade feature `b2`),
   `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`,

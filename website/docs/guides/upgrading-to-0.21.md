@@ -120,7 +120,10 @@ let ctx = Context::new()
 Implement `reqsign_core::crypto::CryptoProvider`. `sha1`, `sha256`,
 `hmac_sha1`, and `hmac_sha256` are mandatory; the remaining operations have
 default implementations that return `ConfigInvalid` so a minimal provider can
-serve the services that only need hashing and MACs.
+serve the services that only need hashing and MACs. `CryptoProvider` is also
+implemented for `Arc<T>`, so a caller that already holds an
+`Arc<dyn CryptoProvider>` can pass it directly to `Context::with_crypto` or
+`install_default` without a forwarding wrapper.
 
 A provider or operation that is missing is a non-retryable `ConfigInvalid`.
 Malformed key material is `CredentialInvalid`. Backend failures are

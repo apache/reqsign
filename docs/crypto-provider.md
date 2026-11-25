@@ -499,7 +499,8 @@ The repository verifies this contract with:
   context, early global lookup, rejected second installation, concurrent
   installation, and context resolution priority. The priority test covers
   explicit priority over global and independent providers on distinct
-  contexts.
+  contexts. The `Arc<T>` forwarding impl is checked through generic dispatch and
+  a separate global-installation test binary.
 - Facade tests with and without `default-crypto`, including installation before
   and after context construction, OnceLock non-occupation, a default signer
   using its bound provider, and a signer whose explicitly selected provider is
