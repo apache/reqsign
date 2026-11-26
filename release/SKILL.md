@@ -368,8 +368,8 @@ To verify the release candidate:
 
     svn checkout https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/ reqsign-dist-X.Y.Z-rc.N
     cd reqsign-dist-X.Y.Z-rc.N
-    curl -fsSL https://raw.githubusercontent.com/apache/reqsign/vX.Y.Z-rc.N/release/scripts/verify.py -o verify.py
-    python3 verify.py
+    curl -fsSL https://raw.githubusercontent.com/apache/reqsign/COMMIT_SHA/release/scripts/verify.py -o verify.py
+    python3 verify.py X.Y.Z COMMIT_SHA
 
 Thanks,
 NAME

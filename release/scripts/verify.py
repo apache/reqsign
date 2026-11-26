@@ -74,13 +74,8 @@ def check_signature(command, env):
     print(f"  verified signature by {valid[0]}", flush=True)
 
 
-def verify_download(work):
-    candidates = sorted(Path.cwd().glob("apache-reqsign-*.tar.gz"))
-    if len(candidates) != 1:
-        raise ValueError(
-            f"expected one apache-reqsign-*.tar.gz in {Path.cwd()}, found {len(candidates)}"
-        )
-    filename = candidates[0].name
+def verify_download(work, version):
+    filename = f"apache-reqsign-{version}.tar.gz"
     for name in (filename, filename + ".sha512", filename + ".asc"):
         shutil.copyfile(name, work / name)
 
@@ -105,9 +100,15 @@ def verify_download(work):
     return archive
 
 
-def extract_source(archive, destination):
+def extract_source(archive, destination, expected_commit):
     root = archive.name.removesuffix(".tar.gz")
     with tarfile.open(archive, "r:gz") as package:
+        # git archive records the commit in the global PAX header.
+        commit = package.pax_headers.get("comment")
+        if commit != expected_commit:
+            raise ValueError(
+                f"expected Git commit {expected_commit}, found {commit or '(missing)'}"
+            )
         for member in package:
             if Path(member.name).parts[:1] != (root,) or ".." in Path(member.name).parts:
                 raise ValueError(f"unexpected archive path: {member.name}")
@@ -151,7 +152,7 @@ def license_headers(source):
         )
 
 
-def check_source(source, full):
+def check_source(source, full, verified_commit):
     results = []
 
     def check(label, action):
@@ -202,6 +203,7 @@ def check_source(source, full):
     print(
         "\nRelease verification report\nPASS  SHA-512, archive signature and binary scan"
     )
+    print(f"PASS  Git commit {verified_commit}")
     for label, error in results:
         print(f"FAIL  {label}\n{error}" if error is not None else f"PASS  {label}")
     return int(any(error is not None for _, error in results))
@@ -209,19 +211,26 @@ def check_source(source, full):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("version", help="release version from the vote, e.g. 0.21.0")
+    parser.add_argument("commit", help="full Git commit SHA from the vote")
     parser.add_argument(
         "--full",
         action="store_true",
         help="also run the Cargo publish dry run, standalone packaging and BoringSSL tests",
     )
     args = parser.parse_args()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", args.version):
+        parser.error("expected a release version of the form X.Y.Z")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", args.commit):
+        parser.error("expected a full 40-character Git commit SHA")
+    expected_commit = args.commit.lower()
     if sys.version_info < (3, 12):
         parser.error("Python 3.12 or newer is required")
     with tempfile.TemporaryDirectory(prefix="reqsign-verify-") as directory:
         try:
             work = Path(directory)
-            archive = verify_download(work)
-            source = extract_source(archive, work / "src")
+            archive = verify_download(work, args.version)
+            source = extract_source(archive, work / "src", expected_commit)
         except (
             OSError,
             ValueError,
@@ -231,7 +240,7 @@ def main():
         ) as error:
             print(f"STOP  {error}", file=sys.stderr)
             return 1
-        return check_source(source, args.full)
+        return check_source(source, args.full, expected_commit)
 
 
 if __name__ == "__main__":
