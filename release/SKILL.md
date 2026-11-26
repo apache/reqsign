@@ -346,7 +346,8 @@ The tag points to commit:
 
 COMMIT_SHA
 
-Please download, verify, and test.
+Please download, verify, and test the release candidate. When voting, state
+which checks you performed.
 
 The VOTE will be open for at least 72 hours and until the necessary number of votes are reached.
 
@@ -362,6 +363,13 @@ Checklist for reference:
 - [ ] No unexpected binary files.
 - [ ] All source files have ASF headers.
 - [ ] Can compile from source.
+
+To verify the release candidate:
+
+    svn checkout https://dist.apache.org/repos/dist/dev/reqsign/reqsign-X.Y.Z/ reqsign-dist-X.Y.Z-rc.N
+    cd reqsign-dist-X.Y.Z-rc.N
+    curl -fsSL https://raw.githubusercontent.com/apache/reqsign/vX.Y.Z-rc.N/release/scripts/verify.py -o verify.py
+    python3 verify.py
 
 Thanks,
 NAME
