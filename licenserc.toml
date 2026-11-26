@@ -19,7 +19,7 @@
 builtin = "Apache-2.0-ASF"
 
 [files]
-includes = ["**/*.rs", "**/*.yml", "**/*.yaml", "**/*.toml", "docs/**/*.md"]
+includes = ["**/*.rs", "**/*.py", "**/*.yml", "**/*.yaml", "**/*.toml", "docs/**/*.md"]
 # Generated files cannot carry license headers.
 excludes = ["website/pnpm-lock.yaml"]
 
