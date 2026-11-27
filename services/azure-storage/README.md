@@ -164,6 +164,39 @@ let signer = Signer::new(
 Use the facade with the `azure` and `default-context` features for these
 examples. When supplying your own context, attach a `CommandExecute` adapter.
 
+## Sign requests to Azurite and custom domains
+
+Use `AddressingStyle::PathStyle` when the first URI path segment contains
+the account, as in `http://127.0.0.1:10000/devstoreaccount1/container/blob`.
+Shared Key uses the account from the credential and includes the entire encoded
+path in the signature. Explicitly configured accounts must match the credential.
+Blob Service SAS and User Delegation SAS generation remove the matched account
+segment when deriving the SAS resource name. Both preserve the wire URI path.
+
+```rust
+use reqsign_azure_storage::{AddressingStyle, RequestSigner};
+
+let request_signer = RequestSigner::new()
+    .with_account_name("devstoreaccount1")
+    .with_addressing_style(AddressingStyle::PathStyle);
+```
+
+For a custom domain that maps directly to an account, keep the default
+`AddressingStyle::HostStyle` and set `with_account_name("mystorageaccount")`
+for User Delegation SAS. The first path segment names the container. For
+path-style User Delegation SAS, the explicit account is required and the key
+request goes to the account path on the request's endpoint. Use a trusted
+endpoint that accepts the bearer credential and supports Get User Delegation
+Key. [Get User Delegation Key](https://learn.microsoft.com/en-us/rest/api/storageservices/get-user-delegation-key)
+
+## Sign Table Storage requests with Shared Key
+
+Use `RequestSigner::new().with_shared_key_mode(SharedKeyMode::Table)` and call
+`Signer::sign` with `None`. Table signing uses the generated `x-ms-date` in the
+five-line signature and includes only `comp` from the URI query. Supply the
+Table operation's service and OData headers on the request.
+[Authorize with Shared Key](https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#table-service-shared-key-authorization)
+
 ## Grant a Service SAS
 
 Use a Shared Key source to mint an independently usable, expiration-aware SAS

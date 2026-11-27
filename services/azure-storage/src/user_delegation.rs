@@ -202,8 +202,8 @@ mod cache_tests {
 }
 
 pub(crate) struct UserDelegationKeyRequest<'a> {
-    pub scheme: &'a str,
-    pub authority: &'a str,
+    /// Encoded account root without a trailing slash.
+    pub account_endpoint: &'a str,
     pub bearer_token: &'a str,
     pub start: Timestamp,
     pub expiry: Timestamp,
@@ -216,8 +216,8 @@ pub(crate) async fn get_user_delegation_key(
     request: UserDelegationKeyRequest<'_>,
 ) -> Result<UserDelegationKey> {
     let uri: http::Uri = format!(
-        "{}://{}/?restype=service&comp=userdelegationkey",
-        request.scheme, request.authority
+        "{}/?restype=service&comp=userdelegationkey",
+        request.account_endpoint
     )
     .parse()
     .map_err(|e| {

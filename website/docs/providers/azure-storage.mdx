@@ -52,6 +52,36 @@ let mut req = http::Request::builder()
 signer.sign(&mut req, None).await?;
 ```
 
+## Azurite and custom Storage endpoints
+
+Choose the request address style when constructing the signer. For example,
+Azurite's Blob endpoint at
+`http://127.0.0.1:10000/devstoreaccount1/container/blob` uses path-style addressing.
+
+```rust
+use reqsign::{azure, default_context};
+
+let signer = azure::default_signer(default_context()).with_request_signer(
+    azure::RequestSigner::new()
+        .with_account_name("devstoreaccount1")
+        .with_addressing_style(azure::AddressingStyle::PathStyle),
+);
+```
+
+For a custom domain with URLs of the form `https://storage.example/container/blob`,
+use the default host style. Set `with_account_name` to the storage account for
+User Delegation SAS on either endpoint. Use `with_service_sas_permissions` with
+a Shared Key credential, or `with_user_delegation_presign` with a bearer credential,
+then pass the desired lifetime to `sign`. User Delegation presigning sends a key
+request to the selected account root on the caller's endpoint.
+
+## Table Storage Shared Key
+
+Set `with_shared_key_mode(azure::SharedKeyMode::Table)` on the request signer
+and call `sign` with `None` to sign a Table request with Shared Key. The default
+Shared Key mode serves Blob, Queue, and File requests.
+[Microsoft Learn](https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#table-service-shared-key-authorization)
+
 ## Azure API keys
 
 The `azure` feature also exposes `reqsign::azure::api_key` for Azure APIs that

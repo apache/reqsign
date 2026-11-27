@@ -79,10 +79,11 @@ impl ServiceSasResource {
     /// The input path must be percent-decoded. Slashes within a blob name,
     /// including a trailing slash, are part of the name.
     pub fn from_path_percent_decoded(path: &str) -> Result<Self> {
-        Self::from_path(path, str::to_owned)
+        Self::from_path(path.trim_start_matches('/'), str::to_owned)
     }
 
-    pub(crate) fn from_uri_path(path: &str) -> Result<Self> {
+    pub(crate) fn from_uri_resource_path(path: &str) -> Result<Self> {
+        // The account prefix and its delimiter have already been separated.
         // Split at the wire separator before decoding either component.
         Self::from_path(path, |component| {
             percent_decode_str(component)
@@ -92,7 +93,6 @@ impl ServiceSasResource {
     }
 
     fn from_path(path: &str, decode: impl Fn(&str) -> String) -> Result<Self> {
-        let path = path.trim_start_matches('/');
         let (container, blob) = path.split_once('/').unwrap_or((path, ""));
         if container.is_empty() {
             return Err(Error::request_invalid("missing container in path"));
@@ -577,7 +577,7 @@ struct ValidatedConfig {
     version: ServiceSasVersion,
 }
 
-fn validate_account(account: &str) -> Result<()> {
+pub(crate) fn validate_account(account: &str) -> Result<()> {
     if !(3..=24).contains(&account.len())
         || !account
             .bytes()

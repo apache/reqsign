@@ -20,7 +20,9 @@
 use std::collections::HashMap;
 
 use http::{Request, header};
-use reqsign::azure::default_signer;
+use reqsign::azure::{
+    AddressingStyle, RequestSigner, SharedKeyMode, StaticCredentialProvider, default_signer,
+};
 use reqsign::hash::{base64_encode, base64_hmac_sha256};
 use reqsign::{Context, RustCryptoProvider, StaticEnv};
 
@@ -76,6 +78,39 @@ async fn default_signer_uses_x_ms_date_and_preserves_date() -> anyhow::Result<()
         format!("SharedKey azsignfixture:{signature}")
     );
     assert_eq!(parts.headers, original_headers);
+    assert_eq!(parts.uri.to_string(), uri);
+    Ok(())
+}
+
+#[tokio::test]
+async fn default_signer_accepts_table_shared_key_on_a_path_style_endpoint() -> anyhow::Result<()> {
+    let key = b"table-fixture-key";
+    let context = Context::new().with_crypto(RustCryptoProvider::new());
+    let signer = default_signer(context.clone())
+        .with_credential_provider(StaticCredentialProvider::new_shared_key(
+            "devstoreaccount1",
+            &base64_encode(key),
+        ))
+        .with_request_signer(
+            RequestSigner::new()
+                .with_account_name("devstoreaccount1")
+                .with_addressing_style(AddressingStyle::PathStyle)
+                .with_shared_key_mode(SharedKeyMode::Table),
+        );
+    let uri = "http://127.0.0.1:10002/devstoreaccount1/Tables?comp=properties&timeout=20";
+    let mut parts = Request::get(uri).body(())?.into_parts().0;
+    signer.sign(&mut parts, None).await?;
+
+    let date = parts.headers["x-ms-date"].to_str()?;
+    let canonical =
+        format!("GET\n\n\n{date}\n/devstoreaccount1/devstoreaccount1/Tables?comp=properties");
+    let signature = base64_hmac_sha256(context.crypto_provider()?, key, canonical.as_bytes())?;
+    let authorization = &parts.headers[header::AUTHORIZATION];
+    assert!(authorization.is_sensitive());
+    assert_eq!(
+        authorization,
+        &format!("SharedKey devstoreaccount1:{signature}")
+    );
     assert_eq!(parts.uri.to_string(), uri);
     Ok(())
 }

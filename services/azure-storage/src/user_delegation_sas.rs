@@ -432,13 +432,6 @@ struct UserDelegationKeyRequestKey {
     expiry: Timestamp,
 }
 
-#[derive(Clone)]
-struct ParsedEndpoint {
-    scheme: String,
-    authority: String,
-    identity: String,
-}
-
 struct OperationTimes {
     now: Timestamp,
     start: Option<Timestamp>,
@@ -573,7 +566,7 @@ impl UserDelegationSasGranter {
         Timestamp::now()
     }
 
-    fn parse_endpoint(&self) -> Result<ParsedEndpoint> {
+    fn parse_endpoint(&self) -> Result<String> {
         validate_account(&self.account)?;
         let uri: http::Uri = self.endpoint.parse().map_err(|e| {
             Error::config_invalid("invalid Azure Blob service endpoint").with_source(e)
@@ -600,11 +593,7 @@ impl UserDelegationSasGranter {
             ));
         }
 
-        Ok(ParsedEndpoint {
-            scheme: "https".to_string(),
-            authority: authority.as_str().to_string(),
-            identity: format!("https://{}", authority.as_str()),
-        })
+        Ok(format!("https://{authority}"))
     }
 
     fn operation_times(&self, expires_in: Option<Duration>) -> Result<OperationTimes> {
@@ -672,12 +661,12 @@ impl UserDelegationSasGranter {
     fn cache_key(
         &self,
         provider: &dyn CryptoProvider,
-        endpoint: &ParsedEndpoint,
+        account_endpoint: String,
         bearer_token: &str,
     ) -> Result<UserDelegationKeyCacheKey> {
         Ok(UserDelegationKeyCacheKey {
             account: self.account.clone(),
-            endpoint: endpoint.identity.clone(),
+            endpoint: account_endpoint,
             source_authority: hex_sha256(provider, bearer_token.as_bytes())?,
             service_version: USER_DELEGATION_SERVICE_VERSION,
         })
@@ -753,7 +742,7 @@ impl GrantCredential for UserDelegationSasGranter {
             ));
         }
 
-        let cache_key = self.cache_key(provider, &endpoint, token)?;
+        let cache_key = self.cache_key(provider, endpoint, token)?;
         let cached = self.cached_key(&cache_key, &times);
         let (key, fetched) = if let Some(key) = cached {
             (key, false)
@@ -778,8 +767,7 @@ impl GrantCredential for UserDelegationSasGranter {
                     get_user_delegation_key(
                         ctx,
                         UserDelegationKeyRequest {
-                            scheme: &endpoint.scheme,
-                            authority: &endpoint.authority,
+                            account_endpoint: &cache_key.endpoint,
                             bearer_token: token,
                             start: times.key_start,
                             expiry: times.key_expiry,
