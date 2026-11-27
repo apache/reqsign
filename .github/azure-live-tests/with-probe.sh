@@ -22,12 +22,7 @@ set -euo pipefail
 
 : "${AZURE_STORAGE_ACCOUNT:?Set the fixture storage account}"
 : "${AZURE_STORAGE_CONTAINER:?Set the fixture container}"
-probe_suffix=.txt
-if [[ "${1:-}" == --marker ]]; then
-  probe_suffix=/
-  shift
-fi
-(( $# > 0 )) || { echo "Usage: with-probe.sh [--marker] command [args...]" >&2; exit 2; }
+(( $# > 0 )) || { echo "Usage: with-probe.sh command [args...]" >&2; exit 2; }
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
@@ -37,7 +32,7 @@ if [[ "$auth_mode" == key ]]; then
 fi
 storage_args=(--auth-mode "$auth_mode" --account-name "$AZURE_STORAGE_ACCOUNT"
   --container-name "$AZURE_STORAGE_CONTAINER" --only-show-errors)
-blob_name="ci-probe-$(python3 -c 'import uuid; print(uuid.uuid4())')${probe_suffix}"
+blob_name="ci-probe-$(python3 -c 'import uuid; print(uuid.uuid4())').txt"
 probe_dir=$(mktemp -d)
 created=false
 delete_probe() {

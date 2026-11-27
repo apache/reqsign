@@ -54,9 +54,7 @@ Every live provider test requires `REQSIGN_AZURE_STORAGE_PROBE_URL`. The URL mus
 identify a blob that contains `reqsign-live-azure-ok\n`. Run live tests through
 `.github/azure-live-tests/with-probe.sh` to create a uniquely named private blob,
 set this URL for the child command, and delete the blob when the command exits,
-including on test failure. Use `with-probe.sh --marker` for the ignored
-`signing::service_sas::test_service_sas_presign_marker_head` test, which needs
-a blob name ending in `/`. Concurrent jobs and failed-job reruns use independent
+including on test failure. Concurrent jobs and failed-job reruns use independent
 objects. The storage account and private container must already exist.
 
 The wrapper uses an existing Azure CLI login with permission to create and delete
@@ -117,7 +115,10 @@ for:
 - Azure CLI and GitHub workload identity credentials.
 - The default credential chain.
 - IMDS on an ephemeral private Azure VM with a user-assigned managed identity.
-- Shared Key and SAS request signing against Azure Blob Storage.
+- Shared Key and SAS request signing against Azure Blob Storage. The signing
+  job runs the marker HEAD separately after the ordinary signing tests. It
+  creates an empty BlockBlob under the probe's unique prefix and verifies
+  the exact blob is absent after deleting it.
 
 The IMDS job uploads the test binary to a private blob, creates a VM without a
 public IP, runs the exact provider test through Azure Run Command, and removes
