@@ -45,7 +45,7 @@ pub enum SasResourceKind {
     Blob,
 }
 
-/// RequestSigner that implement Azure Storage Shared Key Authorization.
+/// Sign Azure Storage requests, or explicitly use [Bearer header signing](Self::bearer).
 ///
 /// - [Authorize with Shared Key](https://docs.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key)
 ///
@@ -57,6 +57,7 @@ pub enum SasResourceKind {
 /// - [Create a service SAS](https://learn.microsoft.com/en-us/rest/api/storageservices/create-service-sas)
 /// - [Format date/time values](https://learn.microsoft.com/en-us/rest/api/storageservices/formatting-datetime-values)
 pub struct RequestSigner {
+    bearer_only: bool,
     time: Option<Timestamp>,
     service_sas_permissions: Option<String>,
     service_sas_start: Option<Timestamp>,
@@ -93,9 +94,10 @@ impl Debug for RequestSigner {
 }
 
 impl RequestSigner {
-    /// Create a new builder for Azure Storage signer.
+    /// Create a signer for Azure Storage requests.
     pub fn new() -> Self {
         Self {
+            bearer_only: false,
             time: None,
             service_sas_permissions: None,
             service_sas_start: None,
@@ -105,6 +107,18 @@ impl RequestSigner {
 
             user_delegation_presign: None,
             user_delegation_key_cache: Mutex::new(UserDelegationKeyCache::default()),
+        }
+    }
+
+    /// Sign non-Storage Azure API requests with a sensitive `Authorization: Bearer` header.
+    ///
+    /// Supply a bearer credential for the API's resource and pass `None` for
+    /// `expires_in`. This mode requires a bearer credential, preserves the URI
+    /// and all other headers, and rejects presigning.
+    pub fn bearer() -> Self {
+        Self {
+            bearer_only: true,
+            ..Self::new()
         }
     }
 
@@ -248,7 +262,13 @@ impl SignRequest for RequestSigner {
         expires_in: Option<Duration>,
     ) -> Result<()> {
         let Some(cred) = credential else {
-            return Ok(());
+            return if self.bearer_only {
+                Err(reqsign_core::Error::credential_invalid(
+                    "Azure Bearer signing requires a bearer token",
+                ))
+            } else {
+                Ok(())
+            };
         };
 
         let signing_time = self.get_time();
@@ -257,6 +277,26 @@ impl SignRequest for RequestSigner {
             return Err(reqsign_core::Error::credential_invalid(
                 "credential expires before the requested signing operation deadline",
             ));
+        }
+        if self.bearer_only {
+            let Credential::BearerToken { token, .. } = cred else {
+                return Err(reqsign_core::Error::credential_invalid(
+                    "Azure Bearer signing requires a bearer token",
+                ));
+            };
+            if expires_in.is_some() {
+                return Err(reqsign_core::Error::request_invalid(
+                    "Azure Bearer signing does not support presigning",
+                ));
+            }
+            if req.uri.authority().is_none() {
+                return Err(reqsign_core::Error::request_invalid(
+                    "Azure Bearer signing requires a request URI with an authority",
+                ));
+            }
+            req.headers
+                .insert(header::AUTHORIZATION, bearer_authorization(token)?);
+            return Ok(());
         }
         let method = if let Some(expires_in) = expires_in {
             SigningMethod::Query(expires_in)
@@ -430,17 +470,8 @@ impl SignRequest for RequestSigner {
                                     .with_source(e)
                             })?,
                         );
-                        sctx.headers.insert(header::AUTHORIZATION, {
-                            let mut value: HeaderValue =
-                                format!("Bearer {token}").parse().map_err(|e| {
-                                    reqsign_core::Error::unexpected(
-                                        "failed to parse authorization header",
-                                    )
-                                    .with_source(e)
-                                })?;
-                            value.set_sensitive(true);
-                            value
-                        });
+                        sctx.headers
+                            .insert(header::AUTHORIZATION, bearer_authorization(token)?);
                     }
                 }
             }
@@ -550,6 +581,14 @@ impl SignRequest for RequestSigner {
         }
         Ok(())
     }
+}
+
+fn bearer_authorization(token: &str) -> Result<HeaderValue> {
+    let mut value: HeaderValue = format!("Bearer {token}").parse().map_err(|err| {
+        reqsign_core::Error::unexpected("failed to parse authorization header").with_source(err)
+    })?;
+    value.set_sensitive(true);
+    Ok(value)
 }
 
 fn append_query_pairs(uri: &Uri, pairs: &[(String, String)]) -> Result<Uri> {

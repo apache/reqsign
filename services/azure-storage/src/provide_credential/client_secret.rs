@@ -17,7 +17,8 @@
 
 use crate::Credential;
 use crate::provide_credential::entra::{
-    EntraTokenResponse, parse_token_response, token_request_error,
+    EntraTokenResponse, client_credentials_scope, parse_token_response, token_endpoint,
+    token_request_error,
 };
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, Result};
@@ -38,6 +39,7 @@ pub struct ClientSecretCredentialProvider {
     client_id: Option<String>,
     client_secret: Option<String>,
     authority_host: Option<String>,
+    scope: Option<String>,
 }
 
 impl Debug for ClientSecretCredentialProvider {
@@ -78,9 +80,15 @@ impl ClientSecretCredentialProvider {
         self
     }
 
-    /// Set the authority host.
+    /// Set the authority host, overriding `AZURE_AUTHORITY_HOST` from the context.
     pub fn with_authority_host(mut self, authority_host: impl Into<String>) -> Self {
         self.authority_host = Some(authority_host.into());
+        self
+    }
+
+    /// Request a single `<resource>/.default` scope. Defaults to Azure Storage.
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
+        self.scope = Some(scope.into());
         self
     }
 }
@@ -118,17 +126,9 @@ impl ProvideCredential for ClientSecretCredentialProvider {
             _ => return Ok(None),
         };
 
-        let authority_host = self
-            .authority_host
-            .as_ref()
-            .or_else(|| envs.get("AZURE_AUTHORITY_HOST"))
-            .filter(|h| !h.is_empty())
-            .map(|s| s.as_str())
-            .unwrap_or("https://login.microsoftonline.com");
-
-        let token =
-            get_client_secret_token(tenant_id, client_id, client_secret, authority_host, ctx)
-                .await?;
+        let scope = client_credentials_scope(self.scope.as_deref())?;
+        let endpoint = token_endpoint(tenant_id, self.authority_host.as_deref(), &envs)?;
+        let token = get_client_secret_token(endpoint, client_id, client_secret, scope, ctx).await?;
 
         match token {
             Some(token_response) => {
@@ -144,20 +144,14 @@ impl ProvideCredential for ClientSecretCredentialProvider {
 }
 
 async fn get_client_secret_token(
-    tenant_id: &str,
+    endpoint: http::Uri,
     client_id: &str,
     client_secret: &str,
-    authority_host: &str,
+    scope: &str,
     ctx: &Context,
 ) -> Result<Option<EntraTokenResponse>> {
-    let url = format!(
-        "{}/{}/oauth2/v2.0/token",
-        authority_host.trim_end_matches('/'),
-        tenant_id
-    );
-
     let body = form_urlencoded::Serializer::new(String::new())
-        .append_pair("scope", "https://storage.azure.com/.default")
+        .append_pair("scope", scope)
         .append_pair("client_id", client_id)
         .append_pair("client_secret", client_secret)
         .append_pair("grant_type", "client_credentials")
@@ -165,7 +159,7 @@ async fn get_client_secret_token(
 
     let req = http::Request::builder()
         .method(http::Method::POST)
-        .uri(&url)
+        .uri(endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(bytes::Bytes::from(body))
         .map_err(|e| {

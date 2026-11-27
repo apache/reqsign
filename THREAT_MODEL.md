@@ -423,6 +423,16 @@ header with a sensitive value, preserves the URI, and rejects presigning.
 The caller selects the endpoint and header, and replaces the signer or its
 credential provider when the key rotates.
 
+For Azure Entra ID, the caller selects the token resource and API endpoint.
+The default credential builder applies an explicit scope to the enabled token
+providers and leaves the Storage environment slot under caller control. The
+HTTP-based Entra exchanges resolve the authority from the provider or context
+environment, falling back to Microsoft's public cloud. A client certificate
+assertion uses the selected token endpoint as its audience, and the Azure
+Pipelines exchange forwards the OIDC assertion as issued. The explicit Bearer
+signer requires a bearer credential and replaces only `Authorization` with a
+sensitive header.
+
 If a trusted caller configures a malicious file path, command, environment
 implementation, metadata endpoint, HTTP client, or custom provider, using that
 source is caller responsibility. If Reqsign ignores explicit source removal,

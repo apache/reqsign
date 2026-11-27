@@ -60,6 +60,18 @@ caller-named environment variable and select the header required by the API.
 When the key rotates, create a new signer or call `with_credential_provider`
 with a provider for the rotated key. See the [signing example](https://docs.rs/reqsign/latest/reqsign/azure/index.html#azure-api-keys).
 
+## Microsoft Entra ID for Azure APIs
+
+Use `DefaultCredentialProvider::builder().no_env().with_scope(scope)?` to
+request a token for one Azure resource. Pass the resulting provider and
+`RequestSigner::bearer()` to `Signer::new`. This signing mode writes only
+`Authorization: Bearer` and requires `None` for `expires_in`.
+
+Set `AZURE_AUTHORITY_HOST` for a sovereign cloud, or use `with_authority_host`
+on the client secret, client certificate, workload identity, or Azure
+Pipelines provider. Select the resource scope for that cloud separately.
+See the [Azure Resource Manager example](https://docs.rs/reqsign/latest/reqsign/azure/index.html#microsoft-entra-id-for-azure-apis).
+
 <ProviderDetails id="azure-storage" />
 
 ## Managed identity
