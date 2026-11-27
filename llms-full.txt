@@ -3084,7 +3084,7 @@ The default signer tries these sources in order and uses the first one that yiel
 4. Entra ID client secret
 5. Azure Pipelines federation
 6. Workload identity federation
-7. Managed identity (IMDS)
+7. Managed identity (App Service, Functions, Container Apps, VM IMDS)
 
 ### Credential providers
 
@@ -3096,7 +3096,7 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 * [ClientSecretCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.ClientSecretCredentialProvider.html) — Entra ID client secret
 * [AzurePipelinesCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.AzurePipelinesCredentialProvider.html) — Azure Pipelines federation
 * [WorkloadIdentityCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.WorkloadIdentityCredentialProvider.html) — Workload identity federation
-* [ImdsCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.ImdsCredentialProvider.html) — Managed identity (IMDS)
+* [ImdsCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.ImdsCredentialProvider.html) — Managed identity (App Service, Functions, Container Apps, VM IMDS)
 * [StaticCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.StaticCredentialProvider.html) — Static account key or SAS token
 * [AzureDeveloperCliCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.AzureDeveloperCliCredentialProvider.html) — Azure Developer CLI (native targets)
 
@@ -3105,6 +3105,10 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 This provider can exchange credentials for downscoped ones before any request is signed — see [Granting scoped access](/docs/guides/granting/):
 
 * **User Delegation SAS** — Exchanges an Entra ID bearer token for a user delegation key and derives scoped SAS tokens from it.
+
+## Managed identity[​](#managed-identity "Direct link to Managed identity")
+
+The default chain's `imds` slot supports App Service, Functions, Container Apps, and Azure VM IMDS. App Service, Functions, and Container Apps supply`IDENTITY_ENDPOINT` and `IDENTITY_HEADER`. Legacy App Service and Functions supply`MSI_ENDPOINT` and `MSI_SECRET`. Each protocol sends its own header to its configured endpoint. Use `no_imds()` to remove this slot. See the [provider configuration](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.ImdsCredentialProvider.html).
 
 ## Client certificate authentication[​](#client-certificate-authentication "Direct link to Client certificate authentication")
 
