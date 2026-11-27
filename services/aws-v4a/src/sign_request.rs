@@ -50,8 +50,16 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 /// accepts 1 through 604800 seconds (seven days). Other encoded values return
 /// `RequestInvalid` before changing the request.
 ///
-/// Re-signing replaces previous SigV4 or SigV4a header and query authentication.
-/// The request keeps its business query and payload hash.
+/// Re-signing refreshes previous AWS authentication using its algorithm and
+/// credential scope. Query cleanup requires a complete presign field set.
+/// After presigning, an absent query and a bare `?` have the same wire form.
+/// A single trailing `&` can likewise have the same wire form as the separator
+/// added for signing. Keep the original URI if those bytes need to be recovered.
+///
+/// Switching from header signing to presigning keeps a present
+/// `x-amz-content-sha256` header. A generated `UNSIGNED-PAYLOAD` value has
+/// the same bytes as an explicit one. Use the original request when it is
+/// necessary to presign without that header.
 ///
 /// - [AWS authentication methods](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-authentication-methods.html)
 #[derive(Debug)]
