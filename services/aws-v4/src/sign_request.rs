@@ -183,13 +183,19 @@ impl RequestSigner {
         self.service == "s3express" && !self.use_standard_session_token
     }
 
-    /// Specify the signing time.
+    /// Use a fixed signing timestamp for header signing and presigning.
     ///
-    /// # Note
+    /// This signer reuses `time` for every request. The credential deadline
+    /// is measured from `time` at full precision, while generated AWS dates
+    /// use whole seconds in UTC. Header signing preserves a supplied
+    /// `x-amz-date` header, which must match the chosen signing time.
     ///
-    /// We should always take current time to sign requests.
-    /// Only use this function for testing.
-    #[cfg(test)]
+    /// To compensate for clock skew, pass the caller's adjusted timestamp.
+    /// Build a new request signer when the adjusted time changes.
+    /// [`reqsign_core::Signer::with_request_signer`] can replace it while
+    /// retaining the credential cache. Without a fixed timestamp, the signer
+    /// reads [`Timestamp::now`] when signing. Credential discovery and cache
+    /// freshness keep using their own clocks.
     pub fn with_time(mut self, time: Timestamp) -> Self {
         self.time = Some(time);
         self
