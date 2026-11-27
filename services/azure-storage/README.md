@@ -97,6 +97,19 @@ export AZURE_CLIENT_ID=client-id
 export AZURE_CLIENT_SECRET=client-secret
 ```
 
+### Client certificate
+
+On native targets, set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and
+`AZURE_CLIENT_CERTIFICATE_PATH`. Use a PEM file containing an unencrypted
+PKCS#8 or PKCS#1 RSA private key and its certificate. Put the leaf certificate
+first, followed by any issuer certificates in chain order.
+
+For Microsoft Entra Subject Name/Issuer authentication, set
+`AZURE_CLIENT_SEND_CERTIFICATE_CHAIN=true` to include the public certificates
+in the assertion's `x5c` header. The header is omitted by default.
+`ClientCertificateCredentialProvider::with_send_certificate_chain` overrides
+the environment setting, including when set to `false`.
+
 ## Using Specific Providers
 
 Use a single provider directly when you do not want the default chain:
