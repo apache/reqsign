@@ -1,10 +1,10 @@
 {
-  "access_token": "REDACTED",
+  "access_token": "mock-managed-identity-token",
   "client_id": "00000000-0000-0000-0000-000000000000",
   "expires_in": "86400",
-  "expires_on": "1788505349",
+  "expires_on": "2524608000",
   "ext_expires_in": "86399",
-  "not_before": "1788418649",
+  "not_before": "2524521600",
   "resource": "https://storage.azure.com/",
   "token_type": "Bearer"
 }

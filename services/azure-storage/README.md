@@ -113,6 +113,35 @@ in the assertion's `x5c` header. The header is omitted by default.
 `ClientCertificateCredentialProvider::with_send_certificate_chain` overrides
 the environment setting, including when set to `false`.
 
+### Managed identity
+
+The default chain's `imds` slot uses the following endpoint precedence.
+
+| Endpoint source | API version | Request headers |
+| --- | --- | --- |
+| `ImdsCredentialProvider::with_endpoint`, `AZBLOB_ENDPOINT`, or `AZURE_IMDS_ENDPOINT` | `2018-02-01` | `Metadata: true` and optional `X-IDENTITY-HEADER` from `AZURE_MSI_SECRET` |
+| App Service, Functions, and Container Apps via `IDENTITY_ENDPOINT` | `2019-08-01` | `X-IDENTITY-HEADER` from `IDENTITY_HEADER` |
+| Legacy App Service and Functions via `MSI_ENDPOINT` | `2017-09-01` | `secret` from `MSI_SECRET` |
+| Azure VM IMDS | `2018-02-01` | `Metadata: true` |
+
+A partial platform pair returns a configuration error from the managed identity
+provider before it sends a request. The default chain continues to use its usual
+provider error handling. `no_imds()` removes the entire slot.
+
+To select a user-assigned identity, the provider uses the first configured ID in
+the order `AZURE_OBJECT_ID`, `AZURE_CLIENT_ID`, `AZURE_MSI_RESOURCE_ID` (alias
+`AZURE_MSI_RES_ID`). The legacy API requires `AZURE_CLIENT_ID` for user-assigned
+identities.
+
+The default token resource is `https://storage.azure.com/`. To specify a different
+resource, supply the exact resource URI to `with_resource`, including any trailing
+slash. Use the provider directly or pass it to the builder's `imds` slot.
+
+[App Service and Functions](https://learn.microsoft.com/en-us/azure/app-service/overview-managed-identity#rest-endpoint-reference) ·
+[Container Apps](https://learn.microsoft.com/en-us/azure/container-apps/managed-identity#rest-endpoint-reference) ·
+[Legacy App Service](https://github.com/MicrosoftDocs/azure-docs/blob/3bd05c243466cf0f111bb009a64b15443175d80b/articles/app-service/overview-managed-identity.md#using-the-rest-protocol) ·
+[VM IMDS](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/how-to-use-vm-token)
+
 ## Using Specific Providers
 
 Use a single provider directly when you do not want the default chain:

@@ -33,7 +33,7 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// 4. Client secret (service principal)
 /// 5. Azure Pipelines (workload identity)
 /// 6. Workload identity (federated credentials)
-/// 7. IMDS (Azure VM managed identity)
+/// 7. Azure managed identity (App Service, Functions, Container Apps, and VM IMDS)
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     chain: ProvideCredentialChain<Credential>,
@@ -209,13 +209,13 @@ impl DefaultCredentialProviderBuilder {
         self
     }
 
-    /// Set the Azure IMDS credential provider slot.
+    /// Set the Azure managed identity credential provider slot.
     pub fn imds(mut self, provider: ImdsCredentialProvider) -> Self {
         self.imds = Some(provider);
         self
     }
 
-    /// Remove the Azure IMDS credential provider slot.
+    /// Remove all Azure managed identity protocols from the default chain.
     pub fn no_imds(mut self) -> Self {
         self.imds = None;
         self
