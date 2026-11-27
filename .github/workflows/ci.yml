@@ -168,7 +168,7 @@ jobs:
         working-directory: reqsign
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,baidu-netdisk,cloudflare,tencent,dropbox,github,http-message-signatures,koofr,onedrive,upyun,seafile,vercel,yandex-disk
+          cargo build --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,aws-bearer,azure,aliyun,aliyun-drive,b2,baidu-netdisk,cloudflare,tencent,dropbox,github,http-message-signatures,koofr,onedrive,upyun,seafile,vercel,yandex-disk
 
   # Keep wasm compatibility checks focused on core traits and supported reqsign feature sets.
   wasm_compat:
@@ -182,7 +182,7 @@ jobs:
           rustup target add wasm32-unknown-unknown
           cargo check --package reqsign-core --target wasm32-unknown-unknown
           cargo check --package reqsign-crypto-rustcrypto --target wasm32-unknown-unknown
-          cargo check -p reqsign-aws-core --target wasm32-unknown-unknown
+          cargo check -p reqsign-aws-core --target wasm32-unknown-unknown --features http-bearer
           cargo check -p reqsign-aws-v4a --target wasm32-unknown-unknown
           cargo check -p reqsign-cloudflare --target wasm32-unknown-unknown
           cargo check -p reqsign-http-message-signatures --target wasm32-unknown-unknown
@@ -196,8 +196,8 @@ jobs:
           cargo check -p reqsign-vercel --target wasm32-unknown-unknown
           cargo check -p reqsign-yandex-disk --target wasm32-unknown-unknown
           cargo check -p reqsign-koofr --target wasm32-unknown-unknown
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,azure,aliyun,aliyun-drive,b2,baidu-netdisk,cloudflare,tencent,dropbox,github,http-message-signatures,koofr,onedrive,upyun,seafile,vercel,yandex-disk
-          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,azure,aliyun,aliyun-drive,b2,baidu-netdisk,cloudflare,tencent,dropbox,github,http-message-signatures,koofr,onedrive,upyun,seafile,vercel,yandex-disk
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=aws,aws-v4a,aws-bearer,azure,aliyun,aliyun-drive,b2,baidu-netdisk,cloudflare,tencent,dropbox,github,http-message-signatures,koofr,onedrive,upyun,seafile,vercel,yandex-disk
+          cargo build --manifest-path reqsign/Cargo.toml --target wasm32-unknown-unknown --no-default-features --features=default-context,default-crypto,aws,aws-v4a,aws-bearer,azure,aliyun,aliyun-drive,b2,baidu-netdisk,cloudflare,tencent,dropbox,github,http-message-signatures,koofr,onedrive,upyun,seafile,vercel,yandex-disk
 
   unit:
     runs-on: ubuntu-latest

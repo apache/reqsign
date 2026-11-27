@@ -17,6 +17,9 @@
 
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "http-bearer")]
+pub mod bearer;
+
 pub mod constants;
 
 mod config;

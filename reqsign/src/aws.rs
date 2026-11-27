@@ -18,7 +18,30 @@
 //! AWS signing support.
 //!
 //! SigV4 remains available directly under `reqsign::aws` for compatibility.
-//! The explicit algorithm modules are `v4` and `v4a`.
+//! The explicit authentication modules are `bearer`, `v4`, and `v4a`.
+
+/// AWS HTTP Bearer token authentication.
+#[cfg(feature = "aws-bearer")]
+pub mod bearer {
+    pub use reqsign_aws_core::bearer::*;
+
+    use crate::{Context, Result, Signer};
+
+    /// AWS HTTP Bearer signer type.
+    pub type DefaultSigner = Signer<Credential>;
+
+    /// Create a signer that loads the bearer token for an AWS signing name
+    /// through the supplied context. For example, `bedrock` selects
+    /// `AWS_BEARER_TOKEN_BEDROCK`. Use [`StaticCredentialProvider`] with
+    /// [`Signer::new`] to supply a token directly.
+    pub fn default_signer(ctx: Context, signing_name: &str) -> Result<DefaultSigner> {
+        Ok(Signer::new(
+            ctx,
+            EnvCredentialProvider::new(signing_name)?,
+            RequestSigner,
+        ))
+    }
+}
 
 /// AWS Signature Version 4 support.
 #[cfg(feature = "aws-v4")]

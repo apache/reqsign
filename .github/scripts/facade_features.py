@@ -30,6 +30,7 @@ SERVICE_ALGORITHMS = {
     "aliyun": set(),
     "aliyun-drive": set(),
     "aws": set(),
+    "aws-bearer": set(),
     "aws-v4": set(),
     "aws-v4a": {"p256"},
     "azure": {"rsa"},
