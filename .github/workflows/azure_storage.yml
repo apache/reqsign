@@ -605,11 +605,7 @@ jobs:
           AZURE_STORAGE_AUTH_MODE: key
           REQSIGN_AZURE_STORAGE_TEST: "on"
         run: |
-          bash .github/azure-live-tests/with-probe.sh bash -eu <<'SCRIPT'
-          cargo test -p reqsign-azure-storage --test main signing:: -- --test-threads=1 --no-capture
-          cargo test -p reqsign-azure-storage --test main \
-            signing::service_sas::test_service_sas_presign_marker_head -- --ignored --exact --no-capture
-          SCRIPT
+          bash .github/azure-live-tests/with-probe.sh cargo test -p reqsign-azure-storage --test main signing:: -- --no-capture
 
   summary:
     name: Test Summary
