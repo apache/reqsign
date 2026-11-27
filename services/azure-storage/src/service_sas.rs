@@ -18,7 +18,7 @@
 use crate::Credential;
 use crate::constants::AZURE_QUERY_ENCODE_SET;
 use crate::user_delegation_sas::SasProtocol;
-use percent_encoding::percent_encode;
+use percent_encoding::{percent_decode_str, percent_encode};
 use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash;
 use reqsign_core::time::Timestamp;
@@ -76,23 +76,35 @@ impl Debug for ServiceSasResource {
 impl ServiceSasResource {
     /// Build a resource from a request path.
     ///
-    /// The input path must be percent-decoded.
+    /// The input path must be percent-decoded. Slashes within a blob name,
+    /// including a trailing slash, are part of the name.
     pub fn from_path_percent_decoded(path: &str) -> Result<Self> {
-        let path = path.strip_prefix('/').unwrap_or(path);
-        let mut segments = path.split('/').filter(|v| !v.is_empty());
+        Self::from_path(path, str::to_owned)
+    }
 
-        let container = segments
-            .next()
-            .ok_or_else(|| Error::request_invalid("missing container in path"))?
-            .to_string();
+    pub(crate) fn from_uri_path(path: &str) -> Result<Self> {
+        // Split at the wire separator before decoding either component.
+        Self::from_path(path, |component| {
+            percent_decode_str(component)
+                .decode_utf8_lossy()
+                .into_owned()
+        })
+    }
 
-        let rest = segments.collect::<Vec<_>>();
-        if rest.is_empty() {
-            Ok(ServiceSasResource::Container { container })
+    fn from_path(path: &str, decode: impl Fn(&str) -> String) -> Result<Self> {
+        let path = path.trim_start_matches('/');
+        let (container, blob) = path.split_once('/').unwrap_or((path, ""));
+        if container.is_empty() {
+            return Err(Error::request_invalid("missing container in path"));
+        }
+
+        let container = decode(container);
+        if blob.is_empty() {
+            Ok(Self::Container { container })
         } else {
-            Ok(ServiceSasResource::Blob {
+            Ok(Self::Blob {
                 container,
-                blob: rest.join("/"),
+                blob: decode(blob),
             })
         }
     }
@@ -1081,10 +1093,10 @@ mod tests {
         );
 
         assert_eq!(
-            ServiceSasResource::from_path_percent_decoded("/container/blob").unwrap(),
+            ServiceSasResource::from_path_percent_decoded("/container/dir//marker/").unwrap(),
             ServiceSasResource::Blob {
                 container: "container".to_string(),
-                blob: "blob".to_string()
+                blob: "dir//marker/".to_string()
             }
         );
     }

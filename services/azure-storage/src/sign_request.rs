@@ -17,6 +17,7 @@
 
 use crate::Credential;
 use crate::constants::*;
+use crate::service_sas::ServiceSasResource;
 use crate::user_delegation::{
     MAX_USER_DELEGATION_KEY_LIFETIME, UserDelegationKeyCache, ceil_to_wire_second,
     floor_to_wire_second, user_delegation_key_covers,
@@ -24,7 +25,6 @@ use crate::user_delegation::{
 use http::request::Parts;
 use http::{HeaderValue, Uri, header};
 use log::debug;
-use percent_encoding::percent_decode_str;
 use reqsign_core::hash::{base64_decode, base64_hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{
@@ -310,16 +310,10 @@ impl SignRequest for RequestSigner {
                             ));
                         }
 
-                        let resource = service_sas_resource(&sctx.path)?;
+                        let resource = ServiceSasResource::from_uri_path(&sctx.path)?;
                         match (cfg.resource, &resource) {
-                            (
-                                SasResourceKind::Container,
-                                crate::service_sas::ServiceSasResource::Container { .. },
-                            ) => {}
-                            (
-                                SasResourceKind::Blob,
-                                crate::service_sas::ServiceSasResource::Blob { .. },
-                            ) => {}
+                            (SasResourceKind::Container, ServiceSasResource::Container { .. }) => {}
+                            (SasResourceKind::Blob, ServiceSasResource::Blob { .. }) => {}
                             _ => {
                                 return Err(reqsign_core::Error::request_invalid(
                                     "request resource doesn't match configured SAS resource kind",
@@ -464,7 +458,7 @@ impl SignRequest for RequestSigner {
                             ));
                         };
 
-                        let resource = service_sas_resource(&sctx.path)?;
+                        let resource = ServiceSasResource::from_uri_path(&sctx.path)?;
                         let provider = context.crypto_provider()?;
                         let expiry = crate::service_sas::expiry_at_wire_second(signing_time, d)?;
                         if expiry <= signing_time {
@@ -550,28 +544,6 @@ impl SignRequest for RequestSigner {
             req.uri = uri;
         }
         Ok(())
-    }
-}
-
-fn service_sas_resource(path: &str) -> Result<crate::service_sas::ServiceSasResource> {
-    let mut segments = path
-        .strip_prefix('/')
-        .unwrap_or(path)
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .map(|segment| percent_decode_str(segment).decode_utf8_lossy().into_owned());
-    let container = segments
-        .next()
-        .ok_or_else(|| reqsign_core::Error::request_invalid("missing container in path"))?;
-    let rest = segments.collect::<Vec<_>>();
-
-    if rest.is_empty() {
-        Ok(crate::service_sas::ServiceSasResource::Container { container })
-    } else {
-        Ok(crate::service_sas::ServiceSasResource::Blob {
-            container,
-            blob: rest.join("/"),
-        })
     }
 }
 
@@ -888,19 +860,6 @@ mod tests {
             canonicalize_resource(&signing_req, "account"),
             "/account/container/blob\nliteral:+\nversionid:a+b=c%25&e"
         );
-        assert_eq!(
-            service_sas_resource("/container/blob%2Fname").unwrap(),
-            crate::service_sas::ServiceSasResource::Blob {
-                container: "container".to_string(),
-                blob: "blob/name".to_string(),
-            }
-        );
-        assert_eq!(
-            service_sas_resource("/container%2Fname").unwrap(),
-            crate::service_sas::ServiceSasResource::Container {
-                container: "container/name".to_string(),
-            }
-        );
     }
 
     #[tokio::test]
@@ -984,41 +943,79 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_shared_key_presign_service_sas() {
-        let ctx = crate::test_context()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(OsEnv);
-
-        let now = Timestamp::from_str("2022-03-01T08:12:34Z").unwrap();
-        let key = reqsign_core::hash::base64_encode("key".as_bytes());
-        let cred = Credential::with_shared_key("account", &key);
-
-        let builder = RequestSigner::new()
-            .with_time(now)
-            .with_service_sas_permissions("r");
-
-        let original_uri =
-            format!("https://account.blob.core.windows.net/container/path/to/blob.txt?{RAW_QUERY}");
-        let req = Request::builder().uri(&original_uri).body(()).unwrap();
-        let (mut parts, _) = req.into_parts();
-
-        builder
-            .sign_request(
-                &ctx,
-                &mut parts,
-                Some(&cred),
-                Some(Duration::from_secs(300)),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(
-            parts.uri.to_string(),
-            format!(
-                "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&sig=CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D"
-            )
+    async fn shared_key_presign_signs_the_exact_resource() {
+        let signer = reqsign_core::Signer::new(
+            crate::test_context(),
+            crate::StaticCredentialProvider::new_shared_key("account", "a2V5"),
+            RequestSigner::new()
+                .with_time(Timestamp::from_str("2022-03-01T08:12:34Z").unwrap())
+                .with_service_sas_permissions("r"),
         );
+
+        // These signatures were calculated independently with the key `key`
+        // using Azure's Service SAS string-to-sign for version 2020-12-06.
+        for (path, resource_kind, signature) in [
+            (
+                "/container/path/to/blob.txt",
+                "b",
+                "CP9a2LIrR9zeG4I4jZjqPetJSXWJ77QeUA7c3GMypyM%3D",
+            ),
+            (
+                "/container/marker",
+                "b",
+                "5lVNRgqySZLMGMrADVCeGN6uluyZGn0tm%2BtPiKQR/Io%3D",
+            ),
+            (
+                "/container/marker/",
+                "b",
+                "YDl6JKSJGFlDkdxLBYNy%2B4Bfi86gZeT51iU8SDwNR%2BY%3D",
+            ),
+            (
+                "/container//dir//marker/",
+                "b",
+                "8QJW8Kn5uGuitYi1Y3ShWliraB3AZlLy/KVRjZFvkNQ%3D",
+            ),
+            (
+                "/container/path%2Fto/blob%252F+caf%C3%A9/",
+                "b",
+                "uhcZTYC738i6iyTaISFPv%2BC0tlD%2BeFfRbr2T3KxcdhY%3D",
+            ),
+            (
+                "/container",
+                "c",
+                "UnJTepxgfsXOLb5pyWhw/j4SUOLoD%2B4K/jYYD8Eb994%3D",
+            ),
+            (
+                "/container/",
+                "c",
+                "UnJTepxgfsXOLb5pyWhw/j4SUOLoD%2B4K/jYYD8Eb994%3D",
+            ),
+            (
+                "/container%2Fname",
+                "c",
+                "BlwumN/S/0vX5qLFUsOcjs2%2B26G2kxQ0q9kYQxXhGEo%3D",
+            ),
+        ] {
+            let original_uri = format!("https://storage.example:8443{path}?{RAW_QUERY}");
+            let mut parts = Request::head(&original_uri)
+                .body(())
+                .unwrap()
+                .into_parts()
+                .0;
+
+            signer
+                .sign(&mut parts, Some(Duration::from_secs(300)))
+                .await
+                .unwrap();
+
+            let expected = format!(
+                "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr={resource_kind}&sig={signature}"
+            );
+            assert!(
+                parts.uri.to_string() == expected,
+                "unexpected signed URI for {path} with SAS resource kind {resource_kind}"
+            );
+        }
     }
 
     #[tokio::test]
