@@ -16,7 +16,10 @@
 // under the License.
 
 use crate::Credential;
-use crate::constants::AZURE_QUERY_ENCODE_SET;
+use crate::constants::{
+    AZURE_QUERY_ENCODE_SET, SAS_ENCRYPTION_SCOPE_VERSION, SAS_VERSIONS_WITH_ENCRYPTION_SCOPE,
+    STORAGE_ACCOUNT_KEY_LENGTH,
+};
 use crate::user_delegation_sas::SasProtocol;
 use percent_encoding::{percent_decode_str, percent_encode};
 use reqsign_core::crypto::CryptoProvider;
@@ -28,35 +31,7 @@ use std::net::Ipv4Addr;
 use std::ops::{BitOr, BitOrAssign};
 use std::time::Duration;
 
-const SERVICE_SAS_VERSION: &str = "2020-12-06";
 const BLOB_SERVICE: &str = "blob";
-const STORAGE_ACCOUNT_KEY_LENGTH: usize = 64;
-const SUPPORTED_SERVICE_SAS_VERSIONS: &[&str] = &[
-    "2020-12-06",
-    "2021-02-12",
-    "2021-04-10",
-    "2021-06-08",
-    "2021-08-06",
-    "2021-10-04",
-    "2021-12-02",
-    "2022-11-02",
-    "2023-01-03",
-    "2023-05-03",
-    "2023-08-03",
-    "2023-11-03",
-    "2024-02-04",
-    "2024-05-04",
-    "2024-08-04",
-    "2024-11-04",
-    "2025-01-05",
-    "2025-05-05",
-    "2025-07-05",
-    "2025-11-05",
-    "2026-02-06",
-    "2026-04-06",
-    "2026-06-06",
-    "2026-10-06",
-];
 
 /// Resource level for Azure Blob Storage Service SAS.
 #[derive(Clone, PartialEq, Eq)]
@@ -443,7 +418,7 @@ impl SasIpRange {
         })
     }
 
-    fn as_string(self) -> String {
+    pub(crate) fn as_string(self) -> String {
         self.end.map_or_else(
             || self.start.to_string(),
             |end| format!("{}-{end}", self.start),
@@ -476,7 +451,7 @@ impl ServiceSasVersion {
     /// Validate and create a supported Azure Storage service version.
     pub fn new(version: impl Into<String>) -> Result<Self> {
         let version = version.into();
-        if !SUPPORTED_SERVICE_SAS_VERSIONS.contains(&version.as_str()) {
+        if !SAS_VERSIONS_WITH_ENCRYPTION_SCOPE.contains(&version.as_str()) {
             return Err(Error::config_invalid(
                 "Azure Service SAS version is not supported by this signer",
             ));
@@ -492,7 +467,7 @@ impl ServiceSasVersion {
 
 impl Default for ServiceSasVersion {
     fn default() -> Self {
-        Self(SERVICE_SAS_VERSION.to_string())
+        Self(SAS_ENCRYPTION_SCOPE_VERSION.to_string())
     }
 }
 
@@ -664,7 +639,7 @@ impl ServiceSharedAccessSignature {
             start: None,
             ip: None,
             protocol: None,
-            version: SERVICE_SAS_VERSION.to_string(),
+            version: SAS_ENCRYPTION_SCOPE_VERSION.to_string(),
             content_disposition: String::new(),
         }
     }
@@ -1024,7 +999,7 @@ pub(crate) fn expiry_at_wire_second(now: Timestamp, expires_in: Duration) -> Res
     })
 }
 
-fn ceil_to_wire_second(timestamp: Timestamp) -> Result<Timestamp> {
+pub(crate) fn ceil_to_wire_second(timestamp: Timestamp) -> Result<Timestamp> {
     let mut second = timestamp.as_second();
     if timestamp.subsec_nanosecond() > 0 {
         second = second.checked_add(1).ok_or_else(|| {

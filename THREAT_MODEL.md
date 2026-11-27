@@ -466,6 +466,10 @@ Examples:
 - Query-based signing and presigning must apply expiry and signed query
   parameters according to the provider's rules and must not leave stale
   signature material from a previous signing pass.
+- Azure Account SAS issuance takes a Shared Key for the configured account
+  and locally signs the caller-selected services, resource types, permissions,
+  and validity window. The signed protocol, IP range, and encryption scope
+  reflect the explicit grant configuration.
 - OpenStack Swift TempURL signing must use the configured account or container
   key, never the Keystone identity token, and must cover the method, expiry, and
   the object path after one percent-decoding step, matching Swift's decoded

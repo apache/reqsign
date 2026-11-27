@@ -197,6 +197,13 @@ five-line signature and includes only `comp` from the URI query. Supply the
 Table operation's service and OData headers on the request.
 [Authorize with Shared Key](https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#table-service-shared-key-authorization)
 
+## Grant an Account SAS
+
+Use `AccountSasGranter` with a Shared Key for the configured account to issue a
+SAS for selected services, resource types, and permissions. The operation signs
+locally, requires an explicit positive lifetime, and defaults to HTTPS.
+See the [Account SAS example](src/account_sas.rs) for `Granter` setup.
+
 ## Grant a Service SAS
 
 Use a Shared Key source to mint an independently usable, expiration-aware SAS
