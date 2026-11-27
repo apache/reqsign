@@ -17,7 +17,8 @@
 
 use crate::Credential;
 use crate::provide_credential::entra::{
-    EntraTokenResponse, parse_token_response, token_request_error,
+    EntraTokenResponse, client_credentials_scope, parse_token_response, token_endpoint,
+    token_request_error,
 };
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
@@ -72,6 +73,7 @@ pub struct WorkloadIdentityCredentialProvider {
     client_id: Option<String>,
     token_source: FederatedTokenSource,
     authority_host: Option<String>,
+    scope: Option<String>,
 }
 
 impl Debug for WorkloadIdentityCredentialProvider {
@@ -138,9 +140,15 @@ impl WorkloadIdentityCredentialProvider {
         self
     }
 
-    /// Set the authority host.
+    /// Set the authority host, overriding `AZURE_AUTHORITY_HOST` from the context.
     pub fn with_authority_host(mut self, authority_host: impl Into<String>) -> Self {
         self.authority_host = Some(authority_host.into());
+        self
+    }
+
+    /// Request a single `<resource>/.default` scope. Defaults to Azure Storage.
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
+        self.scope = Some(scope.into());
         self
     }
 
@@ -195,25 +203,14 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
             _ => return Ok(None),
         };
 
-        let authority_host = self
-            .authority_host
-            .as_ref()
-            .or_else(|| envs.get("AZURE_AUTHORITY_HOST"))
-            .filter(|h| !h.is_empty())
-            .map(|s| s.as_str())
-            .unwrap_or("https://login.microsoftonline.com");
-
         let Some(subject_token) = self.load_subject_token(ctx, &envs).await? else {
             return Ok(None);
         };
-        let token_response = get_workload_identity_token(
-            tenant_id,
-            client_id,
-            &subject_token.token,
-            authority_host,
-            ctx,
-        )
-        .await?;
+        let scope = client_credentials_scope(self.scope.as_deref())?;
+        let endpoint = token_endpoint(tenant_id, self.authority_host.as_deref(), &envs)?;
+        let token_response =
+            get_workload_identity_token(endpoint, client_id, &subject_token.token, scope, ctx)
+                .await?;
 
         let expires_on = token_response.expires_at(Timestamp::now())?;
 
@@ -225,20 +222,14 @@ impl ProvideCredential for WorkloadIdentityCredentialProvider {
 }
 
 async fn get_workload_identity_token(
-    tenant_id: &str,
+    endpoint: http::Uri,
     client_id: &str,
     federated_token: &str,
-    authority_host: &str,
+    scope: &str,
     ctx: &Context,
 ) -> Result<EntraTokenResponse> {
-    let url = format!(
-        "{}/{}/oauth2/v2.0/token",
-        authority_host.trim_end_matches('/'),
-        tenant_id
-    );
-
     let body = form_urlencoded::Serializer::new(String::new())
-        .append_pair("scope", "https://storage.azure.com/.default")
+        .append_pair("scope", scope)
         .append_pair("client_id", client_id)
         .append_pair(
             "client_assertion_type",
@@ -250,7 +241,7 @@ async fn get_workload_identity_token(
 
     let req = http::Request::builder()
         .method(http::Method::POST)
-        .uri(&url)
+        .uri(endpoint)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .body(bytes::Bytes::from(body))
         .map_err(|e| {

@@ -106,8 +106,31 @@ async fn azure_cli_public_slot_keeps_the_storage_argv_and_prefers_epoch_expiry()
         .azure_cli(Default::default())
         .no_azure_cli()
         .no_imds()
+        .with_scope("https://vault.azure.net/.default")
+        .unwrap()
         .build();
     assert!(provider.provide_credential(&ctx).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn azure_cli_slot_requests_the_configured_scope_until_replaced() {
+    const SCOPE: &str = "https://vault.azure.net/.default";
+    let mut scope_args = AZ_ARGS.to_vec();
+    scope_args[2..4].copy_from_slice(&["--scope", SCOPE]);
+    let ctx = command_context("az", &scope_args, AZ_RESPONSE);
+    let provider = DefaultCredentialProvider::builder()
+        .with_scope(SCOPE)
+        .unwrap()
+        .build();
+    assert_bearer_token(provider.provide_credential(&ctx).await.unwrap());
+
+    let ctx = command_context("az", AZ_ARGS, AZ_RESPONSE);
+    let provider = DefaultCredentialProvider::builder()
+        .with_scope(SCOPE)
+        .unwrap()
+        .azure_cli(Default::default())
+        .build();
+    assert_bearer_token(provider.provide_credential(&ctx).await.unwrap());
 }
 
 #[tokio::test]

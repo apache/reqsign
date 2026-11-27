@@ -20,7 +20,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::credential::Credential;
 use crate::provide_credential::entra::{
-    EntraTokenResponse, parse_token_response, token_request_error,
+    EntraTokenResponse, client_credentials_scope, parse_token_response, token_endpoint,
+    token_request_error,
 };
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
@@ -58,6 +59,8 @@ pub struct ClientCertificateCredentialProvider {
     certificate_path: Option<String>,
     certificate_password: Option<String>,
     send_certificate_chain: Option<bool>,
+    authority_host: Option<String>,
+    scope: Option<String>,
 }
 
 impl Debug for ClientCertificateCredentialProvider {
@@ -88,6 +91,8 @@ impl ClientCertificateCredentialProvider {
             certificate_path: None,
             certificate_password: None,
             send_certificate_chain: None,
+            authority_host: None,
+            scope: None,
         }
     }
 
@@ -125,6 +130,19 @@ impl ClientCertificateCredentialProvider {
     /// `true` in the context environment enables the header.
     pub fn with_send_certificate_chain(mut self, send_certificate_chain: bool) -> Self {
         self.send_certificate_chain = Some(send_certificate_chain);
+        self
+    }
+
+    /// Set the authority host, overriding `AZURE_AUTHORITY_HOST` from the context.
+    /// The client assertion uses the resolved token endpoint as its audience.
+    pub fn with_authority_host(mut self, authority_host: impl Into<String>) -> Self {
+        self.authority_host = Some(authority_host.into());
+        self
+    }
+
+    /// Request a single `<resource>/.default` scope. Defaults to Azure Storage.
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
+        self.scope = Some(scope.into());
         self
     }
 
@@ -221,7 +239,7 @@ impl ClientCertificateCredentialProvider {
     fn create_client_assertion(
         &self,
         provider: &dyn CryptoProvider,
-        tenant_id: &str,
+        endpoint: &http::Uri,
         client_id: &str,
         certificate: &ClientCertificate,
         send_certificate_chain: bool,
@@ -234,7 +252,7 @@ impl ClientCertificateCredentialProvider {
             .as_secs();
 
         let claims = ClientAssertionClaims {
-            aud: format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"),
+            aud: endpoint.to_string(),
             exp: now + 600, // 10 minutes
             iss: client_id.to_string(),
             jti: generate_jti(now),
@@ -261,14 +279,13 @@ impl ClientCertificateCredentialProvider {
     async fn exchange_token(
         &self,
         ctx: &Context,
-        tenant_id: &str,
+        endpoint: http::Uri,
         client_id: &str,
         client_assertion: &str,
+        scope: &str,
     ) -> Result<EntraTokenResponse, reqsign_core::Error> {
-        let url = format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token");
-
         let mut params = HashMap::new();
-        params.insert("scope", "https://storage.azure.com/.default");
+        params.insert("scope", scope);
         params.insert("client_id", client_id);
         params.insert(
             "client_assertion_type",
@@ -283,7 +300,7 @@ impl ClientCertificateCredentialProvider {
 
         let req = http::Request::builder()
             .method(http::Method::POST)
-            .uri(url)
+            .uri(endpoint)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(bytes::Bytes::from(body))
             .map_err(|e| {
@@ -368,11 +385,13 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
                 .is_some_and(|value| value.eq_ignore_ascii_case("true"))
         });
 
+        let scope = client_credentials_scope(self.scope.as_deref())?;
+        let endpoint = token_endpoint(&tenant_id, self.authority_host.as_deref(), &envs)?;
         let provider = ctx.crypto_provider()?;
         let certificate = self.load_certificate(ctx, &certificate_path).await?;
         let client_assertion = self.create_client_assertion(
             provider,
-            &tenant_id,
+            &endpoint,
             &client_id,
             &certificate,
             send_certificate_chain,
@@ -380,7 +399,7 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
 
         // Exchange for access token
         let token_response = self
-            .exchange_token(ctx, &tenant_id, &client_id, &client_assertion)
+            .exchange_token(ctx, endpoint, &client_id, &client_assertion, scope)
             .await?;
 
         // Calculate expiration time
@@ -408,6 +427,8 @@ mod tests {
     // SHA-1 of the leaf DER, computed independently using OpenSSL and Python.
     const LEAF_THUMBPRINT: &str = "49Y8PKhJSB3Xrhw3Xl1ubzZbydY";
     const CERTIFICATE_PATH: &str = "/test/client-certificate.pem";
+    const PUBLIC_ENDPOINT: &str = "https://login.microsoftonline.com/test-tenant/oauth2/v2.0/token";
+    const TEST_SCOPE: &str = "https://vault.azure.net/.default";
 
     #[derive(Debug)]
     struct CertificateFile(Vec<u8>);
@@ -422,6 +443,8 @@ mod tests {
     #[derive(Debug)]
     struct TokenEndpoint {
         expected_header: Value,
+        expected_uri: &'static str,
+        expected_scope: &'static str,
     }
 
     impl HttpSend for TokenEndpoint {
@@ -430,10 +453,12 @@ mod tests {
             req: http::Request<Bytes>,
         ) -> reqsign_core::Result<http::Response<Bytes>> {
             assert_eq!(req.method(), http::Method::POST);
-            let assertion = form_urlencoded::parse(req.body())
-                .find_map(|(name, value)| (name == "client_assertion").then_some(value))
-                .expect("token request must include a client assertion");
-            let (encoded_header, _) = assertion.split_once('.').expect("JWS must have a header");
+            assert_eq!(req.uri(), self.expected_uri);
+            let form: HashMap<_, _> = form_urlencoded::parse(req.body()).collect();
+            assert_eq!(form["scope"], self.expected_scope);
+            let mut segments = form["client_assertion"].split('.');
+            let encoded_header = segments.next().expect("JWS must have a header");
+            let encoded_claims = segments.next().expect("JWS must have claims");
             let header: Value = serde_json::from_slice(
                 &URL_SAFE_NO_PAD
                     .decode(encoded_header)
@@ -441,6 +466,13 @@ mod tests {
             )
             .expect("JWS header must be JSON");
             assert_eq!(header, self.expected_header);
+            let claims: Value = serde_json::from_slice(
+                &URL_SAFE_NO_PAD
+                    .decode(encoded_claims)
+                    .expect("JWS claims must decode"),
+            )
+            .expect("JWS claims must be JSON");
+            assert_eq!(claims["aud"], self.expected_uri);
 
             Ok(http::Response::new(Bytes::from_static(
                 br#"{"access_token":"mock-entra-token","expires_in":3600}"#,
@@ -448,7 +480,7 @@ mod tests {
         }
     }
 
-    fn certificate_context(pem: Vec<u8>, send_certificate_chain: Option<&str>) -> Context {
+    fn certificate_context(pem: Vec<u8>, overrides: &[(&str, &str)]) -> Context {
         let mut env = StaticEnv {
             envs: HashMap::from([
                 ("AZURE_TENANT_ID".to_string(), "test-tenant".to_string()),
@@ -460,25 +492,24 @@ mod tests {
             ]),
             ..Default::default()
         };
-        if let Some(value) = send_certificate_chain {
-            env.envs.insert(
-                "AZURE_CLIENT_SEND_CERTIFICATE_CHAIN".to_string(),
-                value.to_string(),
-            );
-        }
+        env.envs.extend(
+            overrides
+                .iter()
+                .map(|&(name, value)| (name.to_string(), value.to_string())),
+        );
 
         crate::test_context()
             .with_env(env)
             .with_file_read(CertificateFile(pem))
     }
 
-    async fn assert_certificate_header(
-        provider: ClientCertificateCredentialProvider,
+    async fn assert_certificate_exchange(
+        provider: impl ProvideCredential<Credential = Credential>,
         ctx: Context,
-        expected_header: Value,
+        endpoint: TokenEndpoint,
     ) {
         let credential = provider
-            .provide_credential(&ctx.with_http_send(TokenEndpoint { expected_header }))
+            .provide_credential(&ctx.with_http_send(endpoint))
             .await
             .expect("certificate token exchange must succeed");
         assert!(
@@ -492,10 +523,14 @@ mod tests {
             [LEAF_PEM, RSA_PKCS8].concat(),
             [LEAF_PEM, RSA_PKCS8, ISSUER_PEM, ROOT_PEM].concat(),
         ] {
-            assert_certificate_header(
+            assert_certificate_exchange(
                 ClientCertificateCredentialProvider::new(),
-                certificate_context(pem, None),
-                json!({"alg": "RS256", "typ": "JWT", "x5t": LEAF_THUMBPRINT}),
+                certificate_context(pem, &[]),
+                TokenEndpoint {
+                    expected_header: json!({"alg": "RS256", "typ": "JWT", "x5t": LEAF_THUMBPRINT}),
+                    expected_uri: PUBLIC_ENDPOINT,
+                    expected_scope: "https://storage.azure.com/.default",
+                },
             )
             .await;
         }
@@ -528,13 +563,59 @@ mod tests {
             if send_chain {
                 expected_header["x5c"] = json!(expected_chain);
             }
-            assert_certificate_header(
+            let env = env.map(|value| ("AZURE_CLIENT_SEND_CERTIFICATE_CHAIN", value));
+            assert_certificate_exchange(
                 provider,
-                certificate_context([LEAF_PEM, RSA_PKCS8, ISSUER_PEM, ROOT_PEM].concat(), env),
-                expected_header,
+                certificate_context(
+                    [LEAF_PEM, RSA_PKCS8, ISSUER_PEM, ROOT_PEM].concat(),
+                    env.as_slice(),
+                ),
+                TokenEndpoint {
+                    expected_header,
+                    expected_uri: PUBLIC_ENDPOINT,
+                    expected_scope: "https://storage.azure.com/.default",
+                },
             )
             .await;
         }
+    }
+
+    #[tokio::test]
+    async fn assertion_audience_matches_the_selected_token_endpoint() {
+        use crate::DefaultCredentialProvider;
+
+        let context = || {
+            certificate_context(
+                [LEAF_PEM, RSA_PKCS8].concat(),
+                &[("AZURE_AUTHORITY_HOST", "https://login.microsoftonline.us/")],
+            )
+        };
+        let endpoint = |expected_uri| TokenEndpoint {
+            expected_header: json!({"alg": "RS256", "typ": "JWT", "x5t": LEAF_THUMBPRINT}),
+            expected_uri,
+            expected_scope: TEST_SCOPE,
+        };
+        let provider = DefaultCredentialProvider::builder()
+            .no_azure_cli()
+            .with_scope(TEST_SCOPE)
+            .unwrap()
+            .build();
+        assert_certificate_exchange(
+            provider,
+            context(),
+            endpoint("https://login.microsoftonline.us/test-tenant/oauth2/v2.0/token"),
+        )
+        .await;
+
+        let provider = ClientCertificateCredentialProvider::new()
+            .with_scope(TEST_SCOPE)
+            .with_authority_host("https://login.chinacloudapi.cn/");
+        assert_certificate_exchange(
+            provider,
+            context(),
+            endpoint("https://login.chinacloudapi.cn/test-tenant/oauth2/v2.0/token"),
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -553,7 +634,7 @@ mod tests {
             (malformed_certificate.to_vec(), "Failed to parse PEM:"),
             (vec![0xff], "Certificate file is not valid UTF-8:"),
         ] {
-            let ctx = certificate_context(pem, Some("true"));
+            let ctx = certificate_context(pem, &[("AZURE_CLIENT_SEND_CERTIFICATE_CHAIN", "true")]);
             let error = ClientCertificateCredentialProvider::new()
                 .provide_credential(&ctx)
                 .await

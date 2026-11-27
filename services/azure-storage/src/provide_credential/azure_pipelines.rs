@@ -17,7 +17,8 @@
 
 use crate::credential::Credential;
 use crate::provide_credential::entra::{
-    EntraTokenResponse, parse_token_response, token_request_error,
+    EntraTokenResponse, client_credentials_scope, parse_token_response, token_endpoint,
+    token_request_error,
 };
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential};
@@ -32,6 +33,8 @@ pub struct AzurePipelinesCredentialProvider {
     tenant_id: Option<String>,
     client_id: Option<String>,
     service_connection_id: Option<String>,
+    authority_host: Option<String>,
+    scope: Option<String>,
 }
 
 impl AzurePipelinesCredentialProvider {
@@ -54,6 +57,18 @@ impl AzurePipelinesCredentialProvider {
     /// Set the service connection ID
     pub fn with_service_connection_id(mut self, service_connection_id: &str) -> Self {
         self.service_connection_id = Some(service_connection_id.to_string());
+        self
+    }
+
+    /// Set the Entra exchange authority, overriding `AZURE_AUTHORITY_HOST` from the context.
+    pub fn with_authority_host(mut self, authority_host: impl Into<String>) -> Self {
+        self.authority_host = Some(authority_host.into());
+        self
+    }
+
+    /// Request a single `<resource>/.default` scope. Defaults to Azure Storage.
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Self {
+        self.scope = Some(scope.into());
         self
     }
 
@@ -105,14 +120,13 @@ impl AzurePipelinesCredentialProvider {
     async fn exchange_token(
         &self,
         ctx: &Context,
-        tenant_id: &str,
+        endpoint: http::Uri,
         client_id: &str,
         oidc_token: &str,
+        scope: &str,
     ) -> Result<EntraTokenResponse, reqsign_core::Error> {
-        let url = format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token");
-
         let mut params = HashMap::new();
-        params.insert("scope", "https://storage.azure.com/.default");
+        params.insert("scope", scope);
         params.insert("client_id", client_id);
         params.insert(
             "client_assertion_type",
@@ -127,7 +141,7 @@ impl AzurePipelinesCredentialProvider {
 
         let req = http::Request::builder()
             .method(http::Method::POST)
-            .uri(url)
+            .uri(endpoint)
             .header("Content-Type", "application/x-www-form-urlencoded")
             .body(bytes::Bytes::from(body))
             .map_err(|e| {
@@ -203,6 +217,9 @@ impl ProvideCredential for AzurePipelinesCredentialProvider {
                 _ => return Ok(None),
             };
 
+        let scope = client_credentials_scope(self.scope.as_deref())?;
+        let endpoint = token_endpoint(&tenant_id, self.authority_host.as_deref(), &envs)?;
+
         // Get OIDC token
         let oidc_token = self
             .get_oidc_token(
@@ -215,7 +232,7 @@ impl ProvideCredential for AzurePipelinesCredentialProvider {
 
         // Exchange for access token
         let token_response = self
-            .exchange_token(ctx, &tenant_id, &client_id, &oidc_token)
+            .exchange_token(ctx, endpoint, &client_id, &oidc_token, scope)
             .await?;
 
         // Calculate expiration time

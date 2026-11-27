@@ -16,8 +16,12 @@
 // under the License.
 
 use crate::Credential;
+use crate::provide_credential::entra::resource_from_scope;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::provide_credential::{AzureCliCredentialProvider, ClientCertificateCredentialProvider};
+use crate::provide_credential::{
+    AzureCliCredentialProvider, ClientCertificateCredentialProvider,
+    ConfiguredAzureCliCredentialProvider,
+};
 use crate::provide_credential::{
     AzurePipelinesCredentialProvider, ClientSecretCredentialProvider, EnvCredentialProvider,
     ImdsCredentialProvider, WorkloadIdentityCredentialProvider,
@@ -103,7 +107,7 @@ impl DefaultCredentialProvider {
 pub struct DefaultCredentialProviderBuilder {
     env: Option<EnvCredentialProvider>,
     #[cfg(not(target_arch = "wasm32"))]
-    azure_cli: Option<AzureCliCredentialProvider>,
+    azure_cli: Option<ConfiguredAzureCliCredentialProvider>,
     #[cfg(not(target_arch = "wasm32"))]
     client_certificate: Option<ClientCertificateCredentialProvider>,
     client_secret: Option<ClientSecretCredentialProvider>,
@@ -117,7 +121,7 @@ impl Default for DefaultCredentialProviderBuilder {
         Self {
             env: Some(EnvCredentialProvider::new()),
             #[cfg(not(target_arch = "wasm32"))]
-            azure_cli: Some(AzureCliCredentialProvider::new()),
+            azure_cli: Some(ConfiguredAzureCliCredentialProvider::default()),
             #[cfg(not(target_arch = "wasm32"))]
             client_certificate: Some(ClientCertificateCredentialProvider::new()),
             client_secret: Some(ClientSecretCredentialProvider::new()),
@@ -133,6 +137,40 @@ impl DefaultCredentialProviderBuilder {
         Self::default()
     }
 
+    /// Request one Entra resource across the currently enabled token providers.
+    ///
+    /// Supply a single `<resource>/.default` scope. The Entra exchanges and
+    /// Azure CLI receive the scope verbatim. Managed identity receives the
+    /// resource with only the final `/.default` removed. For example,
+    /// `https://management.core.windows.net//.default` becomes
+    /// `https://management.core.windows.net/`.
+    ///
+    /// The environment slot is independent. Later slot replacement or removal
+    /// takes precedence. Invalid scopes return `ConfigInvalid`.
+    pub fn with_scope(mut self, scope: impl Into<String>) -> Result<Self> {
+        let scope = scope.into();
+        let resource = resource_from_scope(&scope)?;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.azure_cli = self.azure_cli.map(|provider| provider.with_scope(&scope));
+            self.client_certificate = self
+                .client_certificate
+                .map(|provider| provider.with_scope(&scope));
+        }
+        self.client_secret = self
+            .client_secret
+            .map(|provider| provider.with_scope(&scope));
+        self.azure_pipelines = self
+            .azure_pipelines
+            .map(|provider| provider.with_scope(&scope));
+        self.workload_identity = self
+            .workload_identity
+            .map(|provider| provider.with_scope(&scope));
+        self.imds = self.imds.map(|provider| provider.with_resource(resource));
+        Ok(self)
+    }
+
     /// Set the environment credential provider slot.
     pub fn env(mut self, provider: EnvCredentialProvider) -> Self {
         self.env = Some(provider);
@@ -145,10 +183,10 @@ impl DefaultCredentialProviderBuilder {
         self
     }
 
-    /// Set the Azure CLI credential provider slot.
+    /// Set the Azure CLI credential provider slot with its default token target.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn azure_cli(mut self, provider: AzureCliCredentialProvider) -> Self {
-        self.azure_cli = Some(provider);
+        self.azure_cli = Some(provider.into_configured());
         self
     }
 

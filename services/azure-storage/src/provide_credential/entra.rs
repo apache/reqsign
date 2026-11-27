@@ -17,7 +17,46 @@
 
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Error, Result};
+use std::collections::HashMap;
 use std::time::Duration;
+
+pub(super) const STORAGE_SCOPE: &str = "https://storage.azure.com/.default";
+const PUBLIC_AUTHORITY_HOST: &str = "https://login.microsoftonline.com";
+
+/// Convert a single client-credentials scope to the resource expected by managed identity.
+pub(super) fn resource_from_scope(scope: &str) -> Result<&str> {
+    scope
+        .strip_suffix("/.default")
+        .filter(|resource| !resource.is_empty() && !resource.contains(char::is_whitespace))
+        .ok_or_else(|| {
+            Error::config_invalid(
+                "Microsoft Entra scope must be a single resource followed by /.default",
+            )
+        })
+}
+
+pub(super) fn client_credentials_scope(scope: Option<&str>) -> Result<&str> {
+    let scope = scope.unwrap_or(STORAGE_SCOPE);
+    resource_from_scope(scope)?;
+    Ok(scope)
+}
+
+pub(super) fn token_endpoint(
+    tenant_id: &str,
+    authority_host: Option<&str>,
+    envs: &HashMap<String, String>,
+) -> Result<http::Uri> {
+    let authority_host = authority_host
+        .or_else(|| envs.get("AZURE_AUTHORITY_HOST").map(String::as_str))
+        .filter(|host| !host.is_empty())
+        .unwrap_or(PUBLIC_AUTHORITY_HOST)
+        .trim_end_matches('/');
+    format!("{authority_host}/{tenant_id}/oauth2/v2.0/token")
+        .parse()
+        .map_err(|err| {
+            Error::config_invalid("invalid Microsoft Entra token endpoint").with_source(err)
+        })
+}
 
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct EntraTokenResponse {
