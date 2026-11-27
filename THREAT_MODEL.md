@@ -416,6 +416,13 @@ parameters, and upload or download URLs. Reqsign does not implement Yandex
 OAuth token issuance, refresh, or revocation, and forwarding a signed header to
 a different host is the caller's responsibility.
 
+Azure API key authentication uses a caller-supplied key or reads one
+caller-named variable through the context environment. The key is separate
+from Azure Storage credential discovery. Signing replaces only the selected
+header with a sensitive value, preserves the URI, and rejects presigning.
+The caller selects the endpoint and header, and replaces the signer or its
+credential provider when the key rotates.
+
 If a trusted caller configures a malicious file path, command, environment
 implementation, metadata endpoint, HTTP client, or custom provider, using that
 source is caller responsibility. If Reqsign ignores explicit source removal,
@@ -435,6 +442,14 @@ Examples:
   query parameters, headers, payload hash rules, expiry, date, service, region,
   account, and provider-specific fields as required by their implemented
   contract.
+- SigV4 and SigV4a normalize URI paths only when the caller enables it.
+  Normalization applies before percent-encoding the canonical path. Header
+  signing preserves the wire URI, and presigning preserves the wire path and
+  existing query bytes when appending authentication parameters.
+- S3 `aws-chunked` signing must use the initial request's signature, time,
+  credential scope, and signing key for each signed chunk and trailer. The
+  signing state keeps the derived key private. The caller owns the upload
+  framing, checksum calculation, and retries.
 - Header-based signing must apply authorization data to headers without
   unintentionally moving authority to query parameters.
 - Query-based signing and presigning must apply expiry and signed query
@@ -488,6 +503,12 @@ Out of scope by default:
 Reqsign can read local credential files and execute local credential-helper
 commands when the caller configures adapters and providers that require those
 features.
+
+Azure Storage providers use argument vectors for `az account get-access-token`
+and `azd auth token`. The context's `AZURE_TENANT_ID` supplies the Azure CLI
+tenant when the caller leaves it unset. The Azure Developer CLI provider is
+explicit and requests tokens with `--no-prompt`. Command output is excluded
+from errors for both providers.
 
 In scope:
 

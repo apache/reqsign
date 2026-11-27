@@ -23,7 +23,7 @@ use http::{HeaderValue, header};
 use log::debug;
 use reqsign_aws_core::Credential;
 use reqsign_aws_core::signing::{
-    append_query_fragment, append_query_pairs, canonical_request_string_with_encoding,
+    append_query_fragment, append_query_pairs, canonical_request_string_with_uri_options,
     canonicalize_headers_with_standard_session_token, canonicalize_query,
     validate_presign_lifetime,
 };
@@ -33,7 +33,7 @@ use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, Result, SignRequest, SigningCredential, SigningRequest};
 use zeroize::Zeroizing;
 
-use crate::{PercentEncodingMode, SigningRegionSet};
+use crate::{PercentEncodingMode, SigningRegionSet, UriPathNormalizationMode};
 
 const ALGORITHM: &str = "AWS4-ECDSA-P256-SHA256";
 const X_AMZ_REGION_SET: &str = "x-amz-region-set";
@@ -58,6 +58,7 @@ pub struct RequestSigner {
     service: String,
     region_set: SigningRegionSet,
     percent_encoding_mode: PercentEncodingMode,
+    uri_path_normalization_mode: UriPathNormalizationMode,
     time: Option<Timestamp>,
 }
 
@@ -68,6 +69,7 @@ impl RequestSigner {
             service: service.to_string(),
             region_set,
             percent_encoding_mode: PercentEncodingMode::default(),
+            uri_path_normalization_mode: UriPathNormalizationMode::default(),
             time: None,
         }
     }
@@ -77,8 +79,8 @@ impl RequestSigner {
     /// The default is [`PercentEncodingMode::Single`] for every signing service,
     /// preserving Reqsign's existing canonical URI and signature bytes. Select
     /// [`PercentEncodingMode::Double`] explicitly when the service expects one
-    /// additional encoding pass over the wire path. This does not modify the
-    /// outgoing URI, normalize paths, or change payload hashing.
+    /// additional encoding pass over the encoded path. Path normalization is
+    /// configured separately with [`Self::with_uri_path_normalization_mode`].
     ///
     /// # Example
     ///
@@ -94,12 +96,32 @@ impl RequestSigner {
         self
     }
 
-    /// Specify the signing time.
+    /// Set canonical URI path normalization for header signing and presigning.
     ///
-    /// This method is only available to tests because production signing must
-    /// always use the current time.
-    #[cfg(test)]
-    fn with_time(mut self, time: Timestamp) -> Self {
+    /// [`UriPathNormalizationMode::Disabled`] is the default for every service,
+    /// including S3. [`UriPathNormalizationMode::Enabled`] resolves literal `.`
+    /// and `..` segments and collapses repeated slashes before applying
+    /// [`PercentEncodingMode`]. The outgoing path and existing query bytes are
+    /// preserved.
+    pub fn with_uri_path_normalization_mode(mut self, mode: UriPathNormalizationMode) -> Self {
+        self.uri_path_normalization_mode = mode;
+        self
+    }
+
+    /// Use a fixed signing timestamp for header signing and presigning.
+    ///
+    /// This signer reuses `time` for every request. The credential deadline
+    /// is measured from `time` at full precision, while generated AWS dates
+    /// use whole seconds in UTC. Header signing preserves a supplied
+    /// `x-amz-date` header, which must match the chosen signing time.
+    ///
+    /// To compensate for clock skew, pass the caller's adjusted timestamp.
+    /// Build a new request signer when the adjusted time changes.
+    /// [`reqsign_core::Signer::with_request_signer`] can replace it while
+    /// retaining the credential cache. Without a fixed timestamp, the signer
+    /// reads [`Timestamp::now`] when signing. Credential discovery and cache
+    /// freshness keep using their own clocks.
+    pub fn with_time(mut self, time: Timestamp) -> Self {
         self.time = Some(time);
         self
     }
@@ -175,10 +197,11 @@ impl SignRequest for RequestSigner {
             &self.region_set,
         );
         let canonical_query = canonicalize_query(&signing_request, &authentication_query);
-        let canonical_request = canonical_request_string_with_encoding(
+        let canonical_request = canonical_request_string_with_uri_options(
             &signing_request,
             &canonical_query,
             self.percent_encoding_mode,
+            self.uri_path_normalization_mode,
         )?;
         let encoded_request = hex_sha256(crypto, canonical_request.as_bytes())?;
 
@@ -347,16 +370,16 @@ mod tests {
     use aws_sigv4::http_request::{
         PayloadChecksumKind, PercentEncodingMode as AwsPercentEncodingMode, SessionTokenMode,
         SignableBody, SignableRequest, SignatureLocation, SigningSettings,
-        UriPathNormalizationMode,
+        UriPathNormalizationMode as AwsUriPathNormalizationMode,
     };
     use aws_sigv4::sign::v4a;
     use http::Request;
     use pretty_assertions::assert_eq;
-    use reqsign_core::ErrorKind;
     use reqsign_core::crypto::CryptoProvider;
+    use reqsign_core::{ErrorKind, Signer, StaticEnv};
     use std::sync::{Arc, Mutex};
 
-    use crate::PercentEncodingMode;
+    use crate::{PercentEncodingMode, SharedConfig, StaticCredentialProvider};
 
     // AWS CRT SigV4a get-vanilla test vector.
     const ACCESS_KEY_ID: &str = "AKIDEXAMPLE";
@@ -535,21 +558,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signs_headers_with_regionless_scope() -> AnyResult<()> {
+    async fn signs_headers_with_configured_region_set_and_regionless_scope() -> AnyResult<()> {
+        let ctx = crate::test_context().with_env(StaticEnv {
+            home_dir: None,
+            envs: [(
+                "AWS_SIGV4A_SIGNING_REGION_SET".into(),
+                " eu-west-1, , us-west-2, ".into(),
+            )]
+            .into(),
+        });
+        let profile = SharedConfig::new().load(&ctx).await?;
+        let value = profile
+            .sigv4a_signing_region_set()
+            .expect("the configured region set must be present");
+        let request_signer = RequestSigner::new("service", SigningRegionSet::new(value)?)
+            .with_time("2015-08-30T12:36:00Z".parse()?);
+        let signer = Signer::new(
+            ctx,
+            StaticCredentialProvider::new(ACCESS_KEY_ID, SECRET_ACCESS_KEY),
+            request_signer,
+        );
         let mut parts = Request::get("https://example.amazonaws.com/")
             .body(())?
             .into_parts()
             .0;
-        signer()
-            .sign_request(
-                &crate::test_context(),
-                &mut parts,
-                Some(&credential()),
-                None,
-            )
-            .await?;
+        signer.sign(&mut parts, None).await?;
 
-        assert_eq!(parts.headers[X_AMZ_REGION_SET], "us-east-1");
+        assert_eq!(parts.headers[X_AMZ_REGION_SET], "eu-west-1,us-west-2");
         assert_eq!(parts.headers["x-amz-date"], "20150830T123600Z");
         let authorization = parts.headers[header::AUTHORIZATION].to_str()?;
         assert!(authorization.starts_with(
@@ -559,7 +594,7 @@ mod tests {
             authorization
                 .contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-region-set")
         );
-        assert!(!authorization.contains("/us-east-1/service/"));
+        assert!(!authorization.contains("/eu-west-1/service/"));
         Ok(())
     }
 
@@ -793,12 +828,13 @@ mod tests {
     fn sign_with_aws_sdk(
         mut request: Request<()>,
         mode: AwsPercentEncodingMode,
+        normalization_mode: AwsUriPathNormalizationMode,
         expires_in: Option<Duration>,
     ) -> AnyResult<Request<()>> {
         let now: Timestamp = "2015-08-30T12:36:00Z".parse()?;
         let mut settings = SigningSettings::default();
         settings.percent_encoding_mode = mode;
-        settings.uri_path_normalization_mode = UriPathNormalizationMode::Disabled;
+        settings.uri_path_normalization_mode = normalization_mode;
         settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         settings.session_token_mode = SessionTokenMode::Include;
         settings.excluded_headers = None;
@@ -871,7 +907,12 @@ mod tests {
                 for expires_in in [None, Some(Duration::from_secs(3600))] {
                     let uri = format!("https://example.amazonaws.com{path}?{ENCODING_QUERY}");
                     let request = Request::get(&uri).body(())?;
-                    let expected = sign_with_aws_sdk(request.clone(), sdk_mode, expires_in)?;
+                    let expected = sign_with_aws_sdk(
+                        request.clone(),
+                        sdk_mode,
+                        AwsUriPathNormalizationMode::Disabled,
+                        expires_in,
+                    )?;
                     let (mut parts, body) = request.into_parts();
                     let provider = RecordingProvider::new();
                     let request_signer = signer().with_percent_encoding_mode(mode);
@@ -904,6 +945,76 @@ mod tests {
                     let string_to_sign = encoding_string_to_sign(canonical_path, expires_in);
                     assert_signature_matches_sdk(&expected, &string_to_sign)?;
                     verify_encoding_signature(&actual, &string_to_sign, &provider)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn normalized_path_signatures_match_aws_sdk() -> AnyResult<()> {
+        let ctx = crate::test_context();
+        let credential = credential();
+        for (path, single_encoding_path) in [
+            ("", None),
+            ("/", None),
+            ("//", None),
+            ("/./..", None),
+            ("/a//b/.", None),
+            ("/a//b/..", None),
+            ("/../a//./%2e/%2E%2e/x%2F.%2f/", Some("/a/./../x%2F.%2F/")),
+        ] {
+            let request = Request::get(format!(
+                "https://example.amazonaws.com{path}?{ENCODING_QUERY}"
+            ))
+            .body(())?;
+            for (encoding, sdk_encoding) in [
+                (PercentEncodingMode::Single, AwsPercentEncodingMode::Single),
+                (PercentEncodingMode::Double, AwsPercentEncodingMode::Double),
+            ] {
+                // Disable SDK normalization for the expected Reqsign Single
+                // path, where percent-decoding has made the dot segments literal.
+                let (sdk_path, sdk_normalization) = match (encoding, single_encoding_path) {
+                    (PercentEncodingMode::Single, Some(path)) => {
+                        (path, AwsUriPathNormalizationMode::Disabled)
+                    }
+                    _ => (path, AwsUriPathNormalizationMode::Enabled),
+                };
+                let sdk_request = Request::get(format!(
+                    "https://example.amazonaws.com{sdk_path}?{ENCODING_QUERY}"
+                ))
+                .body(())?;
+                let signer = signer()
+                    .with_percent_encoding_mode(encoding)
+                    .with_uri_path_normalization_mode(UriPathNormalizationMode::Enabled);
+                for expires_in in [None, Some(Duration::from_secs(3600))] {
+                    let expected = sign_with_aws_sdk(
+                        sdk_request.clone(),
+                        sdk_encoding,
+                        sdk_normalization,
+                        expires_in,
+                    )?;
+                    let (mut parts, body) = request.clone().into_parts();
+                    signer
+                        .sign_request(&ctx, &mut parts, Some(&credential), expires_in)
+                        .await?;
+                    let actual = Request::from_parts(parts, body);
+                    let name = format!("{encoding:?}, expires_in={expires_in:?}, path={path:?}");
+                    assert_eq!(
+                        request_signature(&actual)?,
+                        request_signature(&expected)?,
+                        "{name}"
+                    );
+                    if expires_in.is_some() {
+                        let wire_prefix = format!("{}&", request.uri());
+                        assert!(actual.uri().to_string().starts_with(&wire_prefix), "{name}");
+                    } else {
+                        assert_eq!(
+                            actual.uri().to_string(),
+                            request.uri().to_string(),
+                            "{name}"
+                        );
+                    }
                 }
             }
         }
@@ -1073,6 +1184,7 @@ mod tests {
                 let mut expected = sign_with_aws_sdk(
                     original.clone(),
                     AwsPercentEncodingMode::Single,
+                    AwsUriPathNormalizationMode::Disabled,
                     expires_in,
                 )?;
                 // The SDK synthesizes Host internally and only returns authentication fields.

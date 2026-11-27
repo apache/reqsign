@@ -86,7 +86,8 @@
 //! `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`) and
 //! [`reqsign_core::hash::hex_sha256`] for non-empty bytes. Hash after any
 //! content encoding or compression, and do not change the payload after
-//! signing. Chunked or streaming payload signatures are not implemented.
+//! signing. For `aws-chunked` uploads, use
+//! [`RequestSigner::sign_streaming_request`].
 //!
 //! The SigV4 digest does not replace TLS, and S3's `Content-MD5` and
 //! `x-amz-checksum-*` headers are separate Base64-encoded integrity checks
@@ -203,8 +204,8 @@ pub use provide_credential::{
     S3ExpressSessionGranter, S3ExpressSessionMode, S3ExpressSessionPartition,
     S3ExpressSessionProvider,
 };
-pub use reqsign_aws_core::PercentEncodingMode;
 pub use reqsign_aws_core::constants;
+pub use reqsign_aws_core::signing::StreamingSigner;
 pub use reqsign_aws_core::{
     AssumeRoleCredentialProvider, AssumeRoleGrant, AssumeRoleWithWebIdentityCredentialProvider,
     CognitoIdentityCredentialProvider, Credential, DefaultCredentialProvider,
@@ -212,6 +213,7 @@ pub use reqsign_aws_core::{
     IMDSv2CredentialProvider, ProfileCredentialProvider, StaticCredentialProvider,
 };
 pub use reqsign_aws_core::{IMDSv2RegionProvider, Profile, SharedConfig};
+pub use reqsign_aws_core::{PercentEncodingMode, UriPathNormalizationMode};
 #[cfg(not(target_arch = "wasm32"))]
 pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
 

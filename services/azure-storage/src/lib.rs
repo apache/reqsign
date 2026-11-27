@@ -29,6 +29,9 @@
 //! - **SAS Token**: Pre-generated Shared Access Signature tokens
 //! - **Bearer Token**: OAuth2/Azure AD authentication
 //!
+//! The [`api_key`] module provides explicit header authentication for other
+//! Azure APIs that accept a static API or subscription key.
+//!
 //! ## Quick Start
 //!
 //! ```no_run
@@ -70,6 +73,9 @@
 //! ## Credential Sources
 //!
 //! ### Environment Variables
+//!
+//! For Shared Key, `AZURE_STORAGE_ACCOUNT` is an alias for the account name
+//! when `AZBLOB_ACCOUNT_NAME` and `AZURE_STORAGE_ACCOUNT_NAME` are unset.
 //!
 //! ```bash
 //! # For Shared Key authentication
@@ -169,6 +175,8 @@
 //! Check out the examples directory for more detailed usage:
 //! - [Blob storage operations](examples/blob_storage.rs)
 //! - [SAS token generation](examples/sas_token.rs)
+
+pub mod api_key;
 
 mod constants;
 mod service_sas;

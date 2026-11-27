@@ -38,7 +38,10 @@ pub use client_secret::ClientSecretCredentialProvider;
 #[cfg(not(target_arch = "wasm32"))]
 mod azure_cli;
 #[cfg(not(target_arch = "wasm32"))]
-pub use azure_cli::AzureCliCredentialProvider;
+pub use azure_cli::{
+    AzureCliCredentialProvider, AzureDeveloperCliCredentialProvider,
+    ConfiguredAzureCliCredentialProvider,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod client_certificate;

@@ -78,11 +78,22 @@ async fn selection_merge_and_no_side_effects() -> Result<()> {
         &[
             (
                 "/test-home/.aws/config",
-                "[default]\nregion = default-region\n[profile example]\nregion = config-region\nendpoint_url = https://s3.example.invalid\ncredential_process = forbidden\nsso_session = forbidden\nrole_arn = forbidden\naws_secret_access_key = secret-value\n",
+                r#"[default]
+region = default-region
+sigv4a_signing_region_set = *
+[profile example]
+region = config-region
+sigv4a_signing_region_set = eu-west-1
+endpoint_url = https://s3.example.invalid
+credential_process = forbidden
+sso_session = forbidden
+role_arn = forbidden
+aws_secret_access_key = secret-value
+"#,
             ),
             (
                 "/test-home/.aws/credentials",
-                "[example]\nregion = credentials-region\naws_access_key_id = key\n",
+                "[example]\nregion = credentials-region\naws_access_key_id = key\nsigv4a_signing_region_set = us-west-2, us-west-*\n",
             ),
         ],
         &[("AWS_PROFILE", "example")],
@@ -90,6 +101,10 @@ async fn selection_merge_and_no_side_effects() -> Result<()> {
     let config = SharedConfig::new().with_imds(IMDSv2RegionProvider::new());
     let profile = config.load(&ctx).await?;
     assert_eq!(profile.name(), "example");
+    assert_eq!(
+        profile.sigv4a_signing_region_set(),
+        Some("us-west-2,us-west-*")
+    );
     assert_eq!(profile.region(), Some("credentials-region"));
     assert_eq!(profile.endpoint_url(), Some("https://s3.example.invalid"));
     assert_eq!(profile.get("aws_access_key_id"), Some("key"));
@@ -104,12 +119,11 @@ async fn selection_merge_and_no_side_effects() -> Result<()> {
         .load(&ctx)
         .await?;
     assert_eq!(explicit.region(), Some("default-region"));
-    let missing = SharedConfig::new()
-        .with_profile("missing")
-        .load(&ctx)
-        .await?;
+    assert_eq!(explicit.sigv4a_signing_region_set(), Some("*"));
+    let missing = config.with_profile("missing").load(&ctx).await?;
     assert_eq!(missing.region(), None);
     assert_eq!(missing.endpoint_url(), None);
+    assert_eq!(missing.sigv4a_signing_region_set(), None);
     Ok(())
 }
 
@@ -189,6 +203,66 @@ async fn override_and_environment_precedence() -> Result<()> {
         SharedConfig::new().resolve_region(&ctx).await?.as_deref(),
         Some("fallback")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn sigv4a_signing_region_set_precedence_and_csv() -> Result<()> {
+    let files = [(
+        "/test-home/.aws/config",
+        "[default]\nsigv4a_signing_region_set = eu-west-1, , eu-central-1, eu-west-1, \ncredential_process = forbidden\n",
+    )];
+    for (explicit, env, expected) in [
+        (
+            Some(" us-west-2, us-west-1 "),
+            Some("*"),
+            Some("us-west-2,us-west-1"),
+        ),
+        (
+            None,
+            Some(" , ap-southeast-2 ,\t, eu-west-* , "),
+            Some("ap-southeast-2,eu-west-*"),
+        ),
+        (None, None, Some("eu-west-1,eu-central-1,eu-west-1")),
+        (Some(""), Some("*"), None),
+        (Some("\t ,  , "), Some("*"), None),
+        (None, Some(""), None),
+        (None, Some("  \t  "), None),
+        (None, Some(", ,"), None),
+    ] {
+        let env_var = env.map(|value| ("AWS_SIGV4A_SIGNING_REGION_SET", value));
+        let ctx = context(&files, env_var.as_slice());
+        let mut config = SharedConfig::new().with_imds(IMDSv2RegionProvider::new());
+        if let Some(value) = explicit {
+            config = config.with_sigv4a_signing_region_set(value);
+        }
+        let profile = config.load(&ctx).await?;
+        assert_eq!(
+            profile.sigv4a_signing_region_set(),
+            expected,
+            "explicit={explicit:?}, env={env:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn empty_sigv4a_signing_region_set_in_credentials_takes_precedence() -> Result<()> {
+    let ctx = context(
+        &[
+            (
+                "/test-home/.aws/config",
+                "[default]\nsigv4a_signing_region_set = *\n",
+            ),
+            (
+                "/test-home/.aws/credentials",
+                "[default]\nsigv4a_signing_region_set = \t \n",
+            ),
+        ],
+        &[],
+    );
+    let profile = SharedConfig::new().load(&ctx).await?;
+    assert_eq!(profile.sigv4a_signing_region_set(), None);
     Ok(())
 }
 

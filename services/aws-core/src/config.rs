@@ -40,6 +40,7 @@ pub struct SharedConfig {
     credentials_file: Option<String>,
     region: Option<String>,
     endpoint_url: Option<String>,
+    sigv4a_signing_region_set: Option<String>,
     imds: Option<IMDSv2RegionProvider>,
 }
 
@@ -76,6 +77,13 @@ impl SharedConfig {
     /// Override `AWS_ENDPOINT_URL` and the profile's global `endpoint_url`.
     pub fn with_endpoint_url(mut self, endpoint: impl Into<String>) -> Self {
         self.endpoint_url = Some(endpoint.into());
+        self
+    }
+
+    /// Override `AWS_SIGV4A_SIGNING_REGION_SET` and the profile's `sigv4a_signing_region_set`.
+    /// A list with no nonempty entries clears the setting.
+    pub fn with_sigv4a_signing_region_set(mut self, region_set: impl Into<String>) -> Self {
+        self.sigv4a_signing_region_set = Some(region_set.into());
         self
     }
 
@@ -124,9 +132,16 @@ impl SharedConfig {
 
     /// Read and merge the selected profile. This never contacts IMDS, even when enabled.
     ///
-    /// Region precedence: explicit override, `AWS_REGION`, `AWS_DEFAULT_REGION`,
-    /// merged profile. Endpoint precedence: explicit override, `AWS_ENDPOINT_URL`,
-    /// merged profile. Missing values remain `None`; no application defaults are added.
+    /// Region resolution checks the explicit override, `AWS_REGION`, `AWS_DEFAULT_REGION`,
+    /// and the merged profile in that order. The endpoint and SigV4a signing region set each
+    /// use their explicit override first, then `AWS_ENDPOINT_URL` or
+    /// `AWS_SIGV4A_SIGNING_REGION_SET`, respectively, then the merged profile. Missing
+    /// values remain `None`.
+    ///
+    /// The selected signing region set is split at commas. Each entry is trimmed and
+    /// empty entries are discarded. A selected value with no entries resolves to `None`
+    /// and takes precedence over lower-priority values.
+    ///
     /// Service-specific endpoint settings, `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS`,
     /// and endpoint rules are not interpreted. Callers decide how to use the setting.
     pub async fn load(&self, ctx: &Context) -> Result<Profile> {
@@ -151,18 +166,31 @@ impl SharedConfig {
             .clone()
             .or_else(|| ctx.env_var("AWS_ENDPOINT_URL"))
             .or_else(|| properties.get("endpoint_url").cloned());
+        let sigv4a_signing_region_set = self
+            .sigv4a_signing_region_set
+            .clone()
+            .or_else(|| ctx.env_var("AWS_SIGV4A_SIGNING_REGION_SET"))
+            .or_else(|| properties.get("sigv4a_signing_region_set").cloned())
+            .and_then(|value| {
+                let regions = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|region| !region.is_empty())
+                    .collect::<Vec<_>>();
+                (!regions.is_empty()).then(|| regions.join(","))
+            });
         Ok(Profile {
             name,
             properties,
             region,
             endpoint_url,
+            sigv4a_signing_region_set,
         })
     }
 
     /// Read another profile with the same explicit and environment file selection.
     ///
-    /// This keeps the region and endpoint overrides of the caller. It does not
-    /// execute role chains or credential sources.
+    /// This keeps the caller's configuration overrides and reads only the shared files.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn load_profile(&self, ctx: &Context, name: &str) -> Result<Profile> {
         self.clone().with_profile(name).load(ctx).await
@@ -328,7 +356,7 @@ fn strip_comment(line: &str, comments_need_whitespace: bool) -> &str {
     line
 }
 
-/// A selected AWS profile with resolved region and global endpoint settings.
+/// A selected AWS profile with resolved region, global endpoint, and SigV4a signing region set.
 ///
 /// Raw properties may contain secrets. Debug output omits all property values.
 #[derive(Clone)]
@@ -337,6 +365,7 @@ pub struct Profile {
     properties: HashMap<String, String>,
     region: Option<String>,
     endpoint_url: Option<String>,
+    sigv4a_signing_region_set: Option<String>,
 }
 
 impl fmt::Debug for Profile {
@@ -363,6 +392,12 @@ impl Profile {
     /// Global endpoint after explicit and environment overrides. No service rules are applied.
     pub fn endpoint_url(&self) -> Option<&str> {
         self.endpoint_url.as_deref()
+    }
+    /// Resolved SigV4a signing region set as a comma-separated string.
+    ///
+    /// Pass this value to `reqsign_aws_v4a::SigningRegionSet::new` to use it for signing.
+    pub fn sigv4a_signing_region_set(&self) -> Option<&str> {
+        self.sigv4a_signing_region_set.as_deref()
     }
     /// Return whether the selected profile section exists in either shared file.
     #[cfg(not(target_arch = "wasm32"))]

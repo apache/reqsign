@@ -29,7 +29,11 @@ use crate::constants::{
     AWS_QUERY_ENCODE_SET, AWS_URI_ENCODE_SET, X_AMZ_CONTENT_SHA_256, X_AMZ_DATE,
     X_AMZ_S3_SESSION_TOKEN, X_AMZ_SECURITY_TOKEN,
 };
-use crate::{Credential, PercentEncodingMode};
+use crate::{Credential, PercentEncodingMode, UriPathNormalizationMode};
+
+mod streaming;
+
+pub use streaming::{StreamingSigner, sign_streaming_request_parts};
 
 static AWS_URI_DOUBLE_ENCODE_SET: AsciiSet = AWS_URI_ENCODE_SET.remove(b'/');
 
@@ -44,24 +48,39 @@ pub fn canonical_request_string(
 }
 
 /// Build an AWS canonical request with the selected URI percent-encoding mode.
-///
-/// The mode only affects the canonical URI, not the request's wire URI or query.
-/// Canonical header values have leading and trailing ASCII spaces trimmed and
-/// runs of ASCII spaces collapsed. Repeated values are joined with commas in
-/// request order.
 pub fn canonical_request_string_with_encoding(
     request: &SigningRequest,
     canonical_query: &[(String, String)],
     percent_encoding_mode: PercentEncodingMode,
 ) -> Result<String> {
+    canonical_request_string_with_uri_options(
+        request,
+        canonical_query,
+        percent_encoding_mode,
+        UriPathNormalizationMode::Disabled,
+    )
+}
+
+/// Build an AWS canonical request using the selected path normalization and encoding.
+///
+/// Both settings apply only to the canonical URI. Canonical header values have
+/// leading and trailing ASCII spaces trimmed and runs of ASCII spaces collapsed.
+/// Repeated values are joined with commas in request order.
+pub fn canonical_request_string_with_uri_options(
+    request: &SigningRequest,
+    canonical_query: &[(String, String)],
+    percent_encoding_mode: PercentEncodingMode,
+    uri_path_normalization_mode: UriPathNormalizationMode,
+) -> Result<String> {
     let mut output = String::with_capacity(256);
+    let path = uri_path_normalization_mode.normalize(&request.path);
 
     writeln!(output, "{}", request.method)
         .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write method: {e}")))?;
     writeln!(
         output,
         "{}",
-        canonical_uri_with_encoding(&request.path, percent_encoding_mode)?
+        canonical_uri_with_encoding(&path, percent_encoding_mode)?
     )
     .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write encoded path: {e}")))?;
     writeln!(
@@ -311,6 +330,8 @@ pub struct SigV4SigningOptions<'a> {
     pub region: &'a str,
     /// Canonical URI percent-encoding mode.
     pub percent_encoding_mode: PercentEncodingMode,
+    /// Canonical URI path normalization mode.
+    pub uri_path_normalization_mode: UriPathNormalizationMode,
     /// Whether the signing service selected the S3 Express CreateSession token.
     pub uses_s3_express_session_token: bool,
 }
@@ -351,6 +372,15 @@ pub fn sign_request_parts(
     now: Timestamp,
     options: SigV4SigningOptions<'_>,
 ) -> Result<()> {
+    validate_sigv4_request(credential, expires_in, now)?;
+    sign_sigv4(provider, req, credential, expires_in, now, options).map(drop)
+}
+
+fn validate_sigv4_request(
+    credential: &Credential,
+    expires_in: Option<Duration>,
+    now: Timestamp,
+) -> Result<()> {
     use reqsign_core::SigningCredential;
 
     let required_until = now.saturating_add(expires_in.unwrap_or(Duration::from_secs(10)));
@@ -359,8 +389,24 @@ pub fn sign_request_parts(
             "credential expires before the requested signing operation deadline",
         ));
     }
-    validate_presign_lifetime(expires_in)?;
+    validate_presign_lifetime(expires_in)
+}
 
+struct SigV4RequestSignature {
+    timestamp: String,
+    scope: String,
+    signing_key: [u8; 32],
+    signature: String,
+}
+
+fn sign_sigv4(
+    provider: &dyn CryptoProvider,
+    req: &mut http::request::Parts,
+    credential: &Credential,
+    expires_in: Option<Duration>,
+    now: Timestamp,
+    options: SigV4SigningOptions<'_>,
+) -> Result<SigV4RequestSignature> {
     let original_uri = req.uri.clone();
     let mut signed_req = SigningRequest::build(req)?;
 
@@ -383,10 +429,11 @@ pub fn sign_request_parts(
     let canonical_query = canonicalize_query(&signed_req, &authentication_query);
 
     // build canonical request and string to sign.
-    let creq = canonical_request_string_with_encoding(
+    let creq = canonical_request_string_with_uri_options(
         &signed_req,
         &canonical_query,
         options.percent_encoding_mode,
+        options.uri_path_normalization_mode,
     )?;
     let encoded_req = reqsign_core::hash::hex_sha256(provider, creq.as_bytes())?;
 
@@ -405,12 +452,13 @@ pub fn sign_request_parts(
     // 20220313T072004Z
     // 20220313/<region>/<service>/aws4_request
     // <hashed_canonical_request>
+    let timestamp = now.format_iso8601();
     let string_to_sign = {
         let mut f = String::new();
         writeln!(f, "AWS4-HMAC-SHA256").map_err(|e| {
             reqsign_core::Error::unexpected(format!("failed to write algorithm: {e}"))
         })?;
-        writeln!(f, "{}", now.format_iso8601()).map_err(|e| {
+        writeln!(f, "{timestamp}").map_err(|e| {
             reqsign_core::Error::unexpected(format!("failed to write timestamp: {e}"))
         })?;
         writeln!(f, "{scope}")
@@ -422,14 +470,15 @@ pub fn sign_request_parts(
     };
     debug!("calculated string to sign: {string_to_sign}");
 
-    let signature = sigv4_signature(
+    let signing_key = generate_signing_key(
         provider,
         &credential.secret_access_key,
         now,
         options.region,
         options.service,
-        &string_to_sign,
     )?;
+    let signature =
+        reqsign_core::hash::hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())?;
 
     let final_uri = if expires_in.is_some() {
         let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
@@ -460,7 +509,12 @@ pub fn sign_request_parts(
     if let Some(uri) = final_uri {
         req.uri = uri;
     }
-    Ok(())
+    Ok(SigV4RequestSignature {
+        timestamp,
+        scope,
+        signing_key,
+        signature,
+    })
 }
 
 /// Add shared SigV4 headers and apply the service-selected session token choice.
@@ -531,7 +585,7 @@ pub fn sigv4_authentication_query(
     query
 }
 
-/// Sign a SigV4 string to sign with the key scoped to the date, region, and service.
+/// Sign a string with the SigV4 key scoped to the date, region, and service.
 #[doc(hidden)]
 pub fn sigv4_signature(
     provider: &dyn CryptoProvider,
@@ -541,6 +595,17 @@ pub fn sigv4_signature(
     service: &str,
     string_to_sign: &str,
 ) -> Result<String> {
+    let signing_key = generate_signing_key(provider, secret, time, region, service)?;
+    reqsign_core::hash::hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())
+}
+
+fn generate_signing_key(
+    provider: &dyn CryptoProvider,
+    secret: &str,
+    time: Timestamp,
+    region: &str,
+    service: &str,
+) -> Result<[u8; 32]> {
     let secret = format!("AWS4{secret}");
     let sign_date = reqsign_core::hash::hmac_sha256(
         provider,
@@ -551,8 +616,7 @@ pub fn sigv4_signature(
         reqsign_core::hash::hmac_sha256(provider, sign_date.as_slice(), region.as_bytes())?;
     let sign_service =
         reqsign_core::hash::hmac_sha256(provider, sign_region.as_slice(), service.as_bytes())?;
-    let signing_key = reqsign_core::hash::hmac_sha256(provider, &sign_service, b"aws4_request")?;
-    reqsign_core::hash::hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())
+    reqsign_core::hash::hmac_sha256(provider, &sign_service, b"aws4_request")
 }
 
 #[cfg(test)]

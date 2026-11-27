@@ -22,27 +22,35 @@ let signer = RequestSigner::new("s3", region_set);
 ```
 
 Credential providers and shared AWS types are re-exported from
-`reqsign-aws-core`.
+`reqsign-aws-core`. Use [`SharedConfig::load`] to read the configured SigV4a
+signing region set. When [`Profile::sigv4a_signing_region_set`] returns a value,
+pass it to [`SigningRegionSet::new`].
 
-## Canonical URI Encoding
+## Canonical URI
 
-`RequestSigner` uses `PercentEncodingMode::Single` by default for every signing
-service. This keeps Reqsign's existing canonical URI bytes and signatures stable
-across upgrades. Call `with_percent_encoding_mode` to opt in to
-`PercentEncodingMode::Double` when a service requires one additional encoding
-pass:
+The signer defaults to `PercentEncodingMode::Single` and
+`UriPathNormalizationMode::Disabled` for every service, including S3. Configure
+encoding and path normalization independently to match the signing service.
+The example enables both settings for a service that requires them.
 
 ```rust
-use reqsign_aws_v4a::{PercentEncodingMode, RequestSigner, SigningRegionSet};
+use reqsign_aws_v4a::{
+    PercentEncodingMode, RequestSigner, SigningRegionSet, UriPathNormalizationMode,
+};
 
 let signer = RequestSigner::new("execute-api", SigningRegionSet::new("*")?)
-    .with_percent_encoding_mode(PercentEncodingMode::Double);
+    .with_percent_encoding_mode(PercentEncodingMode::Double)
+    .with_uri_path_normalization_mode(UriPathNormalizationMode::Enabled);
 # Ok::<(), reqsign_core::Error>(())
 ```
 
-The input URI must already be wire-ready. Double applies one additional encoding
-pass to its original path without decoding it: `/a%20b` becomes `/a%2520b` only in
-the canonical request. The outgoing path is unchanged, literal `/` separators are
-preserved, and path normalization and payload hashing are unaffected. Single
-keeps the existing per-segment decode/re-encode behavior, including escape
-normalization and rejection of percent-encoded invalid UTF-8.
+Both header signing and presigning use these settings to compute the canonical
+path. Supply the final wire-ready URI. With normalization enabled, literal `.`
+and `..` segments are resolved and repeated slashes are collapsed before encoding.
+The outgoing URI keeps its original path and existing query bytes.
+
+Double encodes the path without decoding its escapes. In the canonical request,
+`/a%20b` becomes `/a%2520b`, a literal `@` becomes `%40`, and an existing `%40`
+becomes `%2540`. Literal `/` separators are preserved. Single retains Reqsign's
+per-segment decode/re-encode behavior, including normalization of escape spelling
+and rejection of percent-encoded invalid UTF-8.
