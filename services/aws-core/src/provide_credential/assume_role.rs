@@ -19,9 +19,9 @@ use std::fmt::{Debug, Formatter};
 
 use reqsign_core::{Context, ProvideCredential, Result, Signer};
 
-use crate::Credential;
 use crate::assume_role::{AssumeRoleGrant, AssumeRoleOperation};
 use crate::provide_credential::sts_endpoint::resolve_sts_endpoint;
+use crate::{Credential, SharedConfig};
 
 /// Loads credentials through one fixed AWS STS `AssumeRole` flow.
 ///
@@ -174,7 +174,7 @@ impl ProvideCredential for AssumeRoleCredentialProvider {
         let endpoint = resolve_sts_endpoint(
             ctx,
             self.sts_endpoint.as_deref(),
-            None,
+            &SharedConfig::new(),
             self.region.as_deref(),
             self.use_regional_sts_endpoint,
         )

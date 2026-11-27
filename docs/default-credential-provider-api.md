@@ -125,11 +125,19 @@ input applies to multiple provider slots. Such a method must:
 - Respect builder call order so that later slot-level replacement or removal
   still wins.
 
-For AWS V4, `with_profile(profile)` applies the explicit profile to the
-`profile`, `sso`, `process`, and `web_identity` slots. For `web_identity` it
-selects the profile whose STS endpoint settings apply; `no_profile()` removes only
-the profile credential source and does not stop that. On `wasm32`, it applies
-only to the available `profile` and `web_identity` slots.
+For AWS V4 and V4a, `with_profile(profile)` applies the explicit profile to the
+`profile`, `sso`, `process`, and `web_identity` slots. The selected profile
+provides credential and STS endpoint settings for `web_identity`. The independent
+web identity slot is available with `no_profile()`. On `wasm32`, `with_profile`
+applies to the available `profile` and `web_identity` slots.
+
+When the profile slot explicitly selects a role chain with
+`credential_source = Environment`, the `env` slot supplies the credential that
+authorizes the first STS call and the chain returns the final role credential.
+Environment credentials still come first for other profiles and when
+`AWS_PROFILE` selects the profile. `push_front` takes precedence over both paths.
+A role chain uses the configured slots for its source credentials. Removing a
+required slot makes the selected chain fail.
 
 ## Internal State Model
 

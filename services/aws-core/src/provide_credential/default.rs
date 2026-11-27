@@ -32,7 +32,7 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 ///
 /// 1. Environment variables
 /// 2. Shared config (`~/.aws/config`, `~/.aws/credentials`), including
-///    assume-role profile chains backed by static credentials or SSO
+///    role profile chains and profile-configured web identity
 /// 3. SSO credentials
 /// 4. Web Identity Tokens
 /// 5. Process credentials
@@ -42,13 +42,20 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// IMDSv2 is the default. The IMDS provider can opt in to an IMDSv1 fallback;
 /// see [`IMDSv2CredentialProvider::with_imdsv1_fallback`].
 ///
-/// A selected profile with `role_arn` is resolved through `source_profile`
-/// until a supported source is reached, then each role is assumed in order.
-/// Role-chain and SSO errors stop resolution to avoid silently switching
-/// identities. An absent SSO configuration continues the chain.
+/// A role chain follows `source_profile` to static credentials, SSO, or a
+/// credential process, or uses the enabled slot named by `credential_source`
+/// (`Environment`, `Ec2InstanceMetadata`, or `EcsContainer`). Each role is assumed
+/// with the previous hop's credential. If the profile slot explicitly selects
+/// a chain with `credential_source = Environment`, the environment credential
+/// authorizes the role chain and the provider returns its final role credential.
+/// Providers added with [`Self::push_front`] still run first.
+///
+/// Errors from a selected role profile or SSO stop resolution. The role-chain
+/// path is available on targets other than `wasm32`.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
-    env_chain: ProvideCredentialChain<Credential>,
+    front: ProvideCredentialChain<Credential>,
+    env: Option<EnvCredentialProvider>,
     profile_chain: ProvideCredentialChain<Credential>,
     #[cfg(not(target_arch = "wasm32"))]
     role_chain: Option<AssumeRoleChainCredentialProvider>,
@@ -77,7 +84,8 @@ impl DefaultCredentialProvider {
     /// Create with a custom credential chain.
     pub fn with_chain(chain: ProvideCredentialChain<Credential>) -> Self {
         Self {
-            env_chain: chain,
+            front: chain,
+            env: None,
             profile_chain: ProvideCredentialChain::new(),
             #[cfg(not(target_arch = "wasm32"))]
             role_chain: None,
@@ -104,7 +112,7 @@ impl DefaultCredentialProvider {
         mut self,
         provider: impl ProvideCredential<Credential = Credential> + 'static,
     ) -> Self {
-        self.env_chain = self.env_chain.push_front(provider);
+        self.front = self.front.push_front(provider);
         self
     }
 }
@@ -151,11 +159,11 @@ impl DefaultCredentialProviderBuilder {
     ///
     /// The explicit profile is applied to the shared profile, SSO, process, and
     /// web identity providers that are still enabled. For web identity it selects
-    /// the profile whose STS endpoint settings apply. Other settings on those
-    /// providers are preserved, and slots removed with `no_profile()`, `no_sso()`,
-    /// `no_process()`, or `no_web_identity()` remain removed. `no_profile()` removes
-    /// only the profile credential source: the web identity provider still reads the
-    /// selected profile's endpoint settings.
+    /// the profile for credentials and STS endpoint settings. Other settings on
+    /// those providers are preserved, and slots removed with `no_profile()`,
+    /// `no_sso()`, `no_process()`, or `no_web_identity()` remain removed. The
+    /// independent web identity slot can still read the profile when the profile
+    /// slot is removed.
     ///
     /// An explicitly selected profile takes precedence over `AWS_PROFILE`.
     /// Slot-level methods called after this method can still replace or remove
@@ -283,13 +291,15 @@ impl DefaultCredentialProviderBuilder {
     pub fn build(self) -> DefaultCredentialProvider {
         #[cfg(not(target_arch = "wasm32"))]
         let role_chain = self.profile.as_ref().map(|profile| {
-            AssumeRoleChainCredentialProvider::new(profile.clone(), self.sso.clone())
+            AssumeRoleChainCredentialProvider::new(
+                profile.clone(),
+                self.sso.clone(),
+                self.web_identity.clone(),
+                self.process.clone(),
+                self.ecs.clone(),
+                self.imds.clone(),
+            )
         });
-
-        let mut env_chain = ProvideCredentialChain::new();
-        if let Some(p) = self.env {
-            env_chain = env_chain.push(p);
-        }
 
         let mut profile_chain = ProvideCredentialChain::new();
         if let Some(p) = self.profile {
@@ -318,7 +328,8 @@ impl DefaultCredentialProviderBuilder {
         }
 
         DefaultCredentialProvider {
-            env_chain,
+            front: ProvideCredentialChain::new(),
+            env: self.env,
             profile_chain,
             #[cfg(not(target_arch = "wasm32"))]
             role_chain,
@@ -332,16 +343,24 @@ impl ProvideCredential for DefaultCredentialProvider {
     type Credential = Credential;
 
     async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
-        if let Some(credential) = self.env_chain.provide_credential(ctx).await? {
+        if let Some(credential) = self.front.provide_credential(ctx).await? {
             return Ok(Some(credential));
         }
-        // A selected role profile owns its identity. Resolve its graph before
-        // static profile or independent SSO providers can select another identity.
+        let environment = match &self.env {
+            Some(env) => env.provide_credential(ctx).await?,
+            None => None,
+        };
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(role_chain) = &self.role_chain {
-            if let Some(credential) = role_chain.provide_credential(ctx).await? {
+            if let Some(credential) = role_chain
+                .provide_credential(ctx, self.env.is_some(), environment.as_ref())
+                .await?
+            {
                 return Ok(Some(credential));
             }
+        }
+        if environment.is_some() {
+            return Ok(environment);
         }
         if let Some(credential) = self.profile_chain.provide_credential(ctx).await? {
             return Ok(Some(credential));

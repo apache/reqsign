@@ -15,17 +15,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::Credential;
 use crate::provide_credential::sts_endpoint::resolve_sts_endpoint;
 use crate::provide_credential::utils::parse_sts_error;
+use crate::{Credential, SharedConfig};
 use bytes::Bytes;
 use form_urlencoded::Serializer;
 use quick_xml::de;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result, utils::Redact};
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
 use std::path::PathBuf;
+
+pub(super) const WEB_IDENTITY_TOKEN_FILE: &str = "web_identity_token_file";
 
 #[derive(Clone)]
 struct LoadedSubjectToken {
@@ -58,23 +61,27 @@ impl LoadedSubjectToken {
 #[derive(Clone, Default)]
 enum WebIdentityTokenSource {
     #[default]
-    Environment,
+    Discover,
     File(PathBuf),
     Direct(LoadedSubjectToken),
 }
 
 /// AssumeRoleWithWebIdentityCredentialProvider will load credential via assume role with web identity.
 ///
-/// This provider reads configuration from:
-/// 1. An explicitly configured subject-token provider or token file
-/// 2. Environment variables when no explicit token source is configured
+/// Role and token settings on the provider take precedence over `AWS_ROLE_ARN` and
+/// `AWS_WEB_IDENTITY_TOKEN_FILE`. If those sources do not yield a complete pair, the
+/// provider looks for `role_arn` and `web_identity_token_file` together in the selected
+/// shared config profile. Explicit provider settings still apply. A partial environment
+/// pair is skipped so the role and token file from the profile stay paired.
 ///
 /// The STS endpoint follows the AWS SDKs' endpoint settings: an endpoint set with
 /// [`Self::with_sts_endpoint`], then `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL`, the selected
 /// profile's `sts` service `endpoint_url` and its global `endpoint_url`, and finally the
 /// regional or partition default. The selected profile is the one given to
-/// `DefaultCredentialProviderBuilder::with_profile`, else `AWS_PROFILE`, else `default`; it is
-/// read only after a role and a subject token are found, and only when the explicit endpoint
+/// `DefaultCredentialProviderBuilder::with_profile`, else `AWS_PROFILE`, else `default`.
+/// When resolving a web identity role through the default provider's profile slot,
+/// that slot selects the profile and config file. Endpoint settings are consulted
+/// after a role and a subject token are found, and only when the explicit endpoint
 /// or the environment does not already decide the endpoint. An endpoint may carry a path
 /// prefix: `https://host/prefix` sends the request to `/prefix/`. The global `AWS_ENDPOINT_URL` and profile `endpoint_url`
 /// therefore also redirect STS; set `AWS_ENDPOINT_URL_STS` (or the profile's `sts` service
@@ -95,14 +102,14 @@ pub struct AssumeRoleWithWebIdentityCredentialProvider {
     region: Option<String>,
     use_regional_sts_endpoint: Option<bool>,
     sts_endpoint: Option<String>,
-    /// Profile whose STS endpoint settings apply; `None` selects `AWS_PROFILE`, then `default`.
+    /// Profile for standalone resolution; `None` selects `AWS_PROFILE`, then `default`.
     profile: Option<String>,
 }
 
 impl Debug for AssumeRoleWithWebIdentityCredentialProvider {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let token_source = match self.token_source {
-            WebIdentityTokenSource::Environment => "environment",
+            WebIdentityTokenSource::Discover => "discovery",
             WebIdentityTokenSource::File(_) => "file",
             WebIdentityTokenSource::Direct(_) => "direct",
         };
@@ -127,7 +134,7 @@ impl Debug for AssumeRoleWithWebIdentityCredentialProvider {
 }
 
 impl AssumeRoleWithWebIdentityCredentialProvider {
-    /// Create a new `AssumeRoleWithWebIdentityCredentialProvider` instance that reads from environment variables.
+    /// Create a provider that discovers web identity settings from the environment and shared config.
     pub fn new() -> Self {
         Self::default()
     }
@@ -235,8 +242,8 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
         self
     }
 
-    /// Select the profile whose STS endpoint settings apply, ahead of `AWS_PROFILE` and
-    /// `default`. Set by `DefaultCredentialProviderBuilder::with_profile`.
+    /// Select the profile for web identity and STS endpoint settings, ahead of `AWS_PROFILE`
+    /// and `default`. Set by `DefaultCredentialProviderBuilder::with_profile`.
     pub(crate) fn with_profile(mut self, profile: String) -> Self {
         self.profile = Some(profile);
         self
@@ -247,81 +254,93 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
     async fn load_subject_token(
         &self,
         ctx: &Context,
-        envs: &std::collections::HashMap<String, String>,
+        discovered_file: Option<&str>,
     ) -> Result<Option<(LoadedSubjectToken, String)>> {
-        let (subject_token, source_context) = match &self.token_source {
-            WebIdentityTokenSource::Environment => {
-                let Some(path) = envs
-                    .get("AWS_WEB_IDENTITY_TOKEN_FILE")
-                    .filter(|path| !path.is_empty())
-                else {
-                    return Ok(None);
-                };
-                let token = ctx.file_read_as_string(path).await.map_err(|err| {
-                    Error::config_invalid("failed to read web identity token file")
-                        .with_source(err)
-                        .with_context(format!("file: {path}"))
-                        .with_context("hint: check if the token file exists and is readable")
-                })?;
-                (
-                    LoadedSubjectToken::new(token.trim(), None),
-                    format!("token_file: {path}"),
-                )
+        let path = match &self.token_source {
+            WebIdentityTokenSource::Discover => match discovered_file {
+                Some(path) => Cow::Borrowed(path),
+                None => return Ok(None),
+            },
+            WebIdentityTokenSource::File(path) => path.to_string_lossy(),
+            WebIdentityTokenSource::Direct(subject_token) => {
+                subject_token.validate()?;
+                return Ok(Some((
+                    subject_token.clone(),
+                    "subject_token_source: direct".to_string(),
+                )));
             }
-            WebIdentityTokenSource::File(path) => {
-                let path = path.to_string_lossy();
-                let token = ctx
-                    .file_read_as_string(path.as_ref())
-                    .await
-                    .map_err(|err| {
-                        Error::config_invalid("failed to read web identity token file")
-                            .with_source(err)
-                            .with_context(format!("file: {path}"))
-                            .with_context("hint: check if the token file exists and is readable")
-                    })?;
-                (
-                    LoadedSubjectToken::new(token.trim(), None),
-                    format!("token_file: {path}"),
-                )
-            }
-            WebIdentityTokenSource::Direct(subject_token) => (
-                subject_token.clone(),
-                "subject_token_source: direct".to_string(),
-            ),
         };
-
+        let token = ctx.file_read_as_string(&path).await.map_err(|err| {
+            Error::config_invalid("failed to read web identity token file")
+                .with_source(err)
+                .with_context(format!("file: {path}"))
+                .with_context("hint: check if the token file exists and is readable")
+        })?;
+        let subject_token = LoadedSubjectToken::new(token.trim(), None);
         subject_token.validate()?;
-        Ok(Some((subject_token, source_context)))
+        Ok(Some((subject_token, format!("token_file: {path}"))))
     }
-}
 
-impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
-    type Credential = Credential;
-
-    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+    pub(super) async fn provide_credential_with_config(
+        &self,
+        ctx: &Context,
+        shared: &SharedConfig,
+    ) -> Result<Option<Credential>> {
         let envs = ctx.env_vars();
-
-        // Get role_arn from config or environment
         let role_arn = self
             .role_arn
-            .as_ref()
-            .or_else(|| envs.get("AWS_ROLE_ARN"))
-            .cloned();
+            .as_deref()
+            .or_else(|| envs.get("AWS_ROLE_ARN").map(String::as_str));
+        let token_file = envs
+            .get("AWS_WEB_IDENTITY_TOKEN_FILE")
+            .map(String::as_str)
+            .filter(|path| !path.is_empty());
+
+        let profile = if role_arn.is_none()
+            || (matches!(self.token_source, WebIdentityTokenSource::Discover)
+                && token_file.is_none())
+        {
+            let name = shared.profile_name(ctx);
+            let config = shared.load_config_file(ctx).await?;
+            let Some(profile) = config
+                .section(Some(crate::config::config_section(&name)))
+                .filter(|section| {
+                    section
+                        .get("role_arn")
+                        .is_some_and(|value| !value.is_empty())
+                        && section
+                            .get(WEB_IDENTITY_TOKEN_FILE)
+                            .is_some_and(|value| !value.is_empty())
+                })
+            else {
+                return Ok(None);
+            };
+            Some(profile.clone())
+        } else {
+            None
+        };
+        let (role_arn, token_file) = match &profile {
+            Some(profile) => (
+                self.role_arn.as_deref().or_else(|| profile.get("role_arn")),
+                profile.get(WEB_IDENTITY_TOKEN_FILE),
+            ),
+            None => (role_arn, token_file),
+        };
 
         let Some(role_arn) = role_arn else {
             return Ok(None);
         };
-        let Some((subject_token, source_context)) = self.load_subject_token(ctx, &envs).await?
+        let Some((subject_token, source_context)) =
+            self.load_subject_token(ctx, token_file).await?
         else {
             return Ok(None);
         };
 
-        // Get region from config or environment
         let region = self
             .region
-            .as_ref()
-            .or_else(|| envs.get("AWS_REGION"))
-            .cloned();
+            .as_deref()
+            .or_else(|| envs.get("AWS_REGION").map(String::as_str))
+            .or_else(|| profile.as_ref().and_then(|profile| profile.get("region")));
 
         // Check if we should use regional STS endpoint
         let use_regional = self.use_regional_sts_endpoint.unwrap_or_else(|| {
@@ -333,30 +352,33 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
         let endpoint = resolve_sts_endpoint(
             ctx,
             self.sts_endpoint.as_deref(),
-            self.profile.as_deref(),
-            region.as_deref(),
+            shared,
+            region,
             use_regional,
         )
         .await
         .map_err(|e| e.with_context(format!("role_arn: {role_arn}")))?;
 
-        // Get session name from config or environment or use default
         let session_name = self
             .role_session_name
-            .as_ref()
-            .or_else(|| envs.get("AWS_ROLE_SESSION_NAME"))
-            .cloned()
-            .unwrap_or_else(|| "reqsign".to_string());
+            .as_deref()
+            .or_else(|| envs.get("AWS_ROLE_SESSION_NAME").map(String::as_str))
+            .or_else(|| {
+                profile
+                    .as_ref()
+                    .and_then(|profile| profile.get("role_session_name"))
+            })
+            .unwrap_or("reqsign");
 
         // Construct request to AWS STS Service.
         let query = {
             let mut serializer = Serializer::new(String::new());
             serializer
                 .append_pair("Action", "AssumeRoleWithWebIdentity")
-                .append_pair("RoleArn", &role_arn)
+                .append_pair("RoleArn", role_arn)
                 .append_pair("WebIdentityToken", &subject_token.token)
                 .append_pair("Version", "2011-06-15")
-                .append_pair("RoleSessionName", &session_name);
+                .append_pair("RoleSessionName", session_name);
 
             if let Some(duration_seconds) = self.duration_seconds {
                 serializer.append_pair("DurationSeconds", &duration_seconds.to_string());
@@ -430,6 +452,18 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
         };
 
         Ok(Some(cred))
+    }
+}
+
+impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
+    type Credential = Credential;
+
+    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
+        let mut shared = SharedConfig::new();
+        if let Some(profile) = &self.profile {
+            shared = shared.with_profile(profile);
+        }
+        self.provide_credential_with_config(ctx, &shared).await
     }
 }
 
@@ -909,15 +943,21 @@ mod tests {
 
     #[tokio::test]
     async fn without_a_role_and_token_no_endpoint_configuration_is_read() -> Result<()> {
-        #[derive(Debug)]
-        struct NoFileRead;
-        impl FileRead for NoFileRead {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        #[derive(Debug, Default)]
+        struct Config(AtomicUsize);
+        impl FileRead for Config {
             async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
-                panic!("no file may be read, got {path}")
+                assert_eq!(path, "/home/test/.aws/config");
+                self.0.fetch_add(1, Ordering::Relaxed);
+                Ok(b"[profile prod]\nendpoint_url = https://unused.example.test\n".to_vec())
             }
         }
+        let config = Arc::new(Config::default());
         let ctx = crate::test_context()
-            .with_file_read(NoFileRead)
+            .with_file_read(config.clone())
             .with_env(StaticEnv {
                 home_dir: Some(PathBuf::from("/home/test")),
                 envs: HashMap::new(),
@@ -927,6 +967,8 @@ mod tests {
             .provide_credential(&ctx)
             .await?;
         assert!(loaded.is_none());
+        // The first read discovers role and token settings. Endpoint lookup is skipped.
+        assert_eq!(config.0.load(Ordering::Relaxed), 1);
         Ok(())
     }
 

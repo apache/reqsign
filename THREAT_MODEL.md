@@ -317,11 +317,20 @@ select a different identity. This policy belongs to the AWS default provider;
 caller-constructed `ProvideCredentialChain` values retain their own error
 policy. Disabling the SSO slot prevents it from participating.
 
-A selected AWS role profile resolves only its `source_profile` graph and the
-static or SSO credentials configured for that graph. Missing source profiles,
-cycles, conflicting `credential_source`, and an SSO source whose slot was
-removed fail without selecting a later provider. The STS requests use only the
-regional endpoint implied by the selected signing region.
+A selected AWS role chain follows its `source_profile` references or uses
+its declared `credential_source` slot. Static credentials, SSO, and a credential
+process can supply credentials from a source profile. The environment slot
+supplies the source for an explicitly selected role chain with
+`credential_source = Environment`, and the chain returns the assumed identity.
+Missing sources, cycles, conflicts between source declarations, and disabled
+required slots fail the selected chain. Signed STS calls in a role chain use
+the regional endpoint for the selected signing region.
+
+A profile can specify a role and a web identity token file through the web
+identity slot. The provider keeps the profile's role and token file paired when
+it falls back to the shared config, and honors explicit provider settings. A web
+identity role selected by the profile slot fails on a disabled web identity slot
+or an error loading or exchanging the token.
 
 `AssumeRoleCredentialProvider` and `AssumeRoleWithWebIdentityCredentialProvider`
 send STS requests to the endpoint configured on the provider, including any path
