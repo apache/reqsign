@@ -3072,6 +3072,34 @@ signer.sign(&mut req, None).await?;
 
 The `azure` feature also exposes `reqsign::azure::api_key` for Azure APIs that accept a key in a request header. Assemble a `Signer` with a static key or a caller-named environment variable and select the header required by the API. When the key rotates, create a new signer or call `with_credential_provider`with a provider for the rotated key. See the [signing example](https://docs.rs/reqsign/latest/reqsign/azure/index.html#azure-api-keys).
 
+## Microsoft Entra ID for Azure APIs[​](#microsoft-entra-id-for-azure-apis "Direct link to Microsoft Entra ID for Azure APIs")
+
+Choose the scope for one Azure resource. This example configures a Key Vault signer and excludes Storage environment credentials.
+
+```
+
+use reqsign::{azure, default_context, Signer};
+
+
+let scope = "https://vault.azure.net/.default";
+
+let provider = azure::DefaultCredentialProvider::builder()
+
+    .no_env()
+
+    .with_scope(scope)?
+
+    .build();
+
+let signer = Signer::new(default_context(), provider, azure::RequestSigner::bearer());
+
+
+```
+
+Pass `None` for `expires_in` when signing. This mode writes only`Authorization: Bearer`.
+
+Set `AZURE_AUTHORITY_HOST` for a sovereign cloud, or use `with_authority_host`on the client secret, client certificate, workload identity, or Azure Pipelines provider. Select the resource scope for that cloud separately. See the [Azure Resource Manager example](https://docs.rs/reqsign/latest/reqsign/azure/index.html#microsoft-entra-id-for-azure-apis).
+
 ## Credentials
 
 ### Default credential chain
@@ -5190,7 +5218,7 @@ The two validity checks have different jobs — `is_valid()` answers the_caching
 | Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs), Huawei Cloud OBS |
 | Bounds credential validity; header signing regardless  | Oracle Cloud                                                                                                       |
 | Ignored; header signing always uses the current Date   | Upyun                                                                                                              |
-| Rejected (header authentication only)                  | AWS HTTP Bearer, Aliyun Drive, Cloudflare, Yandex Disk                                                             |
+| Rejected (header authentication only)                  | AWS HTTP Bearer, Azure RequestSigner::bearer(), Aliyun Drive, Cloudflare, Yandex Disk                              |
 | Rejected; static query authentication only             | Baidu Netdisk                                                                                                      |
 | Rejected; header signing only                          | Vercel Blob, Vercel Artifacts                                                                                      |
 | Requests a granted credential's validity window        | Granting operations (subject to the operation's own maximum)                                                       |
