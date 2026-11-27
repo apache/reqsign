@@ -46,6 +46,9 @@ pub fn canonical_request_string(
 /// Build an AWS canonical request with the selected URI percent-encoding mode.
 ///
 /// The mode only affects the canonical URI, not the request's wire URI or query.
+/// Canonical header values have leading and trailing ASCII spaces trimmed and
+/// runs of ASCII spaces collapsed. Repeated values are joined with commas in
+/// request order.
 pub fn canonical_request_string_with_encoding(
     request: &SigningRequest,
     canonical_query: &[(String, String)],
@@ -74,17 +77,25 @@ pub fn canonical_request_string_with_encoding(
 
     let signed_headers = request.header_name_to_vec_sorted();
     for name in &signed_headers {
-        let mut value = request.headers[*name].clone();
-        SigningRequest::header_value_normalize(&mut value);
-        writeln!(
-            output,
-            "{}:{}",
-            name,
-            value.to_str().map_err(|e| {
+        output.push_str(name);
+        output.push(':');
+        for (index, value) in request.headers.get_all(*name).into_iter().enumerate() {
+            if index != 0 {
+                output.push(',');
+            }
+            let value = value.to_str().map_err(|e| {
                 reqsign_core::Error::request_invalid("invalid signed header value").with_source(e)
-            })?
-        )
-        .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write header: {e}")))?;
+            })?;
+            let mut segments = value.split(' ').filter(|segment| !segment.is_empty());
+            if let Some(first) = segments.next() {
+                output.push_str(first);
+                for segment in segments {
+                    output.push(' ');
+                    output.push_str(segment);
+                }
+            }
+        }
+        output.push('\n');
     }
     writeln!(output)
         .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write newline: {e}")))?;
@@ -115,6 +126,9 @@ pub fn canonical_request_string_with_encoding(
 }
 
 /// Add headers shared by AWS SigV4-family algorithms.
+///
+/// When `Host` is absent, derive it from the URI authority and omit the
+/// scheme's default port for HTTP and HTTPS.
 ///
 /// Session tokens always use the standard AWS `x-amz-security-token` header.
 /// Service-specific representations, such as the S3 Express CreateSession
@@ -151,10 +165,14 @@ fn canonicalize_headers_inner(
     now: Timestamp,
     session_token_header: &'static str,
 ) -> Result<()> {
-    if request.headers.get(header::HOST).is_none() {
+    if !request.headers.contains_key(header::HOST) {
+        let host = match (request.scheme.as_str(), request.authority.port_u16()) {
+            ("http", Some(80)) | ("https", Some(443)) => request.authority.host(),
+            _ => request.authority.as_str(),
+        };
         request.headers.insert(
             header::HOST,
-            request.authority.as_str().parse().map_err(|e| {
+            host.parse().map_err(|e| {
                 reqsign_core::Error::unexpected(format!(
                     "failed to parse authority as header value: {e}"
                 ))
@@ -543,6 +561,52 @@ fn generate_signing_key(
 mod tests {
     use super::*;
     use http::Request;
+
+    #[test]
+    fn canonical_headers_join_values_and_collapse_only_ascii_spaces() -> Result<()> {
+        let mut parts = Request::get("https://example.com/")
+            .header(header::HOST, "example.com")
+            .header("x-meta", "  z   word  ")
+            .header("x-meta", "   ")
+            .header("x-meta", "  \ta   word\t  ")
+            .header("x-meta", "")
+            .body(())
+            .expect("request must be valid")
+            .into_parts()
+            .0;
+        let request = SigningRequest::build(&mut parts)?;
+
+        assert_eq!(
+            canonical_request_string(&request, &[])?,
+            "GET\n/\n\nhost:example.com\nx-meta:z word,,\ta word\t,\n\nhost;x-meta\nUNSIGNED-PAYLOAD"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_headers_treat_zero_padded_default_ports_as_default() -> Result<()> {
+        let now = "2026-07-22T00:00:00Z".parse().expect("valid timestamp");
+        for (uri, host) in [
+            ("http://example.com:080/", "example.com"),
+            ("https://[::1]:0443/", "[::1]"),
+            ("https://[::1]:080/", "[::1]:080"),
+        ] {
+            let mut parts = Request::get(uri)
+                .body(())
+                .expect("valid URI")
+                .into_parts()
+                .0;
+            let mut request = SigningRequest::build(&mut parts)?;
+            canonicalize_headers(
+                &mut request,
+                &Credential::default(),
+                Some(Duration::from_secs(60)),
+                now,
+            )?;
+            assert_eq!(request.headers[header::HOST], host, "{uri}");
+        }
+        Ok(())
+    }
 
     #[test]
     fn canonical_uri_encoding_modes() -> Result<()> {

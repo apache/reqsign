@@ -791,12 +791,11 @@ mod tests {
     }
 
     fn sign_with_aws_sdk(
-        uri: &str,
+        mut request: Request<()>,
         mode: AwsPercentEncodingMode,
         expires_in: Option<Duration>,
     ) -> AnyResult<Request<()>> {
         let now: Timestamp = "2015-08-30T12:36:00Z".parse()?;
-        let mut request = Request::get(uri).body(())?;
         let mut settings = SigningSettings::default();
         settings.percent_encoding_mode = mode;
         settings.uri_path_normalization_mode = UriPathNormalizationMode::Disabled;
@@ -871,8 +870,9 @@ mod tests {
             ] {
                 for expires_in in [None, Some(Duration::from_secs(3600))] {
                     let uri = format!("https://example.amazonaws.com{path}?{ENCODING_QUERY}");
-                    let expected = sign_with_aws_sdk(&uri, sdk_mode, expires_in)?;
-                    let (mut parts, body) = Request::get(&uri).body(())?.into_parts();
+                    let request = Request::get(&uri).body(())?;
+                    let expected = sign_with_aws_sdk(request.clone(), sdk_mode, expires_in)?;
+                    let (mut parts, body) = request.into_parts();
                     let provider = RecordingProvider::new();
                     let request_signer = signer().with_percent_encoding_mode(mode);
                     request_signer
@@ -1037,6 +1037,107 @@ mod tests {
                     );
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn canonical_headers_match_aws_sdk_signatures() -> AnyResult<()> {
+        let signer = signer();
+        let credential = credential();
+        let ctx = crate::test_context();
+
+        for (endpoint, supplied_host, expected_host) in [
+            ("http://example.com:80", None, "example.com"),
+            ("https://example.com:443", None, "example.com"),
+            ("http://example.com:443", None, "example.com:443"),
+            ("https://example.com:80", None, "example.com:80"),
+            ("https://[2001:db8::1]:443", None, "[2001:db8::1]"),
+            ("https://[2001:db8::1]:8443", None, "[2001:db8::1]:8443"),
+            (
+                "https://example.com:443",
+                Some("[2001:db8::2]:443"),
+                "[2001:db8::2]:443",
+            ),
+        ] {
+            let uri = format!("{endpoint}/object%2Fname?z=%2f&dup=two&dup=one");
+            let mut builder = Request::get(&uri)
+                .header("x-meta", "  z   word  ")
+                .header("x-meta", "  \ta   word\t  ");
+            if let Some(host) = supplied_host {
+                builder = builder.header(header::HOST, host);
+            }
+            let original = builder.body(())?;
+
+            for expires_in in [None, Some(Duration::from_secs(60))] {
+                let mut expected = sign_with_aws_sdk(
+                    original.clone(),
+                    AwsPercentEncodingMode::Single,
+                    expires_in,
+                )?;
+                // The SDK synthesizes Host internally and only returns authentication fields.
+                expected
+                    .headers_mut()
+                    .entry(header::HOST)
+                    .or_insert(HeaderValue::from_static(expected_host));
+                let (mut parts, body) = original.clone().into_parts();
+                signer
+                    .sign_request(&ctx, &mut parts, Some(&credential), expires_in)
+                    .await?;
+                let actual = Request::from_parts(parts, body);
+
+                assert_eq!(
+                    actual.headers(),
+                    expected.headers(),
+                    "{uri}, expiry={expires_in:?}"
+                );
+                if expires_in.is_some() {
+                    assert!(
+                        actual
+                            .uri()
+                            .to_string()
+                            .starts_with(&format!("{uri}&X-Amz-Algorithm="))
+                    );
+                    assert_eq!(
+                        comparable_query(&actual),
+                        comparable_query(&expected),
+                        "{uri}"
+                    );
+                    assert_eq!(
+                        request_signature(&actual)?,
+                        request_signature(&expected)?,
+                        "{uri}"
+                    );
+                } else {
+                    assert_eq!(actual.uri().to_string(), uri);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn canonical_headers_reject_opaque_repeated_values_atomically() -> AnyResult<()> {
+        let original = Request::get("https://example.com:443/object%2Fname?raw=%2f")
+            .header("x-meta", "valid first value")
+            .header("x-meta", HeaderValue::from_bytes(b"\xff")?)
+            .extension("original extension")
+            .body(())?
+            .into_parts()
+            .0;
+        let signer = signer();
+        let credential = credential();
+        let ctx = crate::test_context();
+
+        for expires_in in [None, Some(Duration::from_secs(60))] {
+            let mut parts = original.clone();
+            let error = signer
+                .sign_request(&ctx, &mut parts, Some(&credential), expires_in)
+                .await
+                .expect_err("every signed header value must be valid text");
+            assert_eq!(error.kind(), ErrorKind::RequestInvalid);
+            assert_parts_unchanged(&parts, &original);
+            assert_eq!(parts.extensions.get::<&str>(), Some(&"original extension"));
         }
         Ok(())
     }
