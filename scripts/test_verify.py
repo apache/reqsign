@@ -45,7 +45,7 @@ def create_gpg_key(gnupg_home: Path, uid: str = "Test Release Manager <rm@apache
     env = dict(os.environ, GNUPGHOME=str(gnupg_home))
     subprocess.run(
         [
-            "gpg",
+            verify.GPG_PROGRAM,
             "--batch",
             "--passphrase",
             "",
@@ -60,7 +60,7 @@ def create_gpg_key(gnupg_home: Path, uid: str = "Test Release Manager <rm@apache
         check=True,
     )
     colons = subprocess.run(
-        ["gpg", "--batch", "--with-colons", "--list-keys", uid],
+        [verify.GPG_PROGRAM, "--batch", "--with-colons", "--list-keys", uid],
         env=env,
         capture_output=True,
         text=True,
@@ -69,7 +69,7 @@ def create_gpg_key(gnupg_home: Path, uid: str = "Test Release Manager <rm@apache
     fpr = next(line.split(":")[9] for line in colons.splitlines() if line.startswith("fpr:"))
     keys_file = gnupg_home / "KEYS"
     exported = subprocess.run(
-        ["gpg", "--batch", "--armor", "--export", fpr],
+        [verify.GPG_PROGRAM, "--batch", "--armor", "--export", fpr],
         env=env,
         capture_output=True,
         check=True,
@@ -266,6 +266,10 @@ class VerifyTests(unittest.TestCase):
             repo.mkdir()
             git(repo, "init", "-b", "main", env=gpg_env)
             git(repo, "config", "commit.gpgsign", "false", env=gpg_env)
+            git(repo, "config", "tag.gpgSign", "false", env=gpg_env)
+            git(repo, "config", "gpg.format", "openpgp", env=gpg_env)
+            git(repo, "config", "gpg.program", verify.GPG_PROGRAM, env=gpg_env)
+            git(repo, "config", "gpg.openpgp.program", verify.GPG_PROGRAM, env=gpg_env)
             git(repo, "config", "user.signingkey", fpr, env=gpg_env)
             (repo / "LICENSE").write_text("Apache-2.0\n", encoding="utf-8")
             (repo / "LICENSE-APACHE").write_text("Apache-2.0\n", encoding="utf-8")
@@ -282,7 +286,7 @@ class VerifyTests(unittest.TestCase):
             commit = git(repo, "rev-parse", "HEAD", env=gpg_env)
             git(repo, "tag", "-s", "-m", "RC 2", "v0.21.0-rc.2", commit, env=gpg_env)
             # Also add a lightweight tag on another commit to ensure it is ignored.
-            git(repo, "tag", "v0.21.0-rc.1-lightweight", commit, env=gpg_env)
+            git(repo, "tag", "--no-sign", "v0.21.0-rc.1-lightweight", commit, env=gpg_env)
 
             # Compose deterministic archive and sign it with the same ephemeral key.
             stage = root / "stage"
@@ -290,7 +294,7 @@ class VerifyTests(unittest.TestCase):
             archive_name = "apache-reqsign-0.21.0.tar.gz"
             archive = stage / archive_name
             subprocess.run(
-                ["gpg", "--batch", "--yes", "--armor", "--detach-sign", "--local-user", fpr, str(archive)],
+                [verify.GPG_PROGRAM, "--batch", "--yes", "--armor", "--detach-sign", "--local-user", fpr, str(archive)],
                 env=gpg_env,
                 check=True,
             )
@@ -364,7 +368,7 @@ class VerifyTests(unittest.TestCase):
                     verify.verify_package_version(extracted, "0.21.0")
 
             # Lightweight tag explicitly passed as --rc-tag is rejected.
-            git(repo, "tag", "v0.21.0-rc.3", commit, env=gpg_env)
+            git(repo, "tag", "--no-sign", "v0.21.0-rc.3", commit, env=gpg_env)
             with tempfile.TemporaryDirectory(prefix="verify-lw-") as lw_dir:
                 lw_repo = Path(lw_dir) / "repo"
                 verify.init_isolated_repo(lw_repo)
@@ -392,6 +396,103 @@ class VerifyTests(unittest.TestCase):
                         verify.verify_rc_tag(
                             u_repo, repo.as_uri(), "0.21.0", commit, u_gpg_env, rc_tag="v0.21.0-rc.4"
                         )
+
+    def test_global_git_config_tag_gpgsign_and_gpg_program_override(self) -> None:
+        gpg_parent = "/tmp" if Path("/tmp").is_dir() else None
+        with (
+            tempfile.TemporaryDirectory(prefix="verify-cfg-") as tmp,
+            tempfile.TemporaryDirectory(prefix="rq-cfg-gpg-", dir=gpg_parent) as gpg_dir,
+        ):
+            root = Path(tmp)
+            fpr, keys_file = create_gpg_key(Path(gpg_dir))
+            global_cfg = root / "gitconfig"
+            global_cfg.write_text(
+                f"[tag]\n\tgpgSign = true\n[gpg]\n\tformat = openpgp\n\tprogram = {verify.GPG_PROGRAM}\n",
+                encoding="utf-8",
+            )
+            env = dict(
+                os.environ,
+                GNUPGHOME=gpg_dir,
+                GIT_CONFIG_GLOBAL=str(global_cfg),
+                GIT_CONFIG_NOSYSTEM="1",
+            )
+
+            repo = root / "remote-repo"
+            repo.mkdir()
+            git(repo, "init", "-b", "main", env=env)
+            git(repo, "config", "commit.gpgsign", "false", env=env)
+            git(repo, "config", "user.signingkey", fpr, env=env)
+            (repo / "README").write_text("hello\n", encoding="utf-8")
+            git(repo, "add", "README", env=env)
+            git(repo, "commit", "-m", "Init", env=env)
+            commit = git(repo, "rev-parse", "HEAD", env=env)
+
+            # Under global tag.gpgSign=true, --no-sign still creates a lightweight tag rejected by verify_rc_tag.
+            git(repo, "tag", "--no-sign", "v0.21.0-rc.1", commit, env=env)
+            self.assertEqual(git(repo, "cat-file", "-t", "refs/tags/v0.21.0-rc.1", env=env), "commit")
+
+            # Without --no-sign, global tag.gpgSign=true creates an annotated signed tag accepted by verify_rc_tag.
+            git(repo, "tag", "-m", "RC 2", "v0.21.0-rc.2", commit, env=env)
+            self.assertEqual(git(repo, "cat-file", "-t", "refs/tags/v0.21.0-rc.2", env=env), "tag")
+
+            with tempfile.TemporaryDirectory(prefix="verify-cfg-work-") as wdir:
+                work = Path(wdir)
+                iso_gpg = work / "gnupg"
+                iso_gpg.mkdir(mode=0o700)
+                with mock.patch.object(
+                    verify,
+                    "urlopen",
+                    return_value=FakeHTTPResponse(keys_file.read_bytes()),
+                ):
+                    v_gpg_env = verify.prepare_keyring(work, iso_gpg)
+
+                with mock.patch.dict(
+                    os.environ,
+                    {"GIT_CONFIG_GLOBAL": str(global_cfg), "GIT_CONFIG_NOSYSTEM": "1"},
+                ):
+                    v_env = dict(v_gpg_env, GIT_CONFIG_GLOBAL=str(global_cfg), GIT_CONFIG_NOSYSTEM="1")
+                    lw_repo = work / "lw-repo"
+                    verify.init_isolated_repo(lw_repo)
+                    with self.assertRaisesRegex(ValueError, "annotated signed tag"):
+                        verify.verify_rc_tag(
+                            lw_repo, repo.as_uri(), "0.21.0", commit, v_env, rc_tag="v0.21.0-rc.1"
+                        )
+
+                    ok_repo = work / "ok-repo"
+                    verify.init_isolated_repo(ok_repo)
+                    tag_name, tag_fp = verify.verify_rc_tag(
+                        ok_repo, repo.as_uri(), "0.21.0", commit, v_env, rc_tag="v0.21.0-rc.2"
+                    )
+                    self.assertEqual(tag_name, "v0.21.0-rc.2")
+                    self.assertEqual(tag_fp, fpr)
+
+                # Broken gpg.program / gpg.openpgp.program in global git config is overridden by verify_rc_tag.
+                global_cfg.write_text(
+                    "[gpg]\n\tformat = ssh\n\tprogram = /nonexistent/broken-gpg\n"
+                    '[gpg "openpgp"]\n\tprogram = /nonexistent/broken-gpg\n',
+                    encoding="utf-8",
+                )
+                with mock.patch.dict(
+                    os.environ,
+                    {"GIT_CONFIG_GLOBAL": str(global_cfg), "GIT_CONFIG_NOSYSTEM": "1"},
+                ):
+                    broken_env = dict(
+                        v_gpg_env,
+                        GIT_CONFIG_GLOBAL=str(global_cfg),
+                        GIT_CONFIG_NOSYSTEM="1",
+                    )
+                    broken_repo = work / "broken-cfg-repo"
+                    verify.init_isolated_repo(broken_repo)
+                    tag_name, tag_fp = verify.verify_rc_tag(
+                        broken_repo,
+                        repo.as_uri(),
+                        "0.21.0",
+                        commit,
+                        broken_env,
+                        rc_tag="v0.21.0-rc.2",
+                    )
+                    self.assertEqual(tag_name, "v0.21.0-rc.2")
+                    self.assertEqual(tag_fp, fpr)
 
 
 if __name__ == "__main__":

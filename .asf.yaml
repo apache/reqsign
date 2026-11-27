@@ -36,8 +36,11 @@ project:
     programming_languages:
       - Rust
     version_method: semver
-  # ATR Trusted Publishing workflow settings (Repository name: reqsign, empty branch,
-  # Compose workflows: .github/workflows/release-compose.yml) are configured in the ATR web UI.
+  # ATR GitHub Actions upload settings are configured in the ATR web UI:
+  # - Committee page (Permissions card): tick "Allow uploads from GitHub Actions" once the automated signing key is in KEYS.
+  # - Project page (Repositories): ensure project.metadata.repositories lists https://github.com/apache/reqsign.git.
+  # - Project page (Actions -> Advanced settings -> GitHub OIDC restrictions): add .github/workflows/release-compose.yml
+  #   to Workflow paths, and leave Branches or tags / Branch or tag patterns unrestricted or permitting v* tags.
   policy:
     source_artifact_paths:
       - "apache-reqsign-*.tar.gz"
@@ -84,7 +87,7 @@ project:
       project's release signing key in {{KEYS_FILE}}.
 
       To download and verify the candidate locally:
-      curl -fsSL https://raw.githubusercontent.com/apache/reqsign/{{COMMIT}}/release/scripts/verify.py -o verify.py
+      curl -fsSL https://raw.githubusercontent.com/apache/reqsign/{{COMMIT}}/scripts/verify.py -o verify.py
       python3 verify.py {{VERSION}} {{COMMIT}} --atr-revision {{REVISION}}
 
       Please vote:

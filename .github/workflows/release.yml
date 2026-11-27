@@ -33,7 +33,8 @@ on:
       - ".asf.yaml"
       - "Cargo.toml"
       - "**/Cargo.toml"
-      - "release/scripts/**"
+      - "scripts/**"
+      - ".agents/skills/release/scripts/**"
 
 env:
   CARGO_TERM_COLOR: always
@@ -103,9 +104,9 @@ jobs:
       - name: Test release helpers
         run: |
           python3 -m unittest discover -s .github/scripts/release_rust -p "test_*.py" -v
-          python3 -m unittest discover -s release/scripts -p "test_*.py" -v
+          python3 -m unittest discover -s scripts -p "test_*.py" -v
       - name: Check bootstrap helper syntax
-        run: bash -n release/scripts/bootstrap-rust-crates.sh
+        run: bash -n .agents/skills/release/scripts/bootstrap-rust-crates.sh
       - name: Show publish plan
         run: python3 .github/scripts/release_rust/plan.py
       - name: Verify workspace packages

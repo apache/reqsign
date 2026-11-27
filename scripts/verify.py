@@ -42,7 +42,8 @@ KEYS = "https://downloads.apache.org/reqsign/KEYS"
 ATR_BASE = "https://releases.apache.org"
 DEFAULT_REPO_URL = "https://github.com/apache/reqsign.git"
 RFC1952_HEADER = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff"
-GPG_BASE = ["gpg", "--batch", "--no-options", "--no-auto-key-retrieve"]
+GPG_PROGRAM = shutil.which("gpg") or "gpg"
+GPG_BASE = [GPG_PROGRAM, "--batch", "--no-options", "--no-auto-key-retrieve"]
 
 
 def download(url, dest):
@@ -325,7 +326,20 @@ def verify_rc_tag(repo_dir, repo_url, version, expected_commit, gpg_env, rc_tag=
         )
 
     fingerprint = check_signature(
-        ["git", "-C", str(repo_dir), "verify-tag", "--raw", ref],
+        [
+            "git",
+            "-c",
+            "gpg.format=openpgp",
+            "-c",
+            f"gpg.program={GPG_PROGRAM}",
+            "-c",
+            f"gpg.openpgp.program={GPG_PROGRAM}",
+            "-C",
+            str(repo_dir),
+            "verify-tag",
+            "--raw",
+            ref,
+        ],
         gpg_env,
     )
     return tag_name, fingerprint

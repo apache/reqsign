@@ -28,7 +28,7 @@ on:
     paths:
       - ".asf.yaml"
       - ".github/workflows/release-compose.yml"
-      - "release/scripts/**"
+      - "scripts/**"
 
 permissions:
   contents: read
@@ -64,7 +64,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Test release scripts
-        run: python3 -m unittest discover -s release/scripts -p "test_*.py" -v
+        run: python3 -m unittest discover -s scripts -p "test_*.py" -v
       - id: source
         name: Compose reproducible source archive
         run: |
@@ -102,7 +102,7 @@ jobs:
             exit 1
           fi
           archive="apache-reqsign-${version}.tar.gz"
-          python3 release/scripts/compose_source.py \
+          python3 scripts/compose_source.py \
             --revision "${commit}" \
             --version "${version}" \
             --output "${RUNNER_TEMP}/repro"
@@ -134,7 +134,6 @@ jobs:
           path: ${{ runner.temp }}/source/
           if-no-files-found: error
           compression-level: 0
-          retention-days: 30
 
   reproduce-macos:
     name: Verify macOS reproducibility
@@ -173,7 +172,7 @@ jobs:
           COMMIT: ${{ needs.compose.outputs.commit }}
           VERSION: ${{ needs.compose.outputs.version }}
         run: |
-          python3 release/scripts/compose_source.py \
+          python3 scripts/compose_source.py \
             --revision "${COMMIT}" \
             --version "${VERSION}" \
             --output "${RUNNER_TEMP}/macos-repro" \
@@ -263,7 +262,6 @@ jobs:
           path: ${{ runner.temp }}/signed-source/
           if-no-files-found: error
           compression-level: 0
-          retention-days: 30
     outputs:
       artifact-id: ${{ steps.signed-bundle.outputs.artifact-id }}
 
@@ -333,5 +331,5 @@ jobs:
             cat "${RUNNER_TEMP}/signed-source/${ARCHIVE}.sha512"
             echo
             echo "Inspect ATR checks at https://releases.apache.org/projects/reqsign and record the candidate revision before starting a vote."
-            echo "Inspect ATR before rerunning this workflow after an upload failure; the source artifact is retained for 30 days."
+            echo "If an upload fails, check ATR for a complete revision first; ATR rejects rerun attempts, so start a fresh workflow run with \`gh workflow run release-compose.yml --repo apache/reqsign --ref \"${GITHUB_REF_NAME}\"\` (same verified RC tag, no workflow inputs) if another upload is needed."
           } >> "${GITHUB_STEP_SUMMARY}"

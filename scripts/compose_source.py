@@ -79,7 +79,7 @@ def detect_repo(repo_arg: Path | None) -> Path:
     )
     if cwd_check.returncode == 0 and cwd_check.stdout.strip():
         return Path(cwd_check.stdout.strip()).resolve()
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[1]
 
 
 def resolve_commit(repo: Path, revision: str) -> str:

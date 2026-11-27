@@ -29,18 +29,18 @@ Create a GitHub Issue in `apache/reqsign` titled `Tracking Issue to Release ${VE
 - **Release PR:** pending
 - **Frozen release commit (`COMMIT_SHA`):** pending
 - **Current phase / next action:** pre-flight and release preparation PR
-- **Runbook:** https://github.com/apache/reqsign/blob/<RUNBOOK_COMMIT>/release/SKILL.md
+- **Runbook:** https://github.com/apache/reqsign/blob/<RUNBOOK_COMMIT>/.agents/skills/release/SKILL.md
 
 ## 1. Pre-flight and Preparation
 
 - [ ] Verify ATR project policy (`https://releases.apache.org/projects/reqsign`) and confirm RM + automated project keys exist in `https://downloads.apache.org/reqsign/KEYS`.
 - [ ] Run read-only crates.io inventory against `.github/scripts/release_rust/plan.py` (31 workspace crates + `crypto/boring/Cargo.toml`).
 - [ ] Merge release preparation PR (version bumps across changed tracks, `[workspace.dependencies]`, `crypto/boring/Cargo.toml` bounds, `CHANGELOG.md`, and `website/docs/guides/` upgrade notes if applicable); record `COMMIT_SHA`.
-- [ ] Confirm local/CI validation on `COMMIT_SHA`: `release_rust` + `release/scripts` unit tests, `plan.py`, `cargo publish --workspace --dry-run --allow-dirty`, `standalone.py`, and `hawkeye check`.
+- [ ] Confirm local/CI validation on `COMMIT_SHA`: `release_rust` + `scripts` unit tests, `plan.py`, `cargo publish --workspace --dry-run --allow-dirty`, `standalone.py`, and `hawkeye check`.
 
 ## 2. Crates.io Bootstrap
 
-- [ ] Confirm whether `plan.py` introduces any unpublished crate name; if yes, run `release/scripts/bootstrap-rust-crates.sh` on `main` and record the `bootstrap_rust_crates.yml` run URL and `bootstrap.py verify` pass.
+- [ ] Confirm whether `plan.py` introduces any unpublished crate name; if yes, run `.agents/skills/release/scripts/bootstrap-rust-crates.sh` on `main` and record the `bootstrap_rust_crates.yml` run URL and `bootstrap.py verify` pass.
 - [ ] Confirm all planned crates exist on crates.io with `apache/reqsign`, `release.yml`, `release` Trusted Publishing and `trustpub_only` enabled.
 
 ## 3. Release Candidate and ATR Staging
@@ -58,7 +58,7 @@ Checklist:
 - [ ] Push signed annotated tag `v<X.Y.Z>-rc.N` at `COMMIT_SHA`; confirm `compose`, `release` env approval, `sign`, and `upload` to ATR (`project: reqsign`, `version: <X.Y.Z>`).
 - [ ] Confirm `release.yml` `validate` passes on `v<X.Y.Z>-rc.N` (and `publish` is skipped).
 - [ ] Inspect ATR Compose checks (RAT 0.18, lightweight headers, `LICENSE`/`NOTICE`, tag protection) and enter `COMMIT_SHA` if empty.
-- [ ] Run independent verification (`python3 release/scripts/verify.py <X.Y.Z> <COMMIT_SHA> --atr-revision <REVISION> --full`) outside GitHub Actions and record the result.
+- [ ] Run independent verification (`python3 scripts/verify.py <X.Y.Z> <COMMIT_SHA> --atr-revision <REVISION> --full`) outside GitHub Actions and record the result.
 
 ## 4. PMC Vote and ATR Finish
 

@@ -19,14 +19,14 @@ under the License.
 
 # Verify an Apache Reqsign Release Candidate
 
-Use [`release/scripts/verify.py`](../scripts/verify.py) (standalone Python 3.12+ script) on independent hardware outside GitHub Actions to verify every release candidate before voting, or use the manual commands below if you prefer to run checks step by step.
+Use [`scripts/verify.py`](../../../../scripts/verify.py) (standalone Python 3.12+ script) on independent hardware outside GitHub Actions to verify every release candidate before voting, or use the manual commands below if you prefer to run checks step by step.
 
 ## Automated Verification with `verify.py`
 
 Download `verify.py` pinned to the candidate's commit SHA from the vote email and run verification against the pinned ATR revision:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/apache/reqsign/<COMMIT_SHA>/release/scripts/verify.py" -o verify.py
+curl -fsSL "https://raw.githubusercontent.com/apache/reqsign/<COMMIT_SHA>/scripts/verify.py" -o verify.py
 python3 verify.py X.Y.Z "<COMMIT_SHA>" --atr-revision "<REVISION>" --full
 ```
 
@@ -52,7 +52,7 @@ python3 verify.py X.Y.Z "<COMMIT_SHA>" --dir /path/to/downloads --full
 3. **Dual-signer OpenPGP verification**: Imports `https://downloads.apache.org/reqsign/KEYS` into an isolated temporary `GNUPGHOME` and requires `[GNUPG:] VALIDSIG` + `GOODSIG` (rejecting expired or revoked signatures even when `gpg` exits zero) for both:
    - The detached `.asc` signature on `apache-reqsign-X.Y.Z.tar.gz` (signed by the project's automated release signing key provisioned by ASF Infra).
    - The annotated Git RC tag `vX.Y.Z-rc.N` (signed by the release manager's personal `<id>@apache.org` key), verifying that the tag dereferences to `<COMMIT_SHA>`.
-4. **Cross-OS deterministic archive reproduction (`--reproduce` / `--atr-revision`)**: Reconstructs the archive using `git -c core.attributesFile=/dev/null -c tar.umask=0022 archive --format=tar --prefix=apache-reqsign-X.Y.Z/ <COMMIT_SHA>` framed with fixed RFC 1952 `zlib` headers (`OS=0xff`, `mtime=0`, `XFL=2`, level 9, matching [`release/scripts/compose_source.py`](../scripts/compose_source.py)) and requires a bit-for-bit SHA-512 match against the ATR archive. Because `zlib` framing is fixed, reviewers reproduce identical bytes on both macOS and Linux.
+4. **Cross-OS deterministic archive reproduction (`--reproduce` / `--atr-revision`)**: Reconstructs the archive using `git -c core.attributesFile=/dev/null -c tar.umask=0022 archive --format=tar --prefix=apache-reqsign-X.Y.Z/ <COMMIT_SHA>` framed with fixed RFC 1952 `zlib` headers (`OS=0xff`, `mtime=0`, `XFL=2`, level 9, matching [`scripts/compose_source.py`](../../../../scripts/compose_source.py)) and requires a bit-for-bit SHA-512 match against the ATR archive. Because `zlib` framing is fixed, reviewers reproduce identical bytes on both macOS and Linux.
 5. **Archive layout, PAX commit, and binary scan**: Checks the global PAX `comment` header equals `<COMMIT_SHA>`, enforces single root directory `apache-reqsign-X.Y.Z/` with no `..` path traversal, scans regular files for valid UTF-8 and absence of unexpected binary control bytes, and verifies `reqsign/Cargo.toml` `[package].version` equals `X.Y.Z`.
 6. **Legal files and ASF headers**: Checks root `LICENSE` and `NOTICE` are present and non-empty, runs `hawkeye --output-format json check` when `hawkeye` is installed, and scans `.rs`, `.py`, `.sh`, `.js`, `.jsx`, `.mjs`, `.css`, and `.mdx` files outside Hawkeye's selection for the ASF header.
 7. **Build, tests, and packaging**: Runs `cargo build --workspace` and `cargo test --workspace --all-features --no-fail-fast`, plus `--full` packaging and BoringSSL checks when requested.

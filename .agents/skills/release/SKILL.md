@@ -31,9 +31,9 @@ GitHub Actions composes and signs the deterministic source archive and stages it
 Load the reference guides as needed:
 
 - [ATR operations](references/atr.md): one-time PMC/Infra onboarding, `.asf.yaml` `atr_sync` policy, Compose, Vote, Resolve, Finish, Announce, and recovery rules.
-- [Verification guide](references/verification.md): `release/scripts/verify.py`, ATR manifest SHA3-256 verification, dual OpenPGP signers, cross-OS deterministic reproduction, and manual fallback checks.
+- [Verification guide](references/verification.md): `scripts/verify.py`, ATR manifest SHA3-256 verification, dual OpenPGP signers, cross-OS deterministic reproduction, and manual fallback checks.
 - [Tracking issue template](references/tracking-issue.md): copy-pasteable GitHub issue checklist for coordinating a release.
-- [Troubleshooting guide](references/troubleshooting.md): ATR OIDC, `KEYS` propagation, job reruns, RAT exclusions, and crates.io Trusted Publishing recovery.
+- [Troubleshooting guide](references/troubleshooting.md): ATR OIDC, `KEYS` propagation, workflow retries, RAT exclusions, and crates.io Trusted Publishing recovery.
 
 ## Hard Rules
 
@@ -61,7 +61,7 @@ curl -fsSL https://downloads.apache.org/reqsign/KEYS | gpg --show-keys
 
 Confirm that the release manager's personal ASF `<id>@apache.org` signing key and the automated project release signing key (`SOURCE_SIGNING_FINGERPRINT`) are both present in `https://downloads.apache.org/reqsign/KEYS`, and that one-time ATR onboarding in [ATR operations](references/atr.md) is complete.
 
-Inventory the live crates.io registry against the authoritative publish plan in [`.github/scripts/release_rust/plan.py`](../.github/scripts/release_rust/plan.py). This check is read-only, requires no credentials, and exits nonzero if the plan is empty:
+Inventory the live crates.io registry against the authoritative publish plan in [`.github/scripts/release_rust/plan.py`](../../../.github/scripts/release_rust/plan.py). This check is read-only, requires no credentials, and exits nonzero if the plan is empty:
 
 ```bash
 python3 - <<'EOF'
@@ -102,8 +102,8 @@ Reqsign publishes 32 crates on five version tracks (31 workspace members plus 1 
 - `reqsign-http-send-reqwest` (`5.0.0` line): patch or minor by its own change, and bump major whenever the core lockstep major changes so it remains one major ahead of core.
 - Provider and shared crates on independent `1.0.0` lines (`reqsign-aliyun-drive`, `reqsign-b2`, `reqsign-baidu-netdisk`, `reqsign-cloudflare`, `reqsign-dropbox`, `reqsign-github`, `reqsign-koofr`, `reqsign-oauth2`, `reqsign-onedrive`, `reqsign-seafile`, `reqsign-upyun`, `reqsign-vercel`, `reqsign-yandex-disk`, and newly added provider crates): `1.0.0` for initial release, then bumped by their own change.
 - `reqsign-crypto-rustcrypto` and `reqsign-crypto-boring`: independent `1.0.0` lines, bumped by their own change.
-- Root [`Cargo.toml`](../Cargo.toml) `[workspace.dependencies]` version requirements must match each workspace crate's manifest version, and standalone [`crypto/boring/Cargo.toml`](../crypto/boring/Cargo.toml) bounds (`reqsign-core` and dev-dependencies) must be updated by hand in the same PR because `crypto/boring` is excluded from the workspace (`exclude = ["crypto/boring"]`).
-- Update [`CHANGELOG.md`](../CHANGELOG.md) with the release notes and crate-version table, and add or update migration steps under [`website/docs/guides/`](../website/docs/guides/) when breaking changes ship.
+- Root [`Cargo.toml`](../../../Cargo.toml) `[workspace.dependencies]` version requirements must match each workspace crate's manifest version, and standalone [`crypto/boring/Cargo.toml`](../../../crypto/boring/Cargo.toml) bounds (`reqsign-core` and dev-dependencies) must be updated by hand in the same PR because `crypto/boring` is excluded from the workspace (`exclude = ["crypto/boring"]`).
+- Update [`CHANGELOG.md`](../../../CHANGELOG.md) with the release notes and crate-version table, and add or update migration steps under [`website/docs/guides/`](../../../website/docs/guides/) when breaking changes ship.
 
 ### Validate Plan, Packaging, and Headers
 
@@ -111,7 +111,7 @@ Run all release-helper unit tests, plan resolution, workspace dry-run, standalon
 
 ```bash
 python3 -m unittest discover -s .github/scripts/release_rust -p "test_*.py"
-python3 -m unittest discover -s release/scripts -p "test_*.py"
+python3 -m unittest discover -s scripts -p "test_*.py"
 python3 .github/scripts/release_rust/plan.py
 cargo publish --workspace --dry-run --allow-dirty
 python3 .github/scripts/release_rust/standalone.py
@@ -120,7 +120,7 @@ hawkeye check
 
 `cargo publish --workspace --dry-run` stages the 31 workspace crates together so intra-workspace dependencies resolve locally before publication. Never substitute per-package `cargo publish -p <crate> --dry-run` before the real dependency versions are live on crates.io: it fails with a version-selection error (`failed to select a version for the requirement reqsign-core = "^4.0.0"`), and `0.0.0` bootstrap reservations do not satisfy `^4.0.0`.
 
-[`standalone.py`](../.github/scripts/release_rust/standalone.py) validates standalone entries in `STANDALONE_MANIFESTS` (`crypto/boring/Cargo.toml`) by temporarily patching local path dependencies from the checkout, running `cargo package --no-verify` without requiring a BoringSSL build, checking `LICENSE`/`NOTICE`/`README`/source files, and verifying normalized dependency versions without `path`. BoringSSL compilation and tests are covered by [`.github/workflows/crypto_boring.yml`](../.github/workflows/crypto_boring.yml) and `verify.py --full`.
+[`standalone.py`](../../../.github/scripts/release_rust/standalone.py) validates standalone entries in `STANDALONE_MANIFESTS` (`crypto/boring/Cargo.toml`) by temporarily patching local path dependencies from the checkout, running `cargo package --no-verify` without requiring a BoringSSL build, checking `LICENSE`/`NOTICE`/`README`/source files, and verifying normalized dependency versions without `path`. BoringSSL compilation and tests are covered by [`.github/workflows/crypto_boring.yml`](../../../.github/workflows/crypto_boring.yml) and `verify.py --full`.
 
 Merge the reviewed preparation PR into `main` and record the frozen commit SHA (`COMMIT_SHA`) in the tracking issue.
 
@@ -129,10 +129,10 @@ Merge the reviewed preparation PR into `main` and record the frozen commit SHA (
 If the crates.io inventory check in Step 1 reported any `missing name` (such as a newly added provider crate or `reqsign-crypto-boring` prior to its first reservation), reserve it before cutting the RC tag. Wait until the crate set is on `apache/reqsign` `main` and a PMC release manager confirms the reservation window, then run from a clean `origin/main` checkout:
 
 ```bash
-release/scripts/bootstrap-rust-crates.sh
+.agents/skills/release/scripts/bootstrap-rust-crates.sh
 ```
 
-[`release/scripts/bootstrap-rust-crates.sh`](scripts/bootstrap-rust-crates.sh) requires a clean `main` checkout, verifies that the `rust-bootstrap` GitHub environment has required reviewers (`prevent_self_review: true` in [`.asf.yaml`](../.asf.yaml)), dispatches [`.github/workflows/bootstrap_rust_crates.yml`](../.github/workflows/bootstrap_rust_crates.yml), waits for completion, and runs `bootstrap.py verify`.
+[`.agents/skills/release/scripts/bootstrap-rust-crates.sh`](scripts/bootstrap-rust-crates.sh) requires a clean `main` checkout, verifies that the `rust-bootstrap` GitHub environment has required reviewers (`prevent_self_review: true` in [`.asf.yaml`](../../../.asf.yaml)), dispatches [`.github/workflows/bootstrap_rust_crates.yml`](../../../.github/workflows/bootstrap_rust_crates.yml), waits for completion, and runs `bootstrap.py verify`.
 
 Inside `bootstrap_rust_crates.yml`:
 
@@ -154,12 +154,12 @@ git push origin "vX.Y.Z-rc.N"
 
 Pushing `vX.Y.Z-rc.N` triggers two workflows:
 
-- [`.github/workflows/release-compose.yml`](../.github/workflows/release-compose.yml):
-  1. `compose` (`ubuntu-24.04`) runs `release/scripts` unit tests, validates the RC tag, `reqsign/Cargo.toml` version, and `origin/main` / `release/*` / `rel/*` containment, runs [`release/scripts/compose_source.py`](scripts/compose_source.py), and emits `apache-reqsign-X.Y.Z.tar.gz` and `apache-reqsign-X.Y.Z.tar.gz.sha512` (with `reproduce-macos` additionally checking macOS vs Ubuntu parity on PRs).
+- [`.github/workflows/release-compose.yml`](../../../.github/workflows/release-compose.yml):
+  1. `compose` (`ubuntu-24.04`) runs `scripts` unit tests, validates the RC tag, `reqsign/Cargo.toml` version, and `origin/main` / `release/*` / `rel/*` containment, runs [`scripts/compose_source.py`](../../../scripts/compose_source.py), and emits `apache-reqsign-X.Y.Z.tar.gz` and `apache-reqsign-X.Y.Z.tar.gz.sha512` (with `reproduce-macos` additionally checking macOS vs Ubuntu parity on PRs).
   2. A PMC reviewer listed in `.asf.yaml` approves the `release` GitHub environment.
   3. `sign` checks that `SOURCE_SIGNING_FINGERPRINT` matches the imported `GPG_SECRET_KEY` and appears in `https://downloads.apache.org/reqsign/KEYS`, then signs `apache-reqsign-X.Y.Z.tar.gz.asc` and verifies `GOODSIG` + `VALIDSIG`.
   4. `upload` verifies the exact three files (`apache-reqsign-X.Y.Z.tar.gz`, `.sha512`, `.asc`) and pushes them via `apache/tooling-actions/upload-to-atr` to ATR (`project: reqsign`, `version: X.Y.Z`), creating a new revision (`00001`, `00002`, ...).
-- [`.github/workflows/release.yml`](../.github/workflows/release.yml): `validate` runs `release_rust` and `release/scripts` unit tests, `plan.py`, `cargo publish --workspace --dry-run`, and `standalone.py`. The `publish` job is skipped on `-rc.N` tags.
+- [`.github/workflows/release.yml`](../../../.github/workflows/release.yml): `validate` runs `release_rust` and `scripts` unit tests, `plan.py`, `cargo publish --workspace --dry-run`, and `standalone.py`. The `publish` job is skipped on `-rc.N` tags.
 
 Record the workflow run URLs, ATR candidate revision, and SHA-512 in the tracking issue.
 
@@ -168,7 +168,7 @@ Record the workflow run URLs, ATR candidate revision, and SHA-512 in the trackin
 Before starting the PMC vote, open the candidate in [ATR](https://releases.apache.org/projects/reqsign) to inspect automated checks (Apache RAT 0.18, lightweight headers, `LICENSE`/`NOTICE`, tag protection), then verify the pinned ATR revision on independent hardware outside GitHub Actions following the [verification guide](references/verification.md):
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/apache/reqsign/<COMMIT_SHA>/release/scripts/verify.py" -o verify.py
+curl -fsSL "https://raw.githubusercontent.com/apache/reqsign/<COMMIT_SHA>/scripts/verify.py" -o verify.py
 python3 verify.py X.Y.Z "<COMMIT_SHA>" --atr-revision "<REVISION>" --full
 ```
 
@@ -203,7 +203,7 @@ git tag -v "vX.Y.Z"
 git push origin "vX.Y.Z"
 ```
 
-Monitor [`.github/workflows/release.yml`](../.github/workflows/release.yml) and approve the `release` environment deployment once `validate` passes:
+Monitor [`.github/workflows/release.yml`](../../../.github/workflows/release.yml) and approve the `release` environment deployment once `validate` passes:
 
 ```bash
 gh run list --repo apache/reqsign --workflow Release --limit 5
@@ -244,7 +244,7 @@ EOF
 
 ## 9. GitHub Release, Website, Announce, and Archive
 
-1. Publish a curated GitHub Release for tag `vX.Y.Z` using the `X.Y.Z` section of [`CHANGELOG.md`](../CHANGELOG.md) (notable changes and crate-version table) plus links to `https://www.apache.org/dyn/closer.lua/reqsign/reqsign-X.Y.Z/apache-reqsign-X.Y.Z.tar.gz`, `https://downloads.apache.org/reqsign/reqsign-X.Y.Z/apache-reqsign-X.Y.Z.tar.gz.asc`, `https://downloads.apache.org/reqsign/reqsign-X.Y.Z/apache-reqsign-X.Y.Z.tar.gz.sha512`, and `https://downloads.apache.org/reqsign/KEYS`.
-2. Verify the project website refreshes cleanly: [`website/docusaurus.config.js`](../website/docusaurus.config.js) resolves `websiteVersion` automatically from the latest non-RC `v*` tag on the next `website.yml` build (`https://reqsign.apache.org/download/`). Confirm the download and `KEYS` links work live before announcing.
+1. Publish a curated GitHub Release for tag `vX.Y.Z` using the `X.Y.Z` section of [`CHANGELOG.md`](../../../CHANGELOG.md) (notable changes and crate-version table) plus links to `https://www.apache.org/dyn/closer.lua/reqsign/reqsign-X.Y.Z/apache-reqsign-X.Y.Z.tar.gz`, `https://downloads.apache.org/reqsign/reqsign-X.Y.Z/apache-reqsign-X.Y.Z.tar.gz.asc`, `https://downloads.apache.org/reqsign/reqsign-X.Y.Z/apache-reqsign-X.Y.Z.tar.gz.sha512`, and `https://downloads.apache.org/reqsign/KEYS`.
+2. Verify the project website refreshes cleanly: [`website/docusaurus.config.js`](../../../website/docusaurus.config.js) resolves `websiteVersion` automatically from the latest non-RC `v*` tag on the next `website.yml` build (`https://reqsign.apache.org/download/`). Confirm the download and `KEYS` links work live before announcing.
 3. Send the `[ANNOUNCE]` email from ATR (`to: dev@reqsign.apache.org`, `cc: announce@apache.org`) and record the `lists.apache.org` permalink in the tracking issue.
 4. Archive superseded releases in ATR so older releases move cleanly to `https://archive.apache.org/dist/reqsign/`, then close the tracking issue.
