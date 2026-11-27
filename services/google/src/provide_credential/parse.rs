@@ -51,8 +51,7 @@ pub(super) async fn parse_credential_bytes(
         }
         CredentialFile::ImpersonatedServiceAccount(isa) => {
             debug!("loaded impersonated service account credential, exchanging for token");
-            let provider =
-                ImpersonatedServiceAccountCredentialProvider::new(isa).with_scope(&scope);
+            let provider = ImpersonatedServiceAccountCredentialProvider::new(isa, scope);
             provider.provide_credential(ctx).await
         }
         CredentialFile::AuthorizedUser(au) => {

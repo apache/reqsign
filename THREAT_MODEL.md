@@ -341,6 +341,13 @@ contact the network. IMDSv2 region fallback requires explicit opt-in and applies
 a deadline to the complete metadata-token and region exchange. Exposed endpoint
 settings remain the caller's responsibility to interpret.
 
+Google ADC impersonation files use the canonical OAuth token endpoint for
+authorized-user and service-account source exchanges. The trusted credential
+file supplies the target IAM Credentials URL. An external-account source uses
+its configured endpoints and subject token source, including the requirement
+to set `GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1` in the `Context` environment
+before reading an executable's cached output or running the command.
+
 GitHub credential discovery reads `GH_TOKEN` before `GITHUB_TOKEN`. When the
 context has a command executor, it resolves the active stored account with
 `gh config get user --host github.com` and reads that account's token with

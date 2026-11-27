@@ -29,6 +29,7 @@ use reqsign_aws_v4::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::constants::IAM_SCOPE;
 use crate::credential::{
     Credential, ExternalAccount, Token, external_account, parse_service_account_impersonation_url,
 };
@@ -64,13 +65,6 @@ const AWS_EC2_METADATA_DISABLED: &str = "AWS_EC2_METADATA_DISABLED";
 const AWS_IMDSV2_TOKEN_HEADER: &str = "x-aws-ec2-metadata-token";
 const AWS_IMDSV2_TTL_HEADER: &str = "x-aws-ec2-metadata-token-ttl-seconds";
 const AWS_IMDSV2_TTL_SECONDS: &str = "300";
-/// Scope required on the STS token used to call IAM Credentials `generateAccessToken`.
-///
-/// Caller business scopes (for example Storage) must not be used here: that token only
-/// authorizes the impersonation API. Either `iam` or `cloud-platform` is accepted by Google;
-/// prefer the narrower `iam` scope for the intermediate credential.
-const STS_IMPERSONATION_SCOPE: &str = "https://www.googleapis.com/auth/iam";
-
 /// STS token response.
 #[derive(Deserialize)]
 struct StsTokenResponse {
@@ -305,7 +299,7 @@ impl ExternalAccountCredentialProvider {
     /// returns the final token and therefore uses the caller scope directly.
     fn resolve_sts_scope(&self, ctx: &Context) -> String {
         if self.config.service_account_impersonation_url.is_some() {
-            STS_IMPERSONATION_SCOPE.to_string()
+            IAM_SCOPE.to_string()
         } else {
             self.resolve_scope(ctx)
         }
@@ -1764,7 +1758,7 @@ mod tests {
 
         assert_eq!(
             sts_scope.lock().expect("lock").as_deref(),
-            Some(STS_IMPERSONATION_SCOPE),
+            Some(IAM_SCOPE),
             "STS intermediate token must use IAM scope when impersonating"
         );
         assert_eq!(
