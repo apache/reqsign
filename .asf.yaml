@@ -17,6 +17,117 @@
 
 # All configurations could be found here: https://github.com/apache/infrastructure-asfyaml/
 
+project:
+  metadata:
+    key: reqsign
+    committee: reqsign
+    name: Apache Reqsign
+    description: "Apache Reqsign signs HTTP requests for cloud object storage and API services in Rust without pulling in heavy provider SDKs."
+    short_description: "Signing HTTP requests without heavy SDKs."
+    homepage: https://reqsign.apache.org/
+    download_page: https://reqsign.apache.org/download/
+    bug_database: https://github.com/apache/reqsign/issues
+    mailing_lists: https://reqsign.apache.org/community/
+    security_contact: security@apache.org
+    threat_model_link: https://github.com/apache/reqsign/blob/main/THREAT_MODEL.md
+    threat_model_src_link: https://raw.githubusercontent.com/apache/reqsign/main/THREAT_MODEL.md
+    repositories:
+      - https://github.com/apache/reqsign.git
+    programming_languages:
+      - Rust
+    version_method: semver
+  # ATR Trusted Publishing workflow settings (Repository name: reqsign, empty branch,
+  # Compose workflows: .github/workflows/release-compose.yml) are configured in the ATR web UI.
+  policy:
+    source_artifact_paths:
+      - "apache-reqsign-*.tar.gz"
+    require_version_in_filenames: true
+    license_check_mode: Both
+    source_excludes_rat:
+      - "apache-reqsign-*/.env.example"
+      - "apache-reqsign-*/AGENTS.md"
+      - "apache-reqsign-*/CHANGELOG.md"
+      - "apache-reqsign-*/CONTRIBUTING.md"
+      - "apache-reqsign-*/**/README.md"
+      - "apache-reqsign-*/**/testdata/**"
+      - "apache-reqsign-*/**/tests/fixtures/**"
+      - "apache-reqsign-*/website/pnpm-lock.yaml"
+      - "apache-reqsign-*/website/static/**"
+    download_path_suffix: "reqsign-{{VERSION}}"
+    vote_mode: email
+    min_hours: 72
+    vote_recipients:
+      to: dev@reqsign.apache.org
+    start_vote_subject: "[VOTE] Release Apache Reqsign {{VERSION}}"
+    start_vote_template: |
+      Hello everyone,
+
+      I would like to call a vote on releasing Apache Reqsign {{VERSION}},
+      staged on ATR as revision {{REVISION}}.
+
+      The release candidate is based on commit:
+      {{COMMIT}}
+
+      Source artifacts and ATR checks:
+      {{REVIEW_URL}}
+
+      File manifest with checksums:
+      {{MANIFEST_URL}}
+
+      Changelog:
+      https://github.com/apache/reqsign/blob/{{COMMIT}}/CHANGELOG.md
+
+      KEYS:
+      {{KEYS_FILE}}
+
+      The source archive is built by GitHub Actions and signed with the
+      project's release signing key in {{KEYS_FILE}}.
+
+      To download and verify the candidate locally:
+      curl -fsSL https://raw.githubusercontent.com/apache/reqsign/{{COMMIT}}/release/scripts/verify.py -o verify.py
+      python3 verify.py {{VERSION}} {{COMMIT}} --atr-revision {{REVISION}}
+
+      Please vote:
+
+      [ ] +1 Approve the release
+      [ ] +0 No opinion
+      [ ] -1 Do not approve the release, with a reason
+
+      You can vote on ATR at the candidate page above, or by replying to
+      this email. The vote is open for at least {{DURATION}} hours.
+
+      Best regards,
+      {{YOUR_FULL_NAME}} ({{YOUR_ASF_ID}})
+    announce_recipients:
+      to: dev@reqsign.apache.org
+      cc:
+        - announce@apache.org
+    announce_release_subject: "[ANNOUNCE] Apache Reqsign {{VERSION}} released"
+    announce_release_template: |
+      The Apache Reqsign project team is pleased to announce the release
+      of Apache Reqsign {{VERSION}}.
+
+      Apache Reqsign signs HTTP requests for cloud object storage and API
+      services in Rust without pulling in heavy provider SDKs.
+
+      The release is available from the download page:
+
+      {{DOWNLOAD_PAGE}}
+
+      The source release, signatures, and checksums are also available at:
+
+      {{DOWNLOAD_URL}}
+
+      The changes in this release are listed in the changelog:
+
+      https://github.com/apache/reqsign/blob/v{{VERSION}}/CHANGELOG.md
+
+      On behalf of the Apache Reqsign project team,
+
+      {{YOUR_FULL_NAME}} ({{YOUR_ASF_ID}})
+  features:
+    atr_sync: true
+
 github:
   description: "Apache Reqsign: Signing HTTP requests without heavy SDKs."
   homepage: https://reqsign.apache.org
@@ -36,7 +147,21 @@ github:
     discussions: true
   environments:
     release:
+      required_reviewers:
+        - id: Xuanwo
+          type: User
+        - id: dentiny
+          type: User
+        - id: erickguan
+          type: User
+        - id: tisonkun
+          type: User
+        - id: koushiro
+          type: User
+        - id: PsiACE
+          type: User
       wait_timer: 0
+      prevent_self_review: false
       deployment_branch_policy:
         protected_branches: false
         policies:
@@ -86,6 +211,23 @@ github:
         - root
       restrict_deletion: true
       restrict_force_push: true
+    - name: "Release tags"
+      target: tag
+      enforcement: active
+      conditions:
+        ref_name:
+          include:
+            - "refs/tags/v*"
+          exclude: []
+      bypass_actors:
+        - actor_id: 4
+          actor_type: RepositoryRole
+          bypass_mode: always
+      rules:
+        - type: creation
+        - type: update
+        - type: deletion
+        - type: non_fast_forward
 notifications:
   commits: commits@reqsign.apache.org
   issues: commits@reqsign.apache.org

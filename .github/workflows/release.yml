@@ -20,8 +20,8 @@ name: Release
 on:
   workflow_dispatch:
   push:
-    # only for formal releases, not for release candidates
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    # Validate both RC tags (vX.Y.Z-rc.N) and formal release tags (vX.Y.Z); publish only on vX.Y.Z.
+    tags: ["v*.*.*"]
   pull_request:
     branches:
       - main
@@ -29,10 +29,11 @@ on:
       - ".github/scripts/release_rust/**"
       - ".github/workflows/bootstrap_rust_crates.yml"
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-compose.yml"
       - ".asf.yaml"
       - "Cargo.toml"
       - "**/Cargo.toml"
-      - "release/scripts/bootstrap-rust-crates.sh"
+      - "release/scripts/**"
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,15 +49,61 @@ jobs:
   validate:
     name: Validate Publish Plan
     runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.package.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+      - id: package
+        name: Read package version
+        run: |
+          set -euo pipefail
+          version="$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("reqsign/Cargo.toml").read_text())["package"]["version"])')"
+          if [[ ! "${version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::The reqsign package version must be a stable X.Y.Z version, got '${version}'."
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      - name: Validate release tag
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        env:
+          PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REF_NAME}" in
+            "v${PACKAGE_VERSION}")
+              ;;
+            "v${PACKAGE_VERSION}-rc."*)
+              rc="${GITHUB_REF_NAME#v${PACKAGE_VERSION}-rc.}"
+              if [[ ! "${rc}" =~ ^[1-9][0-9]*$ ]]; then
+                echo "::error::Invalid release candidate tag: ${GITHUB_REF_NAME}"
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match reqsign/Cargo.toml version ${PACKAGE_VERSION}."
+              exit 1
+              ;;
+          esac
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/heads/release/*:refs/remotes/origin/release/*" \
+            "+refs/heads/rel/*:refs/remotes/origin/rel/*"
+          tag_commit="$(git rev-parse "${GITHUB_REF}^{commit}")"
+          if ! git branch -r --contains "${tag_commit}" --format='%(refname:short)' \
+            | grep -Eq '^(origin/main|origin/release/.+|origin/rel/.+)$'; then
+            echo "::error::Release tag ${GITHUB_REF_NAME} (${tag_commit}) is not contained in origin/main, origin/release/*, or origin/rel/*."
+            exit 1
+          fi
       - name: Test release helpers
-        run: python3 -m unittest discover -s .github/scripts/release_rust -p "test_*.py"
+        run: |
+          python3 -m unittest discover -s .github/scripts/release_rust -p "test_*.py" -v
+          python3 -m unittest discover -s release/scripts -p "test_*.py" -v
       - name: Check bootstrap helper syntax
         run: bash -n release/scripts/bootstrap-rust-crates.sh
       - name: Show publish plan
@@ -68,8 +115,8 @@ jobs:
 
   publish:
     name: Publish Crates
-    # The push trigger accepts only formal release tags.
-    if: github.event_name == 'push'
+    # Only formal release tags (vX.Y.Z) may publish to crates.io.
+    if: ${{ github.event_name == 'push' && github.ref == format('refs/tags/v{0}', needs.validate.outputs.version) && github.repository == 'apache/reqsign' }}
     needs: validate
     runs-on: ubuntu-24.04
     environment: release
@@ -82,6 +129,6 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Publish Rust crates
         run: python3 .github/scripts/release_rust/publish.py
