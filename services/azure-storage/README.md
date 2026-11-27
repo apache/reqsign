@@ -216,7 +216,9 @@ for User Delegation SAS. The first path segment names the container. For
 path-style User Delegation SAS, the explicit account is required and the key
 request goes to the account path on the request's endpoint. Use a trusted
 endpoint that accepts the bearer credential and supports Get User Delegation
-Key. [Get User Delegation Key](https://learn.microsoft.com/en-us/rest/api/storageservices/get-user-delegation-key)
+Key. Use HTTPS with Azurite bearer authentication. A newer `SignedVersion`
+returned by the key service becomes `skv` in the SAS. The default `sv` remains
+`2020-12-06`. [Get User Delegation Key](https://learn.microsoft.com/en-us/rest/api/storageservices/get-user-delegation-key)
 
 ## Sign Table Storage requests with Shared Key
 

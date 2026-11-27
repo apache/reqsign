@@ -19,8 +19,9 @@ use crate::Credential;
 use crate::constants::*;
 use crate::service_sas::{ServiceSasResource, validate_account};
 use crate::user_delegation::{
+    DEFAULT_USER_DELEGATION_KEY_API_VERSION, DEFAULT_USER_DELEGATION_SAS_VERSION,
     MAX_USER_DELEGATION_KEY_LIFETIME, UserDelegationKeyCache, ceil_to_wire_second,
-    floor_to_wire_second, user_delegation_key_covers,
+    floor_to_wire_second, user_delegation_key_covers, validate_user_delegation_sas_version,
 };
 use http::request::Parts;
 use http::{HeaderValue, Uri, header};
@@ -138,7 +139,7 @@ struct UserDelegationPresignCacheKey {
     account: String,
     account_endpoint: String,
     source_authority: String,
-    version: String,
+    key_api_version: String,
 }
 
 impl Debug for RequestSigner {
@@ -275,7 +276,11 @@ impl RequestSigner {
         self
     }
 
-    /// Configure User Delegation SAS presign service version.
+    /// Configure the User Delegation SAS signature format (`sv`).
+    ///
+    /// This also sets the requested `x-ms-version` for Get User Delegation Key.
+    /// The key service's returned `SignedVersion` supplies `skv` and can be newer.
+    /// SAS versions from `2025-07-05` onward return `RequestInvalid`.
     pub fn with_user_delegation_version(mut self, version: &str) -> Self {
         if let Some(cfg) = self.user_delegation_presign.as_mut() {
             cfg.version = Some(version.to_string());
@@ -440,8 +445,17 @@ impl SignRequest for RequestSigner {
                             }
                         }
 
+                        let (sas_version, key_api_version) = match cfg.version.as_deref() {
+                            Some(version) => {
+                                validate_user_delegation_sas_version(version)?;
+                                (version, version)
+                            }
+                            None => (
+                                DEFAULT_USER_DELEGATION_SAS_VERSION,
+                                DEFAULT_USER_DELEGATION_KEY_API_VERSION,
+                            ),
+                        };
                         let provider = context.crypto_provider()?;
-                        let version = cfg.version.as_deref().unwrap_or("2020-12-06");
                         let cache_key = UserDelegationPresignCacheKey {
                             account: account.to_owned(),
                             account_endpoint: format!(
@@ -452,7 +466,7 @@ impl SignRequest for RequestSigner {
                                 provider,
                                 token.as_bytes(),
                             )?,
-                            version: version.to_string(),
+                            key_api_version: key_api_version.to_string(),
                         };
 
                         let effective_start = start.unwrap_or(signing_time);
@@ -467,7 +481,6 @@ impl SignRequest for RequestSigner {
                                         effective_start,
                                         expiry,
                                         signing_time,
-                                        version,
                                     )
                                 });
                             if let Some(cached) = cached {
@@ -487,7 +500,7 @@ impl SignRequest for RequestSigner {
                                         bearer_token: token,
                                         start: key_start,
                                         expiry,
-                                        service_version: version,
+                                        api_version: &cache_key.key_api_version,
                                         now: signing_time,
                                     },
                                 )
@@ -498,7 +511,6 @@ impl SignRequest for RequestSigner {
                                     effective_start,
                                     expiry,
                                     after_io,
-                                    version,
                                 ) {
                                     return Err(reqsign_core::Error::credential_invalid(
                                         "Azure user delegation key does not cover the requested SAS interval",
@@ -520,6 +532,7 @@ impl SignRequest for RequestSigner {
                                 resource.into(),
                                 cfg.permissions.to_string(),
                                 expiry,
+                                sas_version,
                             );
                         if let Some(start) = start {
                             signer = signer.with_start(start);
@@ -530,10 +543,6 @@ impl SignRequest for RequestSigner {
                         if let Some(protocol) = &cfg.protocol {
                             signer = signer.with_protocol(protocol);
                         }
-                        if let Some(version) = &cfg.version {
-                            signer = signer.with_version(version);
-                        }
-
                         let signer_token = signer.token(provider).map_err(|e| {
                             reqsign_core::Error::new(
                                 e.kind(),
@@ -946,6 +955,10 @@ mod tests {
     const SHARED_KEY_URI: &str = "https://azsignfixture.example/container/blob%2fname";
     const SHARED_KEY_DATE: &str = "Tue, 01 Mar 2022 08:12:34 GMT";
     const AZURITE_ACCOUNT: &str = "devstoreaccount1";
+    const AZURITE_KEY_URI: &str =
+        "https://127.0.0.1:10000/devstoreaccount1/?restype=service&comp=userdelegationkey";
+    const AZURITE_BLOB_URI: &str = "https://127.0.0.1:10000/devstoreaccount1/container/blob";
+    const AZURITE_SIGNED_VERSION: &str = "2026-10-06";
 
     fn shared_key_request_signer() -> RequestSigner {
         RequestSigner::new().with_time("2022-03-01T08:12:34Z".parse().unwrap())
@@ -1225,7 +1238,7 @@ mod tests {
             .with_addressing_style(AddressingStyle::PathStyle)
             .with_service_sas_permissions("r")
             .with_user_delegation_presign(SasResourceKind::Blob, "r");
-        let transport = MockUserDelegationHttpSend::new(&[]);
+        let transport = MockUserDelegationHttpSend::new(&[], "2020-12-06");
         let context = crate::test_context().with_http_send(transport.clone());
         let shared_key = Credential::with_shared_key(AZURITE_ACCOUNT, "a2V5");
         let bearer = Credential::with_bearer_token("token", None);
@@ -1906,13 +1919,15 @@ mod tests {
     #[derive(Clone, Debug)]
     struct MockUserDelegationHttpSend {
         expected_uris: &'static [&'static str],
+        signed_version: &'static str,
         calls: Arc<AtomicUsize>,
     }
 
     impl MockUserDelegationHttpSend {
-        fn new(expected_uris: &'static [&'static str]) -> Self {
+        fn new(expected_uris: &'static [&'static str], signed_version: &'static str) -> Self {
             Self {
                 expected_uris,
+                signed_version,
                 calls: Arc::default(),
             }
         }
@@ -1997,17 +2012,20 @@ mod tests {
                 );
             }
 
-            let body = r#"
+            let body = format!(
+                r#"
 <UserDelegationKey>
   <SignedOid>oid</SignedOid>
   <SignedTid>tid</SignedTid>
   <SignedStart>2022-03-01T08:12:34Z</SignedStart>
-  <SignedExpiry>2022-03-01T09:12:34Z</SignedExpiry>
+  <SignedExpiry>2022-03-01T08:17:34Z</SignedExpiry>
   <SignedService>b</SignedService>
-  <SignedVersion>2020-12-06</SignedVersion>
+  <SignedVersion>{}</SignedVersion>
   <Value>a2V5</Value>
 </UserDelegationKey>
-"#;
+"#,
+                self.signed_version
+            );
 
             Ok(http::Response::builder()
                 .status(200)
@@ -2018,39 +2036,40 @@ mod tests {
 
     #[tokio::test]
     async fn user_delegation_presign_keys_follow_the_account_root() {
-        let transport = MockUserDelegationHttpSend::new(&[
-            "http://127.0.0.1:10000/devstoreaccount1/?restype=service&comp=userdelegationkey",
-            "http://127.0.0.1:10000/%64evstoreaccount1/?restype=service&comp=userdelegationkey",
-            "https://storage.example:8443/devstoreaccount1/?restype=service&comp=userdelegationkey",
-            "https://storage.example:8443/?restype=service&comp=userdelegationkey",
-        ]);
+        // Azurite v3.38.0 echoes the requested time bounds and uses its own
+        // Blob API version in SignedVersion. The mock uses an invented key.
+        // https://github.com/Azure/Azurite/blob/v3.38.0/src/blob/handlers/ServiceHandler.ts#L88-L119
+        let transport = MockUserDelegationHttpSend::new(
+            &[
+                AZURITE_KEY_URI,
+                "https://127.0.0.1:10000/%64evstoreaccount1/?restype=service&comp=userdelegationkey",
+                "https://storage.example:8443/devstoreaccount1/?restype=service&comp=userdelegationkey",
+                "https://storage.example:8443/?restype=service&comp=userdelegationkey",
+            ],
+            AZURITE_SIGNED_VERSION,
+        );
         let context = crate::test_context().with_http_send(transport.clone());
         let credential_provider = crate::StaticCredentialProvider::new_bearer_token("token");
         let request_signer = shared_key_request_signer()
             .with_account_name(AZURITE_ACCOUNT)
-            .with_user_delegation_presign(SasResourceKind::Blob, "r");
+            .with_user_delegation_presign(SasResourceKind::Blob, "r")
+            .with_user_delegation_protocol("https");
         let path_style = Signer::new(
             context,
             credential_provider,
             request_signer.with_addressing_style(AddressingStyle::PathStyle),
         );
 
-        // Python HMACs using the mock RPC response key `key` and version 2020-12-06.
-        let blob = "NnJowOy8WFNAetwG0FnZXWZXoKMFJ7kFNpVh8FYqkYQ%3D";
-        let nested_blob = "X5r6p2d959iYlcEwNKp/9utMqcm77jcjRfW2wji8Ddw%3D";
+        // Python HMACs over the sv=2020-12-06 format with skv=2026-10-06.
+        let blob = "/6cOO%2B8gTjIDm8969cIlLS/reGmvBVciEhTdr8f16gE%3D";
+        let nested_blob = "AGl7wawMdqsz1eYb/V7HHLr4gZSjq9JQnTxmP87q/Ng%3D";
         for (target, signature) in [
+            (AZURITE_BLOB_URI, blob),
             (
-                "http://127.0.0.1:10000/devstoreaccount1/container/blob",
+                "https://127.0.0.1:10000/%64evstoreaccount1/container/blob",
                 blob,
             ),
-            (
-                "http://127.0.0.1:10000/%64evstoreaccount1/container/blob",
-                blob,
-            ),
-            (
-                "http://127.0.0.1:10000/devstoreaccount1/container/blob",
-                blob,
-            ),
+            (AZURITE_BLOB_URI, blob),
             (
                 "https://storage.example:8443/devstoreaccount1/devstoreaccount1//dir%2Fblob%252F+caf%C3%A9/",
                 nested_blob,
@@ -2063,7 +2082,7 @@ mod tests {
                 .await
                 .unwrap();
             let expected = format!(
-                "{uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T09%3A12%3A34Z&sks=b&skv=2020-12-06&sig={signature}"
+                "{uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T08%3A17%3A34Z&sks=b&skv=2026-10-06&spr=https&sig={signature}"
             );
             assert!(
                 parts.uri.to_string() == expected,
@@ -2075,7 +2094,8 @@ mod tests {
         let host_style = path_style.with_request_signer(
             shared_key_request_signer()
                 .with_account_name(AZURITE_ACCOUNT)
-                .with_user_delegation_presign(SasResourceKind::Blob, "r"),
+                .with_user_delegation_presign(SasResourceKind::Blob, "r")
+                .with_user_delegation_protocol("https"),
         );
         let uri = "https://storage.example:8443/devstoreaccount1/marker/";
         let mut parts = Request::get(uri).body(()).unwrap().into_parts().0;
@@ -2086,19 +2106,81 @@ mod tests {
         assert!(
             parts.uri.to_string()
                 == format!(
-                    "{uri}?sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T09%3A12%3A34Z&sks=b&skv=2020-12-06&sig=NY0alRauHTxX4On4EjWMHiMiUpus1P8bUxm8LNdZNYU%3D"
+                    "{uri}?sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T08%3A17%3A34Z&sks=b&skv=2026-10-06&spr=https&sig=ufV3b%2BnrLYDLFPcFrrKvg9tt/UzPEzmUbSHW3CshWlI%3D"
                 )
         );
         assert_eq!(transport.calls.load(Ordering::SeqCst), 4);
     }
 
     #[tokio::test]
+    async fn user_delegation_presign_rejects_invalid_or_older_key_versions() {
+        let builder = shared_key_request_signer()
+            .with_account_name(AZURITE_ACCOUNT)
+            .with_addressing_style(AddressingStyle::PathStyle)
+            .with_user_delegation_presign(SasResourceKind::Blob, "r");
+        let credential = Credential::with_bearer_token("token", None);
+        for version in ["2019-12-12", "2026-02-30"] {
+            let transport = MockUserDelegationHttpSend::new(&[AZURITE_KEY_URI; 2], version);
+            let context = crate::test_context().with_http_send(transport.clone());
+            let mut parts = Request::get(AZURITE_BLOB_URI)
+                .body(())
+                .unwrap()
+                .into_parts()
+                .0;
+            for _ in 0..2 {
+                let error = builder
+                    .sign_request(
+                        &context,
+                        &mut parts,
+                        Some(&credential),
+                        Some(Duration::from_secs(300)),
+                    )
+                    .await
+                    .expect_err("invalid delegation key versions must be rejected");
+                assert_eq!(error.kind(), ErrorKind::CredentialInvalid);
+                assert_eq!(parts.uri, AZURITE_BLOB_URI);
+                assert!(parts.headers.is_empty());
+            }
+            assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn user_delegation_presign_rejects_unsupported_sas_version_before_key_request() {
+        let transport = MockUserDelegationHttpSend::new(&[], AZURITE_SIGNED_VERSION);
+        let context = crate::test_context().with_http_send(transport.clone());
+        let signer = Signer::new(
+            context,
+            crate::StaticCredentialProvider::new_bearer_token("token"),
+            shared_key_request_signer()
+                .with_account_name(AZURITE_ACCOUNT)
+                .with_addressing_style(AddressingStyle::PathStyle)
+                .with_user_delegation_presign(SasResourceKind::Blob, "r")
+                .with_user_delegation_version("2025-07-05"),
+        );
+        let mut parts = Request::get(AZURITE_BLOB_URI)
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+        let error = signer
+            .sign(&mut parts, Some(Duration::from_secs(300)))
+            .await
+            .expect_err("unsupported SAS formats must remain rejected");
+        assert_eq!(error.kind(), ErrorKind::RequestInvalid);
+        assert_eq!(parts.uri, AZURITE_BLOB_URI);
+        assert!(parts.headers.is_empty());
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
     async fn test_bearer_token_presign_user_delegation_sas() {
         let now = Timestamp::from_str("2022-03-01T08:12:34.500Z").unwrap();
 
-        let http_send = MockUserDelegationHttpSend::new(&[
-            "https://account.blob.core.windows.net/?restype=service&comp=userdelegationkey",
-        ]);
+        let http_send = MockUserDelegationHttpSend::new(
+            &["https://account.blob.core.windows.net/?restype=service&comp=userdelegationkey"],
+            "2020-12-06",
+        );
         let ctx = crate::test_context()
             .with_file_read(TokioFileRead)
             .with_http_send(http_send.clone())
@@ -2127,7 +2209,7 @@ mod tests {
         assert_eq!(
             parts.uri.to_string(),
             format!(
-                "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T09%3A12%3A34Z&sks=b&skv=2020-12-06&sig=ZEuqL17Enw3SO6zeRjYDnedXYngQ8GrQMUBx82BGelY%3D"
+                "{original_uri}sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T08%3A17%3A34Z&sks=b&skv=2020-12-06&sig=FUYkhOx8h7evd0Q3v7obQK6q/zBEMG/oWzyCeUFQlt8%3D"
             )
         );
 

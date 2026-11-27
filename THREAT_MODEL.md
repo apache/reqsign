@@ -460,7 +460,10 @@ Examples:
   `RequestInvalid` before any request changes are committed.
 - Azure Blob SAS generation for path-style endpoints removes the first segment
   only after it matches the selected account. The User Delegation key request
-  and key cache use the same account root on the caller's endpoint.
+  and key cache use the same account root on the caller's endpoint. The cache
+  retains the requested key API version in its identity. The key response's
+  valid `SignedVersion` can equal or be newer than the request version and is
+  signed as `skv`. The configured SAS version (`sv`) selects the signature format.
 - Header-based signing must apply authorization data to headers without
   unintentionally moving authority to query parameters.
 - Query-based signing and presigning must apply expiry and signed query
