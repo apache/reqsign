@@ -654,8 +654,15 @@ fn string_to_sign(ctx: &SigningRequest, account_name: &str) -> Result<String> {
 
 /// [Constructing the canonicalized headers string](https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-headers-string)
 fn append_canonicalized_headers(ctx: &SigningRequest, output: &mut String) -> Result<()> {
-    let names = ctx.header_name_to_vec_sorted();
-    for name in names.into_iter().filter(|name| name.starts_with("x-ms-")) {
+    let mut names: Vec<_> = ctx
+        .headers
+        .keys()
+        .map(header::HeaderName::as_str)
+        .filter(|name| name.starts_with("x-ms-"))
+        .collect();
+    names.sort_unstable_by(|left, right| header_name_weights(left).cmp(header_name_weights(right)));
+
+    for name in names {
         output.push_str(name);
         output.push(':');
         // HeaderMap keeps values for a name in insertion order.
@@ -673,6 +680,23 @@ fn append_canonicalized_headers(ctx: &SigningRequest, output: &mut String) -> Re
         output.push('\n');
     }
     Ok(())
+}
+
+fn header_name_weights(name: &str) -> impl Iterator<Item = u8> + '_ {
+    // Azure sorts '_' before digits in metadata names. These are the Azure SDK for
+    // Python's character weights for lowercase ASCII header names.
+    // https://github.com/Azure/azure-sdk-for-python/pull/26991
+    const WEIGHTS: [u8; 128] = {
+        let order = b"-!#$%&*.^_|~+\"'`0123456789abcdefghijklmnopqrstuvwxyz";
+        let mut weights = [u8::MAX; 128];
+        let mut rank = 0;
+        while rank < order.len() {
+            weights[order[rank] as usize] = rank as u8;
+            rank += 1;
+        }
+        weights
+    };
+    name.bytes().map(|byte| WEIGHTS[usize::from(byte)])
 }
 
 fn append_normalized_header_value(output: &mut String, value: &str) {
@@ -709,6 +733,8 @@ fn append_canonicalized_resource(ctx: &SigningRequest, account_name: &str, outpu
     output.push_str(account_name);
     output.push_str(&ctx.path);
 
+    // The decoded query view preserves a raw '+' as data for Shared Key signing.
+    // https://github.com/Azure/azure-sdk-for-js/blob/bc12ee66f4cb9a1e3fddf51279ba254fe8953994/sdk/storage/storage-common/test/node/sharedKeySigning.spec.ts#L226-L231
     let mut query: BTreeMap<String, Vec<&str>> = BTreeMap::new();
     for (name, value) in &ctx.query {
         query.entry(name.to_lowercase()).or_default().push(value);
@@ -766,7 +792,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shared_key_header_signs_repeated_x_ms_headers_in_wire_order() {
+    async fn shared_key_header_signs_x_ms_headers_in_azure_order() {
         let key = reqsign_core::hash::base64_encode(SHARED_KEY_BYTES);
         let signer = Signer::new(
             crate::test_context(),
@@ -781,12 +807,18 @@ mod tests {
             .header(header::CONTENT_TYPE, "application/octet-stream")
             .header(header::IF_MATCH, "\"fixture-etag\"")
             .header("x-ms-version", "2021-12-02")
+            .header("x-ms-meta-i0", "zero")
             .header(
-                "X-MS-Meta-Note",
+                "X-MS-Meta-I_",
                 " \t zeta \t \"two\t  words \\\"stay  quoted\\\" ends\\\\\" \t tail \t",
             )
+            .header("x-ms-meta-i9", "nine")
+            .header("x-ms-meta-ia", "letter")
+            .header("x-ms-meta-i", "prefix")
             .header("x-ms-meta-blank", " \t ")
-            .header("x-ms-meta-note", "  alpha \t\t beta \t")
+            .header("x-ms-meta-i_", "  alpha \t\t beta \t")
+            .header("x-ms-meta-_leading", "leading underscore")
+            .header("x-ms-meta-i__", "two underscores")
             .header("x-ms-blob-type", "BlockBlob")
             .header("x-original", HeaderValue::from_bytes(b" \xff\t ").unwrap())
             .body(())
@@ -798,12 +830,21 @@ mod tests {
         signer.sign(&mut parts, None).await.unwrap();
 
         let authorization = parts.headers.remove(header::AUTHORIZATION).unwrap();
-        // Computed with Python hmac over the Azure string-to-sign, including
+        // Python hmac over these lines in the Azure SDK for Python's order:
+        // x-ms-meta-_leading:leading underscore
         // x-ms-meta-blank:
-        // x-ms-meta-note:zeta "two\t  words \"stay  quoted\" ends\\" tail,alpha beta
+        // x-ms-meta-i:prefix
+        // x-ms-meta-i_:zeta "two\t  words \"stay  quoted\" ends\\" tail,alpha beta
+        // x-ms-meta-i__:two underscores
+        // x-ms-meta-i0:zero
+        // x-ms-meta-i9:nine
+        // x-ms-meta-ia:letter
         assert_eq!(
             authorization,
-            "SharedKey azsignfixture:TfT0uX5ovNiPnuLYNqJYnuD5SbwuuZ7RRavi2UEuPCE="
+            concat!(
+                "SharedKey azsignfixture:",
+                "mFfPFGISqmdN+D/zGtbJd+1aygNlsWcD7ahCPjskLuM="
+            )
         );
         assert!(authorization.is_sensitive());
         assert_eq!(parts.headers.remove(X_MS_DATE).unwrap(), SHARED_KEY_DATE);
@@ -814,7 +855,7 @@ mod tests {
     #[tokio::test]
     async fn shared_key_header_signs_grouped_decoded_query() {
         let uri = format!(
-            "{SHARED_KEY_URI}?Zed=last&Dup=%7a&dUP=A&%44UP=%31&dup=A&dup=&flag&Empty=&literal=+&escaped=%2B%3D%26%252F&comp=list&"
+            "{SHARED_KEY_URI}?Zed=last&Dup=%7a&dUP=A&%44UP=%31&dup=A&dup=&flag&Empty=&raw=x+y&encoded-plus=x%2By&encoded-space=x%20y&escaped=%2B%3D%26%252F&comp=list&"
         );
         let mut parts = Request::get(&uri)
             .header(header::CONTENT_LENGTH, "0")
@@ -831,20 +872,22 @@ mod tests {
             .await
             .unwrap();
 
-        // Computed with Python hmac using this canonical resource:
+        // HMAC over the output from Azure SDK for JavaScript storage-common 12.6.0-beta.1:
         // /azsignfixture/container/blob%2fname
         // comp:list
         // dup:,1,A,A,z
         // empty:
+        // encoded-plus:x+y
+        // encoded-space:x y
         // escaped:+=&%2F
         // flag:
-        // literal:+
+        // raw:x+y
         // zed:last
         assert_eq!(
             parts.headers.remove(header::AUTHORIZATION).unwrap(),
             concat!(
                 "SharedKey azsignfixture:",
-                "l1GVqH9T126pFEFJQj3sZUVyQDD1ezHh7fWoJtYXLkE="
+                "bnvwitjYdYeL2Pcg91shnx859540aU8lAye64pb1FqA="
             )
         );
         assert_eq!(parts.headers.remove(X_MS_DATE).unwrap(), SHARED_KEY_DATE);
