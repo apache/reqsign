@@ -93,6 +93,11 @@
 //! whose support depends on the operation, bucket, and transfer mode. See
 //! [`RequestSigner`] for the detailed payload and checksum contract.
 //!
+//! ## S3 Browser Uploads
+//!
+//! Use [`sign_s3_post_policy`] to sign a caller-built policy for a browser-based
+//! S3 upload. It returns the SigV4 authentication fields for the multipart form.
+//!
 //! ## Credential Sources
 //!
 //! The crate supports loading credentials from multiple sources:
@@ -183,6 +188,8 @@
 
 mod assume_role;
 pub use assume_role::AssumeRoleGranter;
+mod s3_post_policy;
+pub use s3_post_policy::{S3PostPolicyFields, sign_s3_post_policy};
 mod sign_request;
 pub use sign_request::RequestSigner;
 mod s3_access_grants;

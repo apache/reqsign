@@ -422,15 +422,14 @@ pub fn sign_request_parts(
     };
     debug!("calculated string to sign: {string_to_sign}");
 
-    let signing_key = generate_signing_key(
+    let signature = sigv4_signature(
         provider,
         &credential.secret_access_key,
         now,
         options.region,
         options.service,
+        &string_to_sign,
     )?;
-    let signature =
-        reqsign_core::hash::hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())?;
 
     let final_uri = if expires_in.is_some() {
         let unsigned_uri = append_query_pairs(&original_uri, &authentication_query)?;
@@ -532,13 +531,16 @@ pub fn sigv4_authentication_query(
     query
 }
 
-fn generate_signing_key(
+/// Sign a SigV4 string to sign with the key scoped to the date, region, and service.
+#[doc(hidden)]
+pub fn sigv4_signature(
     provider: &dyn CryptoProvider,
     secret: &str,
     time: Timestamp,
     region: &str,
     service: &str,
-) -> Result<Vec<u8>> {
+    string_to_sign: &str,
+) -> Result<String> {
     let secret = format!("AWS4{secret}");
     let sign_date = reqsign_core::hash::hmac_sha256(
         provider,
@@ -549,12 +551,8 @@ fn generate_signing_key(
         reqsign_core::hash::hmac_sha256(provider, sign_date.as_slice(), region.as_bytes())?;
     let sign_service =
         reqsign_core::hash::hmac_sha256(provider, sign_region.as_slice(), service.as_bytes())?;
-    Ok(reqsign_core::hash::hmac_sha256(
-        provider,
-        sign_service.as_slice(),
-        "aws4_request".as_bytes(),
-    )?
-    .to_vec())
+    let signing_key = reqsign_core::hash::hmac_sha256(provider, &sign_service, b"aws4_request")?;
+    reqsign_core::hash::hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())
 }
 
 #[cfg(test)]
