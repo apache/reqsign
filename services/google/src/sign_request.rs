@@ -431,15 +431,15 @@ impl RequestSigner {
         req: &mut SigningRequest,
         client_email: &str,
         now: Timestamp,
-        expires_in: Duration,
+        expires_seconds: u64,
     ) -> Result<(String, Vec<(String, String)>)> {
-        canonicalize_header(req)?;
+        ensure_host_header(req)?;
 
         let authentication_query = authentication_query(
             req,
             client_email,
             now,
-            expires_in,
+            expires_seconds,
             &self.service,
             &self.region,
         );
@@ -488,7 +488,7 @@ impl RequestSigner {
         provider: &dyn crypto::CryptoProvider,
         parts: &mut http::request::Parts,
         service_account: &ServiceAccount,
-        expires_in: Duration,
+        expires_seconds: u64,
     ) -> Result<(SigningRequest, Uri)> {
         let original_uri = parts.uri.clone();
         let mut req = SigningRequest::build(parts)?;
@@ -499,7 +499,7 @@ impl RequestSigner {
             &mut req,
             &service_account.client_email,
             now,
-            expires_in,
+            expires_seconds,
         )?;
         let signature = Self::sign_with_service_account(
             provider,
@@ -561,6 +561,11 @@ impl RequestSigner {
                 reqsign_core::Error::unexpected("failed to build HTTP request").with_source(e)
             })?;
 
+        if !token.is_valid_at(self.token_required_until()) {
+            return Err(reqsign_core::Error::credential_invalid(
+                "token required for iamcredentials signBlob query signing",
+            ));
+        }
         let resp = ctx.http_send(req).await?;
 
         if resp.status() != http::StatusCode::OK {
@@ -576,7 +581,7 @@ impl RequestSigner {
 
         let signed = reqsign_core::hash::base64_decode(&sign_resp.signed_blob)?;
 
-        Ok(hex_encode_upper(&signed))
+        Ok(hex::encode(signed))
     }
 
     async fn build_signed_query_via_iamcredentials(
@@ -585,7 +590,7 @@ impl RequestSigner {
         parts: &mut http::request::Parts,
         token: &Token,
         signer_email: &str,
-        expires_in: Duration,
+        expires_seconds: u64,
     ) -> Result<(SigningRequest, Uri)> {
         let original_uri = parts.uri.clone();
         let mut req = SigningRequest::build(parts)?;
@@ -596,7 +601,7 @@ impl RequestSigner {
             &mut req,
             signer_email,
             now,
-            expires_in,
+            expires_seconds,
         )?;
         let signature = self
             .sign_via_iamcredentials(ctx, token, signer_email, string_to_sign.as_bytes())
@@ -624,6 +629,7 @@ impl SignRequest for RequestSigner {
         {
             Timestamp::now()
         } else {
+            // For query signing, the OAuth token authorizes the signBlob RPC.
             self.token_required_until()
         }
     }
@@ -654,11 +660,12 @@ impl SignRequest for RequestSigner {
                     .as_ref()
                     .filter(|service_account| service_account.is_valid())
                 {
+                    let expires_seconds = query_expiration_seconds(expires)?;
                     let (signing_req, uri) = self.build_signed_query_with_service_account(
                         ctx.crypto_provider()?,
                         req,
                         sa,
-                        expires,
+                        expires_seconds,
                     )?;
                     (signing_req, Some(uri))
                 } else if let (Some(token), Some(signer_email)) = (
@@ -667,19 +674,14 @@ impl SignRequest for RequestSigner {
                         .as_deref()
                         .or(cred.signer_email.as_deref()),
                 ) {
-                    if !token.is_valid_at(required_until) {
-                        return Err(reqsign_core::Error::credential_invalid(
-                            "token required for iamcredentials signBlob query signing",
-                        ));
-                    }
-
+                    let expires_seconds = query_expiration_seconds(expires)?;
                     let (signing_req, uri) = self
                         .build_signed_query_via_iamcredentials(
                             ctx,
                             req,
                             token,
                             signer_email,
-                            expires,
+                            expires_seconds,
                         )
                         .await?;
                     (signing_req, Some(uri))
@@ -735,16 +737,6 @@ impl SignRequest for RequestSigner {
     }
 }
 
-fn hex_encode_upper(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        write!(&mut out, "{:02X}", b).expect("writing to string must succeed");
-    }
-    out
-}
-
 fn canonical_request_string(
     req: &SigningRequest,
     canonical_query: &[(String, String)],
@@ -772,31 +764,51 @@ fn canonical_request_string(
 
     // Insert signed headers
     let signed_headers = req.header_name_to_vec_sorted();
-    for header in signed_headers.iter() {
-        let mut value = req.headers[*header].clone();
-        SigningRequest::header_value_normalize(&mut value);
-        f.push_str(header);
+    let mut payload_hash_range = None;
+    for name in &signed_headers {
+        f.push_str(name);
         f.push(':');
-        f.push_str(value.to_str().map_err(|e| {
-            reqsign_core::Error::request_invalid("invalid signed header value").with_source(e)
-        })?);
+        let value_start = f.len();
+        for (value_index, value) in req.headers.get_all(*name).iter().enumerate() {
+            if value_index != 0 {
+                f.push(',');
+            }
+            let value = value.to_str().map_err(|e| {
+                reqsign_core::Error::request_invalid("invalid signed header value").with_source(e)
+            })?;
+            for (word_index, word) in value.split_ascii_whitespace().enumerate() {
+                if word_index != 0 {
+                    f.push(' ');
+                }
+                f.push_str(word);
+            }
+        }
+        if *name == "x-goog-content-sha256" {
+            payload_hash_range = Some(value_start..f.len());
+        }
         f.push('\n');
     }
     f.push('\n');
     f.push_str(&signed_headers.join(";"));
     f.push('\n');
-    f.push_str("UNSIGNED-PAYLOAD");
 
-    debug!("canonical request string: {f}");
+    // An explicit payload hash uses the same value as its canonical header.
+    match payload_hash_range {
+        Some(range) => f.extend_from_within(range),
+        None => f.push_str("UNSIGNED-PAYLOAD"),
+    }
     Ok(f)
 }
 
-fn canonicalize_header(req: &mut SigningRequest) -> Result<()> {
-    // Insert HOST header if not present.
-    if req.headers.get(header::HOST).is_none() {
+fn ensure_host_header(req: &mut SigningRequest) -> Result<()> {
+    if !req.headers.contains_key(header::HOST) {
+        let host = match (req.scheme.as_str(), req.authority.port_u16()) {
+            ("http", Some(80)) | ("https", Some(443)) => req.authority.host(),
+            _ => req.authority.as_str(),
+        };
         req.headers.insert(
             header::HOST,
-            req.authority.as_str().parse().map_err(|e| {
+            host.parse().map_err(|e| {
                 reqsign_core::Error::unexpected("failed to parse host header").with_source(e)
             })?,
         );
@@ -805,11 +817,21 @@ fn canonicalize_header(req: &mut SigningRequest) -> Result<()> {
     Ok(())
 }
 
+fn query_expiration_seconds(expires_in: Duration) -> Result<u64> {
+    let seconds = expires_in.as_secs();
+    if !(1..=604_800).contains(&seconds) {
+        return Err(reqsign_core::Error::request_invalid(
+            "X-Goog-Expires must be between 1 and 604800 seconds",
+        ));
+    }
+    Ok(seconds)
+}
+
 fn authentication_query(
     req: &SigningRequest,
     client_email: &str,
     now: Timestamp,
-    expires_in: Duration,
+    expires_seconds: u64,
     service: &str,
     region: &str,
 ) -> Vec<(String, String)> {
@@ -826,7 +848,7 @@ fn authentication_query(
             ),
         ),
         ("X-Goog-Date".into(), now.format_iso8601()),
-        ("X-Goog-Expires".into(), expires_in.as_secs().to_string()),
+        ("X-Goog-Expires".into(), expires_seconds.to_string()),
         (
             "X-Goog-SignedHeaders".into(),
             req.header_name_to_vec_sorted().join(";"),
@@ -918,23 +940,18 @@ mod tests {
         assert_unwind_safe::<RequestSigner>();
     };
 
-    const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=first&dup=second&=empty-key&empty=&flag&flag=&";
-
-    #[derive(Debug, Default)]
-    struct Recorded {
-        payload_b64: Option<String>,
-    }
+    const RAW_QUERY: &str = "slash=%2F&hash=%23&amp=%26&equals=%3D&space=%20&encoded-plus=%2B&literal-plus=+&double=%252F&dup=second&dup=first&=empty-key&empty=&flag&flag=&";
 
     #[derive(Clone, Debug)]
     struct MockHttpSend {
-        recorded: Arc<Mutex<Recorded>>,
+        string_to_sign: Arc<Mutex<Option<String>>>,
         expected_signer_email: String,
     }
 
     impl Default for MockHttpSend {
         fn default() -> Self {
             Self {
-                recorded: Arc::default(),
+                string_to_sign: Arc::default(),
                 expected_signer_email: "test-signer@example.com".to_string(),
             }
         }
@@ -944,6 +961,10 @@ mod tests {
         fn with_expected_signer_email(mut self, signer_email: &str) -> Self {
             self.expected_signer_email = signer_email.to_string();
             self
+        }
+
+        fn take_string_to_sign(&self) -> Option<String> {
+            self.string_to_sign.lock().unwrap().take()
         }
     }
 
@@ -976,16 +997,12 @@ mod tests {
 
             let value: serde_json::Value =
                 serde_json::from_slice(req.body()).expect("body must be valid json");
-            let payload_b64 = value
-                .get("payload")
-                .and_then(|v| v.as_str())
-                .expect("payload must exist")
-                .to_string();
+            let payload_b64 = value["payload"].as_str().expect("payload must exist");
+            let payload = reqsign_core::hash::base64_decode(payload_b64)?;
+            *self.string_to_sign.lock().unwrap() = Some(String::from_utf8(payload).unwrap());
 
-            self.recorded.lock().unwrap().payload_b64 = Some(payload_b64);
-
-            // base64([0x01, 0x02, 0x03]) -> hex signature "010203"
-            let body = br#"{"signedBlob":"AQID"}"#;
+            // base64([0xab, 0xcd, 0xef]) -> hex signature "abcdef"
+            let body = br#"{"signedBlob":"q83v"}"#;
             Ok(http::Response::builder()
                 .status(http::StatusCode::OK)
                 .body(body.as_slice().into())
@@ -1029,93 +1046,269 @@ mod tests {
         })
     }
 
-    fn parse_goog_date_to_timestamp(v: &str) -> Timestamp {
-        let year = &v[0..4];
-        let month = &v[4..6];
-        let day = &v[6..8];
-        let hour = &v[9..11];
-        let minute = &v[11..13];
-        let second = &v[13..15];
-        let rfc3339 = format!("{year}-{month}-{day}T{hour}:{minute}:{second}Z");
-        rfc3339.parse().expect("date must parse")
+    fn query_signing_credentials() -> [Credential; 2] {
+        let service_account = Credential::with_service_account(ServiceAccount {
+            client_email: "test-signer@example.com".to_string(),
+            private_key: include_str!("../tests/fixtures/rsa_pkcs8.pem").to_string(),
+        });
+        let iam = Credential::with_token(Token {
+            access_token: "test-access-token".to_string(),
+            expires_at: Some(Timestamp::now() + Duration::from_secs(60)),
+        })
+        .with_signer_email("test-signer@example.com");
+        [service_account, iam]
+    }
+
+    fn query_signer(ctx: Context, credential: Credential) -> Signer<Credential> {
+        let provider = RepeatingProvider {
+            credential,
+            calls: Arc::default(),
+        };
+        Signer::new(ctx, provider, RequestSigner::new("storage"))
+    }
+
+    fn expected_string_to_sign(
+        ctx: &Context,
+        uri: &Uri,
+        canonical_request: &str,
+    ) -> Result<String> {
+        let query = uri.query().expect("signed URL must have a query");
+        let timestamp = query_get(query, "X-Goog-Date").expect("signing timestamp must exist");
+        let date = &timestamp[..8];
+        let canonical_request = canonical_request
+            .replace("{timestamp}", timestamp)
+            .replace("{date}", date);
+        let hash = hex_sha256(ctx.crypto_provider()?, canonical_request.as_bytes())?;
+        Ok(format!(
+            "GOOG4-RSA-SHA256\n{timestamp}\n{date}/auto/storage/goog4_request\n{hash}"
+        ))
     }
 
     #[tokio::test]
-    async fn test_signed_url_via_iamcredentials_sign_blob() -> Result<()> {
+    async fn signed_urls_sign_canonical_headers_and_payload_without_changing_wire_values()
+    -> Result<()> {
+        // Adapted from "Headers should be trimmed" and "Signed Payload Instead of
+        // UNSIGNED-PAYLOAD" in Google's public storage conformance data:
+        // https://github.com/googleapis/conformance-tests/blob/905d67f4ecd6d0a172d369bbe5b4762f79edca49/storage/v1/v4_signatures.json
+        const PAYLOAD_HASH: &str =
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b982";
+        const SIGNED_HEADERS: &str = "host%3Bx-goog-content-sha256%3Bx-goog-meta-reviewer";
+        let original_uri =
+            format!("https://storage.googleapis.com:443/test-bucket/test%2fobject?{RAW_QUERY}");
+        let original = http::Request::put(&original_uri)
+            .header("x-goog-meta-reviewer", " john    smith \t")
+            .header("x-goog-meta-reviewer", "\tjane\t\t\tdoe\t")
+            .header("x-goog-content-sha256", format!(" {PAYLOAD_HASH} "))
+            .body(())?
+            .into_parts()
+            .0;
+        let mut expected_headers = original.headers.clone();
+        expected_headers.insert(
+            header::HOST,
+            header::HeaderValue::from_static("storage.googleapis.com"),
+        );
+        let canonical_request = concat!(
+            "PUT\n/test-bucket/test%2Fobject\n",
+            "=empty-key&X-Goog-Algorithm=GOOG4-RSA-SHA256",
+            "&X-Goog-Credential=test-signer%40example.com%2F{date}%2Fauto%2Fstorage%2Fgoog4_request",
+            "&X-Goog-Date={timestamp}&X-Goog-Expires=10&X-Goog-SignedHeaders={signed_headers}",
+            "&amp=%26&double=%252F&dup=first&dup=second&empty=&encoded-plus=%2B",
+            "&equals=%3D&flag=&flag=&hash=%23&literal-plus=%2B&slash=%2F&space=%20\n",
+            "host:storage.googleapis.com\n",
+            "x-goog-content-sha256:{payload_hash}\n",
+            "x-goog-meta-reviewer:john smith,jane doe\n\n",
+            "host;x-goog-content-sha256;x-goog-meta-reviewer\n",
+            "{payload_hash}",
+        )
+        .replace("{signed_headers}", SIGNED_HEADERS)
+        .replace("{payload_hash}", PAYLOAD_HASH);
+
         let mock_http = MockHttpSend::default();
         let ctx = crate::test_context().with_http_send(mock_http.clone());
+        for credential in query_signing_credentials() {
+            let mut parts = original.clone();
+            query_signer(ctx.clone(), credential.clone())
+                .sign(&mut parts, Some(Duration::from_secs(10)))
+                .await?;
+            assert_eq!(parts.headers, expected_headers);
+            assert!(
+                parts
+                    .uri
+                    .to_string()
+                    .starts_with(&format!("{original_uri}X-Goog-Algorithm="))
+            );
+            let query = parts.uri.query().unwrap();
+            assert_eq!(
+                query_get(query, "X-Goog-SignedHeaders"),
+                Some(SIGNED_HEADERS)
+            );
 
-        let signer = RequestSigner::new("storage").with_signer_email("test-signer@example.com");
+            let expected = expected_string_to_sign(&ctx, &parts.uri, &canonical_request)?;
+            let signature = query_get(query, "X-Goog-Signature").unwrap();
+            if let Some(service_account) = credential.service_account {
+                let expected_signature = ctx.crypto_provider()?.rsa_pkcs1v15_sha256_sign(
+                    service_account.private_key.as_bytes(),
+                    expected.as_bytes(),
+                )?;
+                assert_eq!(signature, hex::encode(expected_signature));
+                assert!(mock_http.take_string_to_sign().is_none());
+            } else {
+                assert_eq!(
+                    mock_http.take_string_to_sign().as_deref(),
+                    Some(expected.as_str())
+                );
+                assert_eq!(signature, "abcdef");
+            }
+        }
+        Ok(())
+    }
 
-        let cred = Credential::with_token(Token {
-            access_token: "test-access-token".to_string(),
-            expires_at: Some(Timestamp::now() + Duration::from_secs(60)),
-        });
-        assert!(!cred.is_valid());
+    #[tokio::test]
+    async fn signed_urls_use_the_wire_host_and_default_payload() -> Result<()> {
+        let mock_http = MockHttpSend::default();
+        let ctx = crate::test_context().with_http_send(mock_http.clone());
+        let [_, iam] = query_signing_credentials();
+        let signer = query_signer(ctx.clone(), iam);
 
-        let expires_in = Duration::from_secs(3600);
-        let original_uri =
-            format!("https://storage.googleapis.com/test-bucket/test%2Fobject?{RAW_QUERY}");
+        for (uri, explicit_host, expected_host) in [
+            ("http://example.com:80/object", None, "example.com"),
+            ("https://example.com:80/object", None, "example.com:80"),
+            ("http://example.com:443/object", None, "example.com:443"),
+            ("https://[2001:db8::1]:443/object", None, "[2001:db8::1]"),
+            (
+                "https://[2001:db8::1]:8443/object",
+                None,
+                "[2001:db8::1]:8443",
+            ),
+            (
+                "https://example.com:443/object",
+                Some("Example.org:443"),
+                "Example.org:443",
+            ),
+        ] {
+            let mut request = http::Request::get(uri);
+            if let Some(host) = explicit_host {
+                request = request.header(header::HOST, host);
+            }
+            let mut parts = request.body(())?.into_parts().0;
+            signer
+                .sign(&mut parts, Some(Duration::from_secs(10)))
+                .await?;
+            assert_eq!(parts.headers[header::HOST], expected_host, "{uri}");
+            assert!(
+                parts
+                    .uri
+                    .to_string()
+                    .starts_with(&format!("{uri}?X-Goog-Algorithm="))
+            );
 
-        let mut builder = http::Request::builder();
-        builder = builder.method(http::Method::GET);
-        builder = builder.uri(&original_uri);
-        let req = builder.body(Bytes::new()).expect("request must build");
-        let (mut parts, _body) = req.into_parts();
+            let canonical_request = concat!(
+                "GET\n/object\nX-Goog-Algorithm=GOOG4-RSA-SHA256",
+                "&X-Goog-Credential=test-signer%40example.com%2F{date}%2Fauto%2Fstorage%2Fgoog4_request",
+                "&X-Goog-Date={timestamp}&X-Goog-Expires=10&X-Goog-SignedHeaders=host\n",
+                "host:{host}\n\nhost\nUNSIGNED-PAYLOAD",
+            )
+            .replace("{host}", expected_host);
+            let expected = expected_string_to_sign(&ctx, &parts.uri, &canonical_request)?;
+            assert_eq!(mock_http.take_string_to_sign(), Some(expected), "{uri}");
+        }
+        Ok(())
+    }
 
-        signer
-            .sign_request(&ctx, &mut parts, Some(&cred), Some(expires_in))
-            .await?;
+    #[tokio::test]
+    async fn signed_urls_validate_encoded_expiration_seconds() -> Result<()> {
+        let mock_http = MockHttpSend::default();
+        let ctx = crate::test_context().with_http_send(mock_http.clone());
+        let original = http::Request::get("https://example.com/object?flag")
+            .header("x-custom", " value ")
+            .body(())?
+            .into_parts()
+            .0;
+        for credential in query_signing_credentials() {
+            let uses_sign_blob = credential.has_token();
+            let signer = query_signer(ctx.clone(), credential);
+            for (duration, expected_seconds) in [
+                (Duration::ZERO, None),
+                (Duration::from_millis(999), None),
+                (Duration::from_secs(1), Some("1")),
+                (Duration::from_secs(604_800), Some("604800")),
+                (Duration::from_millis(604_800_999), Some("604800")),
+                (Duration::from_secs(604_801), None),
+            ] {
+                let mut parts = original.clone();
+                let result = signer.sign(&mut parts, Some(duration)).await;
+                if let Some(seconds) = expected_seconds {
+                    result?;
+                    let query = parts.uri.query().unwrap();
+                    assert_eq!(query_get(query, "X-Goog-Expires"), Some(seconds));
+                    assert_eq!(mock_http.take_string_to_sign().is_some(), uses_sign_blob);
+                } else {
+                    let err = result.expect_err("out-of-range X-Goog-Expires must fail");
+                    assert_eq!(err.kind(), ErrorKind::RequestInvalid);
+                    assert!(err.to_string().contains("X-Goog-Expires"));
+                    assert_eq!(parts.uri, original.uri);
+                    assert_eq!(parts.headers, original.headers);
+                    assert!(mock_http.take_string_to_sign().is_none());
+                }
+            }
+        }
+        Ok(())
+    }
 
-        let query = parts.uri.query().expect("signed url must have query");
-        assert!(
-            parts
-                .uri
-                .to_string()
-                .starts_with(&format!("{original_uri}X-Goog-Algorithm="))
-        );
-        assert_eq!(
-            query_get(query, "X-Goog-Signature").expect("signature must exist"),
-            "010203"
-        );
+    #[tokio::test]
+    async fn invalid_credentials_take_priority_and_invalid_repeated_headers_leave_request_intact()
+    -> Result<()> {
+        let mock_http = MockHttpSend::default();
+        let ctx = crate::test_context().with_http_send(mock_http.clone());
+        let [_, iam] = query_signing_credentials();
+        let original = http::Request::put("https://example.com/object?flag&")
+            .version(http::Version::HTTP_2)
+            .extension(42_u32)
+            .header("x-meta", "first")
+            .header("x-meta", header::HeaderValue::from_bytes(b"second-\xff")?)
+            .body(())?
+            .into_parts()
+            .0;
+        let mut expired = iam.clone();
+        expired.token.as_mut().unwrap().expires_at = Some(Timestamp::now());
+        let mut missing_signer = iam.clone();
+        missing_signer.signer_email = None;
 
-        let goog_date = query_get(query, "X-Goog-Date").expect("date must exist");
-        let now = parse_goog_date_to_timestamp(goog_date);
-
-        let mut builder = http::Request::builder();
-        builder = builder.method(http::Method::GET);
-        builder = builder.uri(&original_uri);
-        let req = builder.body(Bytes::new()).expect("request must build");
-        let (mut parts_for_rebuild, _body) = req.into_parts();
-
-        let mut signing_req = SigningRequest::build(&mut parts_for_rebuild)?;
-        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
-        let (string_to_sign, authentication_query) = signer.build_string_to_sign(
-            &provider,
-            &mut signing_req,
-            "test-signer@example.com",
-            now,
-            expires_in,
-        )?;
-        let canonical_query = canonicalize_query(&signing_req, &authentication_query);
-        assert_eq!(
-            canonical_uri(&signing_req.path)?,
-            "/test-bucket/test%2Fobject"
-        );
-        assert!(canonical_query.contains(&("literal-plus".to_string(), "%2B".to_string())));
-        assert!(canonical_query.contains(&("double".to_string(), "%252F".to_string())));
-        let expected_payload_b64 = reqsign_core::hash::base64_encode(string_to_sign.as_bytes());
-
-        let recorded_payload_b64 = mock_http
-            .recorded
-            .lock()
-            .unwrap()
-            .payload_b64
-            .clone()
-            .expect("payload must be recorded");
-
-        assert_eq!(recorded_payload_b64, expected_payload_b64);
-
+        for (credential, duration, kind, message) in [
+            (
+                expired,
+                Duration::ZERO,
+                ErrorKind::CredentialInvalid,
+                "expires",
+            ),
+            (
+                missing_signer,
+                Duration::ZERO,
+                ErrorKind::CredentialInvalid,
+                "signer identity",
+            ),
+            (
+                iam,
+                Duration::from_secs(1),
+                ErrorKind::RequestInvalid,
+                "invalid signed header value",
+            ),
+        ] {
+            let mut parts = original.clone();
+            // Exercise the service entry point directly, including its staged Host header.
+            let err = RequestSigner::new("storage")
+                .sign_request(&ctx, &mut parts, Some(&credential), Some(duration))
+                .await
+                .expect_err("invalid request must fail");
+            assert_eq!(err.kind(), kind);
+            assert!(err.to_string().contains(message), "{err}");
+            assert_eq!(parts.uri.to_string(), original.uri.to_string());
+            assert_eq!(parts.headers, original.headers);
+            assert_eq!(parts.method, original.method);
+            assert_eq!(parts.version, original.version);
+            assert_eq!(parts.extensions.get::<u32>(), Some(&42));
+            assert!(mock_http.take_string_to_sign().is_none());
+        }
         Ok(())
     }
 
@@ -1226,7 +1419,7 @@ mod tests {
                     .uri
                     .query()
                     .expect("signed URL query must exist")
-                    .contains("X-Goog-Signature=010203")
+                    .contains("X-Goog-Signature=abcdef")
             );
         }
 
