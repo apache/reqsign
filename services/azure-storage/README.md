@@ -83,6 +83,9 @@ export AZURE_STORAGE_ACCOUNT_NAME=mystorageaccount
 export AZURE_STORAGE_ACCOUNT_KEY=base64encodedkey==
 ```
 
+`AZURE_STORAGE_ACCOUNT` supplies the Shared Key account name when neither
+`AZBLOB_ACCOUNT_NAME` nor `AZURE_STORAGE_ACCOUNT_NAME` is set.
+
 SAS token:
 
 ```bash
@@ -96,6 +99,19 @@ export AZURE_TENANT_ID=tenant-id
 export AZURE_CLIENT_ID=client-id
 export AZURE_CLIENT_SECRET=client-secret
 ```
+
+### Client certificate
+
+On native targets, set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and
+`AZURE_CLIENT_CERTIFICATE_PATH`. Use a PEM file containing an unencrypted
+PKCS#8 or PKCS#1 RSA private key and its certificate. Put the leaf certificate
+first, followed by any issuer certificates in chain order.
+
+For Microsoft Entra Subject Name/Issuer authentication, set
+`AZURE_CLIENT_SEND_CERTIFICATE_CHAIN=true` to include the public certificates
+in the assertion's `x5c` header. The header is omitted by default.
+`ClientCertificateCredentialProvider::with_send_certificate_chain` overrides
+the environment setting, including when set to `false`.
 
 ## Using Specific Providers
 
@@ -111,6 +127,42 @@ let static_provider = StaticCredentialProvider::new_shared_key(
     "base64encodedkey==",
 );
 ```
+
+## Use an Azure CLI session
+
+On native targets, the default Azure CLI provider requests the Azure Storage
+resource using `az account get-access-token`. It takes `AZURE_TENANT_ID` from the
+context environment when set to a non-blank value. To select a tenant and scope
+explicitly, supply the configured provider to your signer.
+
+```rust
+use reqsign::{azure, default_context, Signer};
+
+let provider = azure::AzureCliCredentialProvider::new()
+    .with_tenant_id("contoso.onmicrosoft.com")
+    .with_scope("https://storage.azure.com/.default");
+let signer = Signer::new(default_context(), provider, azure::RequestSigner::new());
+```
+
+`with_tenant_id` takes precedence over the environment. Use `with_resource` for a
+resource URI. The last scope or resource setting selects the token target.
+
+To use an existing Azure Developer CLI session, explicitly choose the `azd`
+provider. It requests the Azure Storage scope by default and accepts a custom
+scope via `with_scope`.
+
+```rust
+use reqsign::{azure, default_context, Signer};
+
+let signer = Signer::new(
+    default_context(),
+    azure::AzureDeveloperCliCredentialProvider::new(),
+    azure::RequestSigner::new(),
+);
+```
+
+Use the facade with the `azure` and `default-context` features for these
+examples. When supplying your own context, attach a `CommandExecute` adapter.
 
 ## Grant a Service SAS
 

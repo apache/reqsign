@@ -52,4 +52,25 @@ let mut req = http::Request::builder()
 signer.sign(&mut req, None).await?;
 ```
 
+## Azure API keys
+
+The `azure` feature also exposes `reqsign::azure::api_key` for Azure APIs that
+accept a key in a request header. Assemble a `Signer` with a static key or a
+caller-named environment variable and select the header required by the API.
+When the key rotates, create a new signer or call `with_credential_provider`
+with a provider for the rotated key. See the [signing example](https://docs.rs/reqsign/latest/reqsign/azure/index.html#azure-api-keys).
+
 <ProviderDetails id="azure-storage" />
+
+## Client certificate authentication
+
+On native targets, set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and
+`AZURE_CLIENT_CERTIFICATE_PATH`. The PEM file must contain an unencrypted
+PKCS#8 or PKCS#1 RSA private key and its certificate. Put the leaf certificate
+first, followed by any issuer certificates in chain order.
+
+For Microsoft Entra Subject Name/Issuer authentication, set
+`AZURE_CLIENT_SEND_CERTIFICATE_CHAIN=true` to send the public certificates in
+the assertion's `x5c` header. The header is omitted by default.
+`ClientCertificateCredentialProvider::with_send_certificate_chain` overrides
+the environment setting, including when set to `false`.

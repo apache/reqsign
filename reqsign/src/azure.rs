@@ -15,12 +15,41 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Azure Storage service support with convenience APIs
+//! Azure Storage signing and explicit [API key authentication](api_key) for Azure APIs.
 //!
 //! This module provides Azure Storage signing functionality along with convenience
 //! functions for common use cases.
 //!
-//! Shared Key credentials can also grant a typed Blob Storage Service SAS:
+//! ## Azure API keys
+//!
+//! Choose the credential source and header explicitly. Set your chosen
+//! environment variable and use a context with an environment adapter. For
+//! a key supplied by your application, use [`api_key::StaticCredentialProvider`]
+//! with `Context::new()`.
+//!
+//! ```no_run
+//! use reqsign::azure::api_key::{EnvCredentialProvider, RequestSigner};
+//! use reqsign::{Context, OsEnv, Signer};
+//!
+//! # async fn example() -> reqsign::Result<()> {
+//! let signer = Signer::new(
+//!     Context::new().with_env(OsEnv),
+//!     EnvCredentialProvider::new("MY_APIM_KEY")?,
+//!     RequestSigner::subscription_key(),
+//! );
+//! let mut request = http::Request::get("https://my-gateway.azure-api.net/catalog")
+//!     .body(())
+//!     .unwrap()
+//!     .into_parts()
+//!     .0;
+//! signer.sign(&mut request, None).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Blob Storage Service SAS
+//!
+//! Shared Key credentials can grant a typed Blob Storage Service SAS.
 //!
 //! ```no_run
 //! use std::time::Duration;

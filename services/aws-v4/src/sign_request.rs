@@ -15,9 +15,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{Credential, PercentEncodingMode, UriPathNormalizationMode};
+use crate::{Credential, PercentEncodingMode, StreamingSigner, UriPathNormalizationMode};
 use http::request::Parts;
-use reqsign_aws_core::signing::{SigV4SigningOptions, sign_request_parts};
+use reqsign_aws_core::signing::{
+    SigV4SigningOptions, sign_request_parts, sign_streaming_request_parts,
+};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Result, SignRequest};
 use std::time::Duration;
@@ -74,7 +76,7 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 /// `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`. Use
 /// [`reqsign_core::hash::hex_sha256`] for non-empty bytes. Hash after content
 /// encoding or compression, and do not change the payload after signing.
-/// Chunked or streaming payload signatures are not implemented.
+/// For `aws-chunked` uploads, use [`Self::sign_streaming_request`].
 ///
 /// The SigV4 signature covers the method, URI, signed headers, and declared
 /// payload hash; it does not encrypt the body or replace TLS, and the HTTP
@@ -258,6 +260,51 @@ impl RequestSigner {
         self
     }
 
+    /// Sign the initial HTTP request for one S3 `aws-chunked` upload.
+    ///
+    /// Prepare a fresh request head with the S3 upload headers before calling
+    /// this method. Set `x-amz-content-sha256` to one of
+    /// `STREAMING-AWS4-HMAC-SHA256-PAYLOAD`,
+    /// `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER`, or
+    /// `STREAMING-UNSIGNED-PAYLOAD-TRAILER`. Supply the content encoding,
+    /// lengths, and `x-amz-trailer` declaration as required by the operation.
+    /// An explicit `x-amz-date` must match the signer's effective time.
+    ///
+    /// The returned [`StreamingSigner`] uses the exact seed signature, scope,
+    /// time, and key used to sign this head. Pass it the chunks and trailing
+    /// headers for the same upload. The caller encodes the body and trailers,
+    /// computes upload checksums, transports the request, and prepares a new
+    /// head and signing context when retrying.
+    ///
+    /// Uses the same credential deadline as ordinary header signing. This
+    /// method uses the supplied credential and performs no credential discovery.
+    /// If signing fails, the request head is unchanged.
+    pub fn sign_streaming_request(
+        &self,
+        ctx: &Context,
+        req: &mut Parts,
+        credential: &Credential,
+    ) -> Result<StreamingSigner> {
+        sign_streaming_request_parts(
+            ctx,
+            req,
+            credential,
+            self.get_time(),
+            self.signing_options(),
+        )
+    }
+
+    fn signing_options(&self) -> SigV4SigningOptions<'_> {
+        SigV4SigningOptions {
+            service: &self.service,
+            region: &self.region,
+            percent_encoding_mode: self.percent_encoding_mode,
+            uri_path_normalization_mode: self.uri_path_normalization_mode,
+            uses_s3_express_session_token: self.uses_s3_express_session_token(),
+            excluded_headers: &self.excluded_headers,
+        }
+    }
+
     fn get_time(&self) -> Timestamp {
         self.time.unwrap_or_else(Timestamp::now)
     }
@@ -299,14 +346,7 @@ impl SignRequest for RequestSigner {
             credential,
             expires_in,
             self.get_time(),
-            SigV4SigningOptions {
-                service: &self.service,
-                region: &self.region,
-                percent_encoding_mode: self.percent_encoding_mode,
-                uri_path_normalization_mode: self.uri_path_normalization_mode,
-                uses_s3_express_session_token: self.uses_s3_express_session_token(),
-                excluded_headers: &self.excluded_headers,
-            },
+            self.signing_options(),
         )
     }
 }

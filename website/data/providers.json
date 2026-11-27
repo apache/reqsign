@@ -412,6 +412,11 @@
           "id": "static",
           "label": "Static account key or SAS token",
           "provider": "StaticCredentialProvider"
+        },
+        {
+          "id": "azure_developer_cli",
+          "label": "Azure Developer CLI (native targets)",
+          "provider": "AzureDeveloperCliCredentialProvider"
         }
       ],
       "credential_provider_crate": "reqsign-azure-storage"
