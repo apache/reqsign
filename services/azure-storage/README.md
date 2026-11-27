@@ -164,6 +164,13 @@ let signer = Signer::new(
 Use the facade with the `azure` and `default-context` features for these
 examples. When supplying your own context, attach a `CommandExecute` adapter.
 
+## Grant an Account SAS
+
+Use `AccountSasGranter` with a Shared Key for the configured account to issue a
+SAS for selected services, resource types, and permissions. The operation signs
+locally, requires an explicit positive lifetime, and defaults to HTTPS.
+See the [Account SAS example](src/account_sas.rs) for `Granter` setup.
+
 ## Grant a Service SAS
 
 Use a Shared Key source to mint an independently usable, expiration-aware SAS
