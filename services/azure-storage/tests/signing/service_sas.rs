@@ -17,7 +17,7 @@
 
 use bytes::Bytes;
 use http::StatusCode;
-use http::header::CONTENT_DISPOSITION;
+use http::header::{CONTENT_DISPOSITION, CONTENT_LENGTH};
 use reqsign_azure_storage::{RequestSigner, StaticCredentialProvider};
 use reqsign_core::{Context, OsEnv, Signer};
 use reqsign_file_read_tokio::TokioFileRead;
@@ -75,7 +75,16 @@ async fn presigned_get(
         url.push_str(value);
     }
 
-    let request = http::Request::get(&url)
+    send_presigned(ctx, http::Request::get(&url), account_name, account_key).await
+}
+
+async fn send_presigned(
+    ctx: &Context,
+    request: http::request::Builder,
+    account_name: &str,
+    account_key: &str,
+) -> anyhow::Result<http::Response<Bytes>> {
+    let request = request
         .body(Bytes::new())
         .map_err(|_| anyhow::anyhow!("failed to build the Azure Blob Service SAS probe"))?;
     let (mut parts, body) = request.into_parts();
@@ -164,4 +173,45 @@ async fn test_service_sas_presign_read_with_content_disposition_override() -> an
     );
 
     ensure_probe_body(&response)
+}
+
+#[tokio::test]
+#[ignore = "requires a live Azure blob whose name ends in a slash"]
+async fn test_service_sas_presign_marker_head() -> anyhow::Result<()> {
+    let (url, account_name, account_key) = get_test_config()
+        .ok_or_else(|| anyhow::anyhow!("REQSIGN_AZURE_STORAGE_TEST must be enabled"))?;
+    let uri: http::Uri = url
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid Azure marker probe URL"))?;
+    anyhow::ensure!(
+        uri.path().ends_with('/') && uri.query().is_none(),
+        "the marker probe URL must have a slash-ending path and no query"
+    );
+
+    let response = send_presigned(
+        &test_context(),
+        http::Request::head(uri),
+        &account_name,
+        &account_key,
+    )
+    .await?;
+    anyhow::ensure!(
+        response.status() == StatusCode::OK,
+        "Azure Service SAS marker HEAD returned HTTP {}",
+        response.status()
+    );
+    let content_length = response
+        .headers()
+        .get(CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<usize>().ok());
+    anyhow::ensure!(
+        content_length == Some(PROBE_BODY.len()),
+        "Azure Service SAS marker HEAD returned unexpected Content-Length {content_length:?}"
+    );
+    anyhow::ensure!(
+        response.body().is_empty(),
+        "Azure Service SAS marker HEAD returned a body"
+    );
+    Ok(())
 }

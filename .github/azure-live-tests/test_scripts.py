@@ -296,6 +296,26 @@ assert os.environ['REQSIGN_AZURE_STORAGE_SAS_TOKEN'] == 'fake-read-only-token'
         self.assertEqual(result.returncode, 42, result.stderr)
         self.assertEqual(self.resources(), [])
 
+    def test_failed_marker_head_cleans_up_the_exact_blob(self):
+        self.env.update(AZURE_STORAGE_AUTH_MODE='key',
+                        REQSIGN_AZURE_STORAGE_ACCOUNT_KEY='fake-key')
+        child = """import json, os, pathlib
+calls = (pathlib.Path(os.environ['FAKE_AZ_STATE']) / 'calls.jsonl').read_text().splitlines()
+upload = json.loads(calls[0])
+name = upload[upload.index('--name') + 1]
+assert name.endswith('/')
+assert os.environ['REQSIGN_AZURE_STORAGE_PROBE_URL'].endswith('/' + name)
+raise SystemExit(42)
+"""
+        result = self.run_script('with-probe.sh', '--marker', 'python3', '-c', child)
+        self.assertEqual(result.returncode, 42, result.stderr)
+        upload, generate_sas, delete = self.calls()
+        self.assertEqual(delete[:3], ['storage', 'blob', 'delete'])
+        blob_name = upload[upload.index('--name') + 1]
+        self.assertEqual(generate_sas[generate_sas.index('--name') + 1], blob_name)
+        self.assertEqual(delete[delete.index('--name') + 1], blob_name)
+        self.assertEqual(self.resources(), [])
+
     def test_failed_setup_does_not_run_test(self):
         self.env['FAIL_UPLOAD'] = '1'
         result = self.run_script('with-probe.sh', 'touch', str(self.root / 'ran'))

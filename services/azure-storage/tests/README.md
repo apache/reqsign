@@ -54,7 +54,9 @@ Every live provider test requires `REQSIGN_AZURE_STORAGE_PROBE_URL`. The URL mus
 identify a blob that contains `reqsign-live-azure-ok\n`. Run live tests through
 `.github/azure-live-tests/with-probe.sh` to create a uniquely named private blob,
 set this URL for the child command, and delete the blob when the command exits,
-including on test failure. Concurrent jobs and failed-job reruns use independent
+including on test failure. Use `with-probe.sh --marker` for the ignored
+`signing::service_sas::test_service_sas_presign_marker_head` test, which needs
+a blob name ending in `/`. Concurrent jobs and failed-job reruns use independent
 objects. The storage account and private container must already exist.
 
 The wrapper uses an existing Azure CLI login with permission to create and delete
