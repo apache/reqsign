@@ -21,7 +21,6 @@ mod region_set;
 mod sign_request;
 
 pub use region_set::SigningRegionSet;
-pub use reqsign_aws_core::PercentEncodingMode;
 pub use reqsign_aws_core::constants;
 pub use reqsign_aws_core::{
     AssumeRoleCredentialProvider, AssumeRoleWithWebIdentityCredentialProvider,
@@ -31,6 +30,7 @@ pub use reqsign_aws_core::{
     StaticCredentialProvider,
 };
 pub use reqsign_aws_core::{IMDSv2RegionProvider, Profile, SharedConfig};
+pub use reqsign_aws_core::{PercentEncodingMode, UriPathNormalizationMode};
 #[cfg(not(target_arch = "wasm32"))]
 pub use reqsign_aws_core::{ProcessCredentialProvider, SSOCredentialProvider};
 pub use sign_request::RequestSigner;

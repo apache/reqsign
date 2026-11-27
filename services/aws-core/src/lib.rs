@@ -31,6 +31,8 @@ pub use assume_role::AssumeRoleGrant;
 
 mod percent_encoding_mode;
 pub use percent_encoding_mode::PercentEncodingMode;
+mod uri_path_normalization_mode;
+pub use uri_path_normalization_mode::UriPathNormalizationMode;
 
 mod credential;
 pub use credential::Credential;
