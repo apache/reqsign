@@ -197,6 +197,7 @@ impl ProvideCredential for AssumeRoleChainCredentialProvider {
                     region: &region,
                     percent_encoding_mode: crate::PercentEncodingMode::Single,
                     uses_s3_express_session_token: false,
+                    excluded_headers: &[],
                 },
             )?;
             credential = operation
