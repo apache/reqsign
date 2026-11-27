@@ -24,6 +24,7 @@ Reqsign keeps explicit per-provider signing protocols while sharing one composit
 - [Upgrading to Reqsign 0.21 | Apache Reqsign™](https://reqsign.apache.org/docs/guides/upgrading-to-0.21/): Migrate to reqsign 0.21, reqsign-core 4.0, explicit contexts, and CryptoProvider-based cryptography.
 - [Aliyun Drive | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aliyun-drive/): Aliyun Drive Open Platform bearer tokens and JSON refresh-token exchange.
 - [Aliyun OSS | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aliyun-oss/): OSS signatures V1, V2, and V4 with a deep RAM credential chain.
+- [AWS HTTP Bearer | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aws-http-bearer/): HTTP Bearer token authentication for AWS services such as Amazon Bedrock.
 - [AWS SigV4 | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aws-sigv4/): Signature Version 4 for AWS services, with the full shared credential chain.
 - [AWS SigV4a | Apache Reqsign™](https://reqsign.apache.org/docs/providers/aws-sigv4a/): Asymmetric multi-region signing for AWS, sharing the SigV4 credential chain.
 - [Azure Storage | Apache Reqsign™](https://reqsign.apache.org/docs/providers/azure-storage/): Shared Key, SAS, and Microsoft Entra ID auth for Azure Storage.

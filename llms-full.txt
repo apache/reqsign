@@ -35,11 +35,11 @@ Sign HTTP requests, load cloud credentials, and grant scoped access — without 
 
 [Get started →](/docs/getting-started/)[View on GitHub](https://github.com/apache/reqsign)
 
-24signing providers
+25signing providers
 
 5granting operations
 
-19WASM-ready providers
+20WASM-ready providers
 
 0vendor SDKs required
 
@@ -165,11 +165,11 @@ let signer = aws::default_signer(ctx.clone(), "s3", "us-east-1").with_credential
 
 Providers
 
-## 24 providers. Explicit schemes.
+## 25 providers. Explicit schemes.
 
 Signers and credentials stay service-specific on purpose — the protocol differences are real, and hiding them breaks correctness. What Reqsign shares is the composition pattern.
 
-[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Vercel BlobBearer token](/docs/providers/vercel-blob/)[Vercel ArtifactsBearer token](/docs/providers/vercel-artifacts/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[UpyunUPYUN header signature (MD5-derived HMAC-SHA1)](/docs/providers/upyun/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)[Yandex DiskOAuth access token](/docs/providers/yandex-disk/)[SeafileAuthorization: Token header](/docs/providers/seafile/)[KoofrKoofr token authentication](/docs/providers/koofr/)[Baidu NetdiskBaidu Netdisk access\_token query parameter](/docs/providers/baidu-netdisk/)
+[AWS SigV4AWS Signature Version 4](/docs/providers/aws-sigv4/)[AWS SigV4aAWS Signature Version 4A](/docs/providers/aws-sigv4a/)[AWS HTTP BearerHTTP Bearer (RFC 6750)](/docs/providers/aws-http-bearer/)[Azure StorageShared Key · SAS token · Entra ID bearer token](/docs/providers/azure-storage/)[Vercel BlobBearer token](/docs/providers/vercel-blob/)[Vercel ArtifactsBearer token](/docs/providers/vercel-artifacts/)[CloudflareBearer token](/docs/providers/cloudflare/)[Backblaze B2B2 Native API account authorization token](/docs/providers/b2/)[Google CloudOAuth 2.0 bearer token · V4 signed URLs](/docs/providers/google/)[Aliyun OSSOSS signature V1 · OSS signature V2 · OSS signature V4](/docs/providers/aliyun-oss/)[Aliyun DriveBearer token](/docs/providers/aliyun-drive/)[Huawei Cloud OBSOBS signature](/docs/providers/huaweicloud-obs/)[Oracle CloudOCI request signature](/docs/providers/oracle/)[Tencent COSCOS signature](/docs/providers/tencent-cos/)[UpyunUPYUN header signature (MD5-derived HMAC-SHA1)](/docs/providers/upyun/)[Volcengine TOSTOS signature](/docs/providers/volcengine-tos/)[HTTP Message Signatures (RFC 9421)RFC 9421 HMAC-SHA256 · RFC 9421 RSASSA-PKCS1-v1\_5 SHA-256](/docs/providers/http-message-signatures/)[OpenStack KeystoneX-Auth-Token header · Swift TempURL (HMAC-SHA1/256/512)](/docs/providers/openstack-keystone/)[GitHubBearer token](/docs/providers/github/)[DropboxOAuth 2.0 bearer token](/docs/providers/dropbox/)[OneDriveOAuth 2.0 bearer token](/docs/providers/onedrive/)[Yandex DiskOAuth access token](/docs/providers/yandex-disk/)[SeafileAuthorization: Token header](/docs/providers/seafile/)[KoofrKoofr token authentication](/docs/providers/koofr/)[Baidu NetdiskBaidu Netdisk access\_token query parameter](/docs/providers/baidu-netdisk/)
 
 [Read the provider matrix →](/docs/providers/)
 
@@ -789,6 +789,7 @@ cargo add http anyhow
 | ----------------------- | ------------------------------------ |
 | aws                     | AWS SigV4 (alias of aws-v4)          |
 | aws-v4a                 | AWS SigV4a multi-region signing      |
+| aws-bearer              | AWS HTTP Bearer token authentication |
 | azure                   | Azure Storage                        |
 | b2                      | Backblaze B2 Native API              |
 | baidu-netdisk           | Baidu Netdisk                        |
@@ -901,6 +902,7 @@ Swap the entry point and the rest of the code stays the same. Each entry compose
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
 | [AWS SigV4](/docs/providers/aws-sigv4/)                                        | aws::default\_signer(ctx, service, region)                       |
 | [AWS SigV4a](/docs/providers/aws-sigv4a/)                                      | aws::v4a::default\_signer(ctx, service, region\_set)             |
+| [AWS HTTP Bearer](/docs/providers/aws-http-bearer/)                            | aws::bearer::default\_signer(ctx, signing\_name)                 |
 | [Azure Storage](/docs/providers/azure-storage/)                                | azure::default\_signer(ctx)                                      |
 | [Backblaze B2](/docs/providers/b2/)                                            | b2::default\_signer(ctx)                                         |
 | [Baidu Netdisk](/docs/providers/baidu-netdisk/)                                | baidu\_netdisk::default\_signer(ctx, access\_token)              |
@@ -994,6 +996,7 @@ Reqsign keeps each provider's signing protocol and credential semantics explicit
 | ------------------------------------------------------------------------------ | --------------------------------------------------------- | ------ | --------------- | -------- | ---- |
 | [AWS SigV4](/docs/providers/aws-sigv4/)                                        | AWS Signature Version 4                                   | ✓      | ✓               | ✓ 2      | ✓    |
 | [AWS SigV4a](/docs/providers/aws-sigv4a/)                                      | AWS Signature Version 4A                                  | ✓      | ✓               | —        | ✓    |
+| [AWS HTTP Bearer](/docs/providers/aws-http-bearer/)                            | HTTP Bearer (RFC 6750)                                    | ✓      | —               | —        | ✓    |
 | [Azure Storage](/docs/providers/azure-storage/)                                | Shared Key, SAS token, Entra ID bearer token              | ✓      | ✓               | ✓ 1      | ✓    |
 | [Vercel Blob](/docs/providers/vercel-blob/)                                    | Bearer token                                              | ✓      | —               | —        | ✓    |
 | [Vercel Artifacts](/docs/providers/vercel-artifacts/)                          | Bearer token                                              | ✓      | —               | —        | ✓    |
@@ -1406,11 +1409,11 @@ Slots you do not provide stay as no-op stubs that error when used — a credenti
 Reqsign's core and a defined subset of providers compile for`wasm32-unknown-unknown` — signing from browsers, edge runtimes, and plugin sandboxes. CI verifies this exact set on every commit:
 
 * `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-* Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, HTTP Message Signatures, Koofr, OneDrive, Upyun, Yandex Disk, Seafile**(facade features `aws`, `aws-v4a`, `azure`, `github`,`http-message-signatures`, `aliyun`, `aliyun-drive`, `b2`, `baidu-netdisk`,`cloudflare`, `vercel`, `tencent`, `dropbox`, `koofr`, `onedrive`, `oauth2`,`upyun`, `yandex-disk`, `seafile`)
+* Providers: **AWS SigV4, AWS SigV4a, AWS HTTP Bearer, Azure Storage, GitHub, Aliyun OSS, Aliyun Drive, Backblaze B2, Baidu Netdisk, Cloudflare, Vercel Blob, Vercel Artifacts, Tencent COS, Dropbox, HTTP Message Signatures, Koofr, OneDrive, Upyun, Yandex Disk, Seafile**(facade features `aws`, `aws-v4a`, `aws-bearer`, `azure`, `github`,`http-message-signatures`, `aliyun`, `aliyun-drive`, `b2`, `baidu-netdisk`,`cloudflare`, `vercel`, `tencent`, `dropbox`, `koofr`, `onedrive`, `oauth2`,`upyun`, `yandex-disk`, `seafile`)
 
 GitHub environment, static, and anonymous signing need no JavaScript clock. GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in bare WASM runtimes.
 
-Cloudflare and Vercel environment, static, and header signing need no JavaScript clock.
+AWS HTTP Bearer, Cloudflare, and Vercel environment, static, and header signing need no JavaScript clock.
 
 Yandex Disk static credentials without an expiry and header signing need no JavaScript clock; expiring Yandex Disk credentials read it. Baidu Netdisk static query signing also needs no JavaScript clock. Seafile signing also needs no JavaScript clock. Koofr signing needs no JavaScript clock and ignores`expires_in`. HTTP Message Signatures signing needs a JavaScript clock and therefore a wasm-bindgen host.
 
@@ -1437,7 +1440,7 @@ Two mechanics keep the crate WASM-clean: no direct filesystem, environment, or p
 
 There is no filesystem and no OS environment in a browser, so provide what your credential flows and signer actually need:
 
-* Static or externally injected credentials need a `CryptoProvider` and a clock, not an HTTP adapter. AWS signing stamps `Timestamp::now()`, so enable Jiff's JavaScript clock; `jiff/js` reads `js_sys::Date` through wasm-bindgen JS host imports and only runs on a wasm-bindgen host such as a browser or Node.
+* AWS SigV4 with static or externally injected credentials needs a`CryptoProvider`. For current-time signing, `Timestamp::now()` uses the`jiff/js` feature to read `js_sys::Date` through wasm-bindgen on a host such as a browser or Node.
 * Credential flows that call network endpoints — STS, metadata, token refresh — also need an `HttpSend` adapter. The `FetchHttpSend` below is a placeholder; implement it over `fetch()` (for example through wasm-bindgen) before use.
 
 ```
@@ -2750,6 +2753,77 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 * [EcsRamRoleCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.EcsRamRoleCredentialProvider.html) — ECS RAM role metadata
 * [AssumeRoleWithOidcCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.AssumeRoleWithOidcCredentialProvider.html) — STS AssumeRole with OIDC
 * [StaticCredentialProvider](https://docs.rs/reqsign-aliyun-oss/latest/reqsign%5Faliyun%5Foss/struct.StaticCredentialProvider.html) — Static access keys
+
+---
+
+---
+url: https://reqsign.apache.org/docs/providers/aws-http-bearer/
+---
+# AWS HTTP Bearer | Apache Reqsign™
+
+# AWS HTTP Bearer
+
+AWS operations that use Smithy HTTP Bearer authentication, including Amazon Bedrock operations that accept API keys.
+
+HTTP Bearer (RFC 6750)✓ header signing— query / presign✓ WASM[docs.rs/reqsign-aws-core ↗](https://docs.rs/reqsign-aws-core)
+
+Signing replaces Authorization with a sensitive Bearer value and preserves the URI. Passing expires\_in is unsupported.
+
+## Get started[​](#get-started "Direct link to Get started")
+
+```
+
+cargo add reqsign --no-default-features --features aws-bearer
+
+
+```
+
+Set `AWS_BEARER_TOKEN_BEDROCK` to your Amazon Bedrock API key, then select`bedrock` as the AWS signing name.
+
+```
+
+use reqsign::{Context, OsEnv};
+
+use reqsign::aws::bearer;
+
+
+let ctx = Context::new().with_env(OsEnv);
+
+let signer = bearer::default_signer(ctx, "bedrock")?;
+
+let mut req = http::Request::post(
+
+    "https://bedrock-runtime.us-west-2.amazonaws.com/model/example-model/invoke",
+
+)
+
+.body(())?
+
+.into_parts()
+
+.0;
+
+signer.sign(&mut req, None).await?;
+
+
+```
+
+To supply the token directly, construct a `Signer` with`bearer::StaticCredentialProvider::new(token)?` and `bearer::RequestSigner`. Both sources provide opaque tokens. When a token changes, create a new signer or call `with_credential_provider` to start with an empty credential cache.
+
+## Credentials
+
+### Default credential chain
+
+The default signer tries these sources in order and uses the first one that yields a credential — no configuration needed when any of them is present:
+
+1. Service-scoped AWS\_BEARER\_TOKEN\_<SERVICE> environment variable
+
+### Credential providers
+
+Available `ProvideCredential` implementations. Construct any of them directly, reorder them, or compose them into your own chain — see [Loading credentials](/docs/guides/credentials/):
+
+* [EnvCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/bearer/struct.EnvCredentialProvider.html) — Service-scoped AWS\_BEARER\_TOKEN\_<SERVICE> environment variable
+* [StaticCredentialProvider](https://docs.rs/reqsign-aws-core/latest/reqsign%5Faws%5Fcore/bearer/struct.StaticCredentialProvider.html) — Static bearer token
 
 ---
 
@@ -5101,7 +5175,7 @@ The two validity checks have different jobs — `is_valid()` answers the_caching
 | Selects query authentication with that validity window | AWS SigV4/SigV4a, Aliyun OSS, Tencent COS, Volcengine TOS, Google Cloud Storage (V4 signed URLs), Huawei Cloud OBS |
 | Bounds credential validity; header signing regardless  | Oracle Cloud                                                                                                       |
 | Ignored; header signing always uses the current Date   | Upyun                                                                                                              |
-| Rejected; header authentication only                   | Aliyun Drive, Cloudflare, Yandex Disk                                                                              |
+| Rejected (header authentication only)                  | AWS HTTP Bearer, Aliyun Drive, Cloudflare, Yandex Disk                                                             |
 | Rejected; static query authentication only             | Baidu Netdisk                                                                                                      |
 | Rejected; header signing only                          | Vercel Blob, Vercel Artifacts                                                                                      |
 | Requests a granted credential's validity window        | Granting operations (subject to the operation's own maximum)                                                       |
