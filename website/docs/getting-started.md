@@ -41,6 +41,7 @@ cargo add http anyhow
 | --- | --- |
 | `aws` | AWS SigV4 (alias of `aws-v4`) |
 | `aws-v4a` | AWS SigV4a multi-region signing |
+| `aws-bearer` | AWS HTTP Bearer token authentication |
 | `azure` | Azure Storage |
 | `b2` | Backblaze B2 Native API |
 | `baidu-netdisk` | Baidu Netdisk |
@@ -124,6 +125,7 @@ services without an ambient source take the required identity explicitly:
 | --- | --- |
 | [AWS SigV4](/docs/providers/aws-sigv4/) | `aws::default_signer(ctx, service, region)` |
 | [AWS SigV4a](/docs/providers/aws-sigv4a/) | `aws::v4a::default_signer(ctx, service, region_set)` |
+| [AWS HTTP Bearer](/docs/providers/aws-http-bearer/) | `aws::bearer::default_signer(ctx, signing_name)` |
 | [Azure Storage](/docs/providers/azure-storage/) | `azure::default_signer(ctx)` |
 | [Backblaze B2](/docs/providers/b2/) | `b2::default_signer(ctx)` |
 | [Baidu Netdisk](/docs/providers/baidu-netdisk/) | `baidu_netdisk::default_signer(ctx, access_token)` |

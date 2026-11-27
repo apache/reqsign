@@ -83,11 +83,11 @@ Reqsign's core and a defined subset of providers compile for
 sandboxes. CI verifies this exact set on every commit:
 
 - `reqsign-core`, `reqsign-aws-core`, `reqsign-oauth2`
-- Providers: **AWS SigV4, AWS SigV4a, Azure Storage, GitHub, Aliyun OSS,
+- Providers: **AWS SigV4, AWS SigV4a, AWS HTTP Bearer, Azure Storage, GitHub, Aliyun OSS,
   Aliyun Drive, Backblaze B2, Baidu Netdisk, Cloudflare, Vercel Blob,
   Vercel Artifacts, Tencent COS, Dropbox, HTTP Message Signatures, Koofr,
   OneDrive, Upyun, Yandex Disk, Seafile**
-  (facade features `aws`, `aws-v4a`, `azure`, `github`,
+  (facade features `aws`, `aws-v4a`, `aws-bearer`, `azure`, `github`,
   `http-message-signatures`, `aliyun`, `aliyun-drive`, `b2`, `baidu-netdisk`,
   `cloudflare`, `vercel`, `tencent`, `dropbox`, `koofr`, `onedrive`, `oauth2`,
   `upyun`, `yandex-disk`, `seafile`)
@@ -96,8 +96,8 @@ GitHub environment, static, and anonymous signing need no JavaScript clock.
 GitHub CLI discovery requires a `CommandExecute` adapter and is unavailable in
 bare WASM runtimes.
 
-Cloudflare and Vercel environment, static, and header signing need no JavaScript
-clock.
+AWS HTTP Bearer, Cloudflare, and Vercel environment, static, and header signing
+need no JavaScript clock.
 
 Yandex Disk static credentials without an expiry and header signing need no
 JavaScript clock; expiring Yandex Disk credentials read it. Baidu Netdisk static
@@ -141,11 +141,10 @@ futures that are `MaybeSend` — `Send` on native targets, relaxed on WASM.
 There is no filesystem and no OS environment in a browser, so provide what
 your credential flows and signer actually need:
 
-- Static or externally injected credentials need a `CryptoProvider` and a
-  clock, not an HTTP adapter. AWS signing stamps `Timestamp::now()`, so enable
-  Jiff's JavaScript clock; `jiff/js` reads `js_sys::Date` through wasm-bindgen
-  JS host imports and only runs on a wasm-bindgen host such as a browser or
-  Node.
+- AWS SigV4 with static or externally injected credentials needs a
+  `CryptoProvider`. For current-time signing, `Timestamp::now()` uses the
+  `jiff/js` feature to read `js_sys::Date` through wasm-bindgen on a host such as
+  a browser or Node.
 - Credential flows that call network endpoints — STS, metadata, token refresh —
   also need an `HttpSend` adapter. The `FetchHttpSend` below is a placeholder;
   implement it over `fetch()` (for example through wasm-bindgen) before use.

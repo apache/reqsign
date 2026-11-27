@@ -36,7 +36,9 @@ export default function ProviderDetails({ id }) {
   // rustdoc generates struct pages only in the defining crate, so type links
   // target credential_provider_crate rather than the facade-facing crate.
   const docsCrate = p.credential_provider_crate;
-  const docsPath = docsCrate.replace(/-/g, "_");
+  const docsPath = [docsCrate.replace(/-/g, "_"), p.credential_provider_module]
+    .filter(Boolean)
+    .join("/");
   const typeUrl = (type) =>
     `https://docs.rs/${docsCrate}/latest/${docsPath}/struct.${type}.html`;
 

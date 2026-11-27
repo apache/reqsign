@@ -26,6 +26,12 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+http-bearer = []
+
 [dependencies]
 asyncband = { workspace = true }
 bytes = { workspace = true }

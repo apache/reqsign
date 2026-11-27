@@ -277,6 +277,7 @@ let signer = seafile::default_signer(ctx.clone());
 - `aliyun`: Enable Aliyun OSS support
 - `aliyun-drive`: Enable Aliyun Drive Open Platform support
 - `aws`: Enable AWS services support (alias of `aws-v4`)
+- `aws-bearer`: Enable `aws::bearer` for AWS HTTP Bearer token authentication
 - `aws-v4`: Enable AWS Signature V4 signing support
 - `aws-v4a`: Enable AWS Signature V4a multi-region signing support
 - `azure`: Enable Azure Storage support
@@ -327,8 +328,9 @@ or externally injected credentials. Service features still select the same
 backend algorithms on WASM, but RSA, AES-GCM, and secure random generation
 remain unsupported there and return `ConfigInvalid`.
 
-AWS signing stamps each request with `Timestamp::now()`. A WASM build must
-enable Jiff's JavaScript clock in the application for that to work:
+AWS HTTP Bearer signing can run without a crypto provider or JavaScript clock.
+AWS SigV4 and SigV4a stamp each request with `Timestamp::now()` by default.
+For current-time SigV4 or SigV4a signing on WASM, enable Jiff's JavaScript clock.
 
 ```toml
 [dependencies]
