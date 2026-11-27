@@ -62,10 +62,22 @@ with a provider for the rotated key. See the [signing example](https://docs.rs/r
 
 ## Microsoft Entra ID for Azure APIs
 
-Use `DefaultCredentialProvider::builder().no_env().with_scope(scope)?` to
-request a token for one Azure resource. Pass the resulting provider and
-`RequestSigner::bearer()` to `Signer::new`. This signing mode writes only
-`Authorization: Bearer` and requires `None` for `expires_in`.
+Choose the scope for one Azure resource. This example configures a Key Vault
+signer and excludes Storage environment credentials.
+
+```rust
+use reqsign::{azure, default_context, Signer};
+
+let scope = "https://vault.azure.net/.default";
+let provider = azure::DefaultCredentialProvider::builder()
+    .no_env()
+    .with_scope(scope)?
+    .build();
+let signer = Signer::new(default_context(), provider, azure::RequestSigner::bearer());
+```
+
+Pass `None` for `expires_in` when signing. This mode writes only
+`Authorization: Bearer`.
 
 Set `AZURE_AUTHORITY_HOST` for a sovereign cloud, or use `with_authority_host`
 on the client secret, client certificate, workload identity, or Azure
