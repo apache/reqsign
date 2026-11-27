@@ -62,6 +62,14 @@ with a provider for the rotated key. See the [signing example](https://docs.rs/r
 
 <ProviderDetails id="azure-storage" />
 
+## Managed identity
+
+The default chain's `imds` slot supports App Service, Functions, Container Apps,
+and Azure VM IMDS. App Service, Functions, and Container Apps supply
+`IDENTITY_ENDPOINT` and `IDENTITY_HEADER`. Legacy App Service and Functions supply
+`MSI_ENDPOINT` and `MSI_SECRET`. Each protocol sends its own header to its configured
+endpoint. Use `no_imds()` to remove this slot. See the [provider configuration](https://docs.rs/reqsign-azure-storage/latest/reqsign_azure_storage/struct.ImdsCredentialProvider.html).
+
 ## Client certificate authentication
 
 On native targets, set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and

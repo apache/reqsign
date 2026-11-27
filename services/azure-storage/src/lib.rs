@@ -93,14 +93,15 @@
 //!
 //! ### Managed Identity
 //!
-//! When running on Azure services (VMs, App Service, AKS), the crate
-//! automatically uses managed identity:
+//! The default chain includes [`ImdsCredentialProvider`] for Azure VM IMDS,
+//! App Service, Functions, and Container Apps. The provider requests a token
+//! for `https://storage.azure.com/` by default. To use managed identity directly
+//! with a different token resource, pass that resource URI to the provider.
 //!
 //! ```no_run
-//! use reqsign_azure_storage::DefaultCredentialProvider;
+//! use reqsign_azure_storage::ImdsCredentialProvider;
 //!
-//! // Create loader that will try managed identity
-//! let loader = DefaultCredentialProvider::new();
+//! let provider = ImdsCredentialProvider::new().with_resource("https://management.azure.com/");
 //! ```
 //!
 //! Customize the default chain with slot-based builder APIs:
