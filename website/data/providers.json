@@ -257,6 +257,67 @@
       "credential_provider_crate": "reqsign-aws-core"
     },
     {
+      "id": "aws-http-bearer",
+      "display_name": "AWS HTTP Bearer",
+      "family": "AWS",
+      "blurb": "HTTP Bearer token authentication for AWS APIs such as Amazon Bedrock.",
+      "service_scope": "AWS operations that use Smithy HTTP Bearer authentication, including Amazon Bedrock operations that accept API keys.",
+      "signing_schemes": [
+        "HTTP Bearer (RFC 6750)"
+      ],
+      "crates": [
+        "reqsign-aws-core"
+      ],
+      "facade_features": [
+        {
+          "name": "aws-bearer",
+          "capability": "Enables reqsign::aws::bearer and the http-bearer feature in reqsign-aws-core."
+        }
+      ],
+      "default_signer": {
+        "available": true,
+        "entry": "reqsign::aws::bearer::default_signer(ctx, signing_name)"
+      },
+      "credential_sources": [
+        {
+          "id": "env",
+          "label": "Service-scoped AWS_BEARER_TOKEN_<SERVICE> environment variable",
+          "provider": "EnvCredentialProvider"
+        }
+      ],
+      "explicit_sources": [
+        {
+          "id": "static",
+          "label": "Static bearer token",
+          "provider": "StaticCredentialProvider"
+        }
+      ],
+      "request_auth": {
+        "header": true,
+        "query": false,
+        "notes": "Signing replaces Authorization with a sensitive Bearer value and preserves the URI. Passing expires_in is unsupported."
+      },
+      "credential_granting": [],
+      "wasm": {
+        "supported": true,
+        "verified_by": "CI builds the aws-bearer facade feature for wasm32-unknown-unknown. Signing requires no JavaScript clock."
+      },
+      "integration_tests": {
+        "level": "mock",
+        "notes": "Offline facade tests exercise service selection, static tokens, header insertion, and request preservation on error.",
+        "refs": [
+          "reqsign/tests/aws_bearer.rs"
+        ]
+      },
+      "source_refs": [
+        "services/aws-core/src/bearer.rs",
+        "reqsign/src/aws.rs"
+      ],
+      "last_verified": "2026-11-27",
+      "credential_provider_crate": "reqsign-aws-core",
+      "credential_provider_module": "bearer"
+    },
+    {
       "id": "azure-storage",
       "display_name": "Azure Storage",
       "family": "Azure",

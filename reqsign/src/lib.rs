@@ -39,7 +39,7 @@ pub mod aliyun;
 #[cfg(feature = "aliyun-drive")]
 pub mod aliyun_drive;
 
-#[cfg(any(feature = "aws-v4", feature = "aws-v4a"))]
+#[cfg(any(feature = "aws-bearer", feature = "aws-v4", feature = "aws-v4a"))]
 pub mod aws;
 
 #[cfg(feature = "azure")]

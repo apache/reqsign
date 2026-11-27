@@ -41,6 +41,7 @@ reqsign-crypto-rustcrypto = { workspace = true, optional = true }
 # Service implementations (optional)
 reqsign-aliyun-drive = { workspace = true, optional = true }
 reqsign-aliyun-oss = { workspace = true, optional = true }
+reqsign-aws-core = { workspace = true, optional = true }
 reqsign-aws-v4 = { workspace = true, optional = true }
 reqsign-aws-v4a = { workspace = true, optional = true }
 reqsign-azure-storage = { workspace = true, optional = true }
@@ -84,6 +85,7 @@ default-context = [
 aliyun = ["dep:reqsign-aliyun-oss"]
 aliyun-drive = ["dep:reqsign-aliyun-drive"]
 aws = ["aws-v4"]
+aws-bearer = ["dep:reqsign-aws-core", "reqsign-aws-core/http-bearer"]
 aws-v4 = ["dep:reqsign-aws-v4"]
 aws-v4a = ["dep:reqsign-aws-v4a", "reqsign-crypto-rustcrypto?/p256"]
 azure = ["dep:reqsign-azure-storage", "reqsign-crypto-rustcrypto?/rsa"]
@@ -115,6 +117,7 @@ full = [
   "aliyun",
   "aliyun-drive",
   "aws",
+  "aws-bearer",
   "aws-v4a",
   "azure",
   "b2",

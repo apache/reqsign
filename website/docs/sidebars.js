@@ -38,6 +38,7 @@ module.exports = {
       items: [
         "providers/aws-sigv4",
         "providers/aws-sigv4a",
+        "providers/aws-http-bearer",
         "providers/azure-storage",
         "providers/vercel-blob",
         "providers/vercel-artifacts",
