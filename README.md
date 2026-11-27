@@ -282,7 +282,7 @@ let signer = yandex_disk::default_signer(ctx, "yandex-disk-oauth-token");
 
 ## Contributing
 
-Check out the [CONTRIBUTING.md](CONTRIBUTING.md) guide for more details on getting started with contributing to this project.
+Read [DESIGN.md](DESIGN.md) for Reqsign's architectural model and API design principles, and check out [CONTRIBUTING.md](CONTRIBUTING.md) for getting started with contributing to this project.
 
 ## Getting help
 
