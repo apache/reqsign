@@ -24,7 +24,7 @@ use http::{HeaderValue, Request, request::Parts};
 use reqsign::aws::{v4, v4a};
 use reqsign::time::Timestamp;
 use reqsign::{Context, ErrorKind, RustCryptoProvider, SignRequest, Signer};
-use v4::Credential;
+use v4::{Credential, UriPathNormalizationMode};
 
 const REGION: &str = "us-east-1";
 const OBJECT_URI: &str = "https://example.com/object%2fkey";
@@ -396,6 +396,73 @@ async fn header_to_presign_keeps_an_indistinguishable_unsigned_payload_header() 
                 .split('&')
                 .any(|pair| pair == "X-Amz-SignedHeaders=host%3Bx-amz-content-sha256")
         );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn retries_use_the_normalized_path_and_exclude_configured_headers() -> Result<()> {
+    const WIRE_PATH: &str = "/a//b/.././%2e/object%2fkey";
+    const NORMALIZED_PATH: &str = "/a/%2e/object%2fkey";
+    const QUERY: &str = "dup=second&slash=%2f&dup=first&literal-plus=+&flag&empty=&&";
+    let input_uri = format!("https://example.com{WIRE_PATH}?{QUERY}");
+    let canonical_uri = format!("https://example.com{NORMALIZED_PATH}?{QUERY}");
+    let mut input = request(&input_uri);
+    input
+        .headers
+        .insert("x-proxy", HeaderValue::from_static("first value"));
+    input.headers.insert(
+        "x-amz-content-sha256",
+        HeaderValue::from_static(v4::EMPTY_STRING_SHA256),
+    );
+
+    let context = Context::new().with_crypto(RustCryptoProvider::new());
+    let credential = credential("fixture-access-key", None);
+    let retry_time = "2025-01-01T00:00:01Z";
+    let time = retry_time.parse()?;
+    let retry_signers = [
+        static_signer(
+            &context,
+            v4_signer(time)
+                .with_uri_path_normalization_mode(UriPathNormalizationMode::Enabled)
+                .with_excluded_headers(["X-PrOxY"]),
+            &credential,
+        ),
+        static_signer(
+            &context,
+            v4a_signer(time)
+                .with_uri_path_normalization_mode(UriPathNormalizationMode::Enabled)
+                .with_excluded_headers(["X-PrOxY"]),
+            &credential,
+        ),
+    ];
+    for (first, (retry, reference)) in signers("2024-12-31T23:59:59Z")?
+        .into_iter()
+        .zip(retry_signers.into_iter().zip(signers(retry_time)?))
+    {
+        for first_mode in [None, PRESIGN] {
+            let mut signed = input.clone();
+            first.sign(&mut signed, first_mode).await?;
+            for retry_mode in [None, PRESIGN] {
+                let mut retried = signed.clone();
+                retried
+                    .headers
+                    .insert("x-proxy", HeaderValue::from_static("retry value"));
+                retry.sign(&mut retried, retry_mode).await?;
+
+                // Sign the already normalized path without the proxy header.
+                let mut expected = input.clone();
+                expected.uri = canonical_uri.parse()?;
+                expected.headers.remove("x-proxy");
+                reference.sign(&mut expected, retry_mode).await?;
+
+                assert_eq!(retried.uri.path(), WIRE_PATH);
+                assert_eq!(retried.uri.query(), expected.uri.query());
+                assert!(retried.uri.to_string().starts_with(&input_uri));
+                assert_eq!(retried.headers.remove("x-proxy").unwrap(), "retry value");
+                assert_eq!(retried.headers, expected.headers);
+            }
+        }
     }
     Ok(())
 }

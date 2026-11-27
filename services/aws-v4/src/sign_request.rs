@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::{Credential, PercentEncodingMode};
+use crate::{Credential, PercentEncodingMode, UriPathNormalizationMode};
 use http::request::Parts;
 use reqsign_aws_core::signing::{SigV4SigningOptions, sign_request_parts};
 use reqsign_core::time::Timestamp;
@@ -114,6 +114,7 @@ pub struct RequestSigner {
     service: String,
     region: String,
     percent_encoding_mode: PercentEncodingMode,
+    uri_path_normalization_mode: UriPathNormalizationMode,
     use_standard_session_token: bool,
     excluded_headers: Vec<String>,
 
@@ -127,6 +128,7 @@ impl RequestSigner {
             service: service.into(),
             region: region.into(),
             percent_encoding_mode: PercentEncodingMode::default(),
+            uri_path_normalization_mode: UriPathNormalizationMode::default(),
             use_standard_session_token: false,
             excluded_headers: Vec::new(),
 
@@ -176,8 +178,8 @@ impl RequestSigner {
     /// The default is [`PercentEncodingMode::Single`] for every signing service,
     /// preserving Reqsign's existing canonical URI and signature bytes. Select
     /// [`PercentEncodingMode::Double`] explicitly when the service expects one
-    /// additional encoding pass over the wire path. This does not modify the
-    /// outgoing URI, normalize paths, or change payload hashing.
+    /// additional encoding pass over the encoded path. Path normalization is
+    /// configured separately with [`Self::with_uri_path_normalization_mode`].
     ///
     /// # Example
     ///
@@ -189,6 +191,18 @@ impl RequestSigner {
     /// ```
     pub fn with_percent_encoding_mode(mut self, mode: PercentEncodingMode) -> Self {
         self.percent_encoding_mode = mode;
+        self
+    }
+
+    /// Set canonical URI path normalization for header signing and presigning.
+    ///
+    /// [`UriPathNormalizationMode::Disabled`] is the default for every service,
+    /// including S3. [`UriPathNormalizationMode::Enabled`] resolves literal `.`
+    /// and `..` segments and collapses repeated slashes before applying
+    /// [`PercentEncodingMode`]. The outgoing path and existing query bytes are
+    /// preserved.
+    pub fn with_uri_path_normalization_mode(mut self, mode: UriPathNormalizationMode) -> Self {
+        self.uri_path_normalization_mode = mode;
         self
     }
 
@@ -277,6 +291,7 @@ impl SignRequest for RequestSigner {
                 service: &self.service,
                 region: &self.region,
                 percent_encoding_mode: self.percent_encoding_mode,
+                uri_path_normalization_mode: self.uri_path_normalization_mode,
                 uses_s3_express_session_token: self.uses_s3_express_session_token(),
                 excluded_headers: &self.excluded_headers,
             },
@@ -297,7 +312,7 @@ mod tests {
     use aws_sigv4::http_request::SignableRequest;
     use aws_sigv4::http_request::SignatureLocation;
     use aws_sigv4::http_request::SigningSettings;
-    use aws_sigv4::http_request::UriPathNormalizationMode;
+    use aws_sigv4::http_request::UriPathNormalizationMode as AwsUriPathNormalizationMode;
     use aws_sigv4::sign::v4;
     use http::HeaderValue;
     use http::Request;
@@ -1245,6 +1260,7 @@ mod tests {
         mut request: Request<&'static str>,
         now: Timestamp,
         mode: PercentEncodingMode,
+        normalization_mode: AwsUriPathNormalizationMode,
         presigned: bool,
         excluded_headers: &[&'static str],
     ) -> Result<Request<&'static str>> {
@@ -1254,7 +1270,7 @@ mod tests {
             PercentEncodingMode::Double => AwsPercentEncodingMode::Double,
         };
         // Match reqsign's signing settings for unsigned payloads and wire-ready paths.
-        settings.uri_path_normalization_mode = UriPathNormalizationMode::Disabled;
+        settings.uri_path_normalization_mode = normalization_mode;
         settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         settings.session_token_mode = SessionTokenMode::Include;
         settings.session_token_name_override = None;
@@ -1368,6 +1384,7 @@ mod tests {
                     encoding_request(&uri)?,
                     now,
                     mode,
+                    AwsUriPathNormalizationMode::Disabled,
                     presigned,
                     &[],
                 )?;
@@ -1404,6 +1421,74 @@ mod tests {
     #[tokio::test]
     async fn canonical_uri_encoding_query_signatures_match_aws_sigv4() -> Result<()> {
         check_encoding_signatures_match_aws_sigv4(true).await
+    }
+
+    #[tokio::test]
+    async fn normalized_path_signatures_match_aws_sigv4() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let ctx = crate::test_context();
+        let credential = s3_express_credential(now);
+        for (path, single_encoding_path) in [
+            ("", None),
+            ("/", None),
+            ("//", None),
+            ("/./..", None),
+            ("/a//b/.", None),
+            ("/a//b/..", None),
+            ("/../a//./%2e/%2E%2e/x%2F.%2f/", Some("/a/./../x%2F.%2F/")),
+        ] {
+            let query = "z=last&slash=%2f&dup=two&dup=one&empty=&flag";
+            let uri = format!("https://example.com{path}?{query}");
+            let request = encoding_request(&uri)?;
+            for encoding in [PercentEncodingMode::Single, PercentEncodingMode::Double] {
+                // Reqsign's Single decodes and re-encodes each segment. Give the
+                // SDK its expected canonical path with normalization disabled.
+                let (sdk_path, sdk_normalization) = match (encoding, single_encoding_path) {
+                    (PercentEncodingMode::Single, Some(path)) => {
+                        (path, AwsUriPathNormalizationMode::Disabled)
+                    }
+                    _ => (path, AwsUriPathNormalizationMode::Enabled),
+                };
+                let sdk_uri = format!("https://example.com{sdk_path}?{query}");
+                let signer = RequestSigner::new("execute-api", "us-east-1")
+                    .with_time(now)
+                    .with_percent_encoding_mode(encoding)
+                    .with_uri_path_normalization_mode(UriPathNormalizationMode::Enabled);
+                for presigned in [false, true] {
+                    let expected = aws_signed_execute_api_request(
+                        encoding_request(&sdk_uri)?,
+                        now,
+                        encoding,
+                        sdk_normalization,
+                        presigned,
+                        &[],
+                    )?;
+                    let (mut parts, body) = request.clone().into_parts();
+                    signer
+                        .sign_request(
+                            &ctx,
+                            &mut parts,
+                            Some(&credential),
+                            presigned.then_some(Duration::from_secs(60)),
+                        )
+                        .await?;
+                    let actual = Request::from_parts(parts, body);
+                    let name = format!("{encoding:?}, presigned={presigned}, path={path:?}");
+                    compare_request(&name, &expected, &actual);
+                    if presigned {
+                        let wire_prefix = format!("{}&", request.uri());
+                        assert!(actual.uri().to_string().starts_with(&wire_prefix), "{name}");
+                    } else {
+                        assert_eq!(
+                            actual.uri().to_string(),
+                            request.uri().to_string(),
+                            "{name}"
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     #[tokio::test]
@@ -1495,6 +1580,7 @@ mod tests {
                     encoding_request(&legacy_uri)?,
                     now,
                     PercentEncodingMode::Single,
+                    AwsUriPathNormalizationMode::Disabled,
                     presigned,
                     &[],
                 )?;
@@ -1505,6 +1591,7 @@ mod tests {
                     encoding_request(&uri)?,
                     now,
                     PercentEncodingMode::Single,
+                    AwsUriPathNormalizationMode::Disabled,
                     presigned,
                     &[],
                 )?;
@@ -1549,6 +1636,7 @@ mod tests {
                 request.clone(),
                 now,
                 PercentEncodingMode::Single,
+                AwsUriPathNormalizationMode::Disabled,
                 presigned,
                 &["user-agent", "x-amzn-trace-id"],
             )?;
@@ -1603,6 +1691,7 @@ mod tests {
                     original.clone(),
                     now,
                     PercentEncodingMode::Single,
+                    AwsUriPathNormalizationMode::Disabled,
                     presigned,
                     &[],
                 )?;

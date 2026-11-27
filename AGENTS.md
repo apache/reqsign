@@ -32,9 +32,14 @@ The codebase is a Cargo workspace with three layers:
 
 ## API Design References
 
-When working on an API area with an explicit design document, follow that
-document as the source of truth instead of inferring policy from the current
-implementation.
+Consult [DESIGN.md](DESIGN.md) as the living source of truth for Reqsign's
+architectural model, ownership boundaries, core invariants, and public API
+design principles before introducing public APIs, new services, or
+cross-boundary changes, and update it when architectural invariants change.
+
+When working on an API area with a dedicated subsystem design document, follow
+that document as the source of truth instead of inferring policy from the
+current implementation.
 
 For security-sensitive changes, follow [SECURITY.md](SECURITY.md) and
 [THREAT_MODEL.md](THREAT_MODEL.md) as the source of truth for Reqsign's

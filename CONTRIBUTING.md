@@ -2,6 +2,8 @@
 
 ## Get Started
 
+Read [DESIGN.md](DESIGN.md) first to align with Reqsign's architectural boundaries and API design principles.
+
 This is a Rust project, so [rustup](https://rustup.rs/) is the best place to start.
 
 This is a pure rust project, so only `cargo` is needed.
@@ -15,7 +17,7 @@ This is a pure rust project, so only `cargo` is needed.
 Useful tips:
 
 - Check/Build/Test/Clippy all code: `cargo <cmd> --tests --benches --examples`
-- Test specific function: `cargo test tests::it::services::fs`
+- Test a specific crate: `cargo test -p reqsign-core`
 
 ## Test
 

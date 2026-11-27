@@ -29,7 +29,7 @@ use crate::constants::{
     AWS_QUERY_ENCODE_SET, AWS_URI_ENCODE_SET, X_AMZ_CONTENT_SHA_256, X_AMZ_DATE,
     X_AMZ_S3_SESSION_TOKEN, X_AMZ_SECURITY_TOKEN,
 };
-use crate::{Credential, PercentEncodingMode};
+use crate::{Credential, PercentEncodingMode, UriPathNormalizationMode};
 
 static AWS_URI_DOUBLE_ENCODE_SET: AsciiSet = AWS_URI_ENCODE_SET.remove(b'/');
 
@@ -49,21 +49,37 @@ pub fn canonical_request_string(
 }
 
 /// Build an AWS canonical request with the selected URI percent-encoding mode.
-///
-/// The mode only affects the canonical URI, not the request's wire URI or query.
-/// Canonical header values have leading and trailing ASCII spaces trimmed and
-/// runs of ASCII spaces collapsed. Repeated values are joined with commas in
-/// request order. `Authorization` never participates in canonicalization.
 pub fn canonical_request_string_with_encoding(
     request: &SigningRequest,
     canonical_query: &[(String, String)],
     percent_encoding_mode: PercentEncodingMode,
+) -> Result<String> {
+    canonical_request_string_with_uri_options(
+        request,
+        canonical_query,
+        percent_encoding_mode,
+        UriPathNormalizationMode::Disabled,
+    )
+}
+
+/// Build an AWS canonical request using the selected path normalization and encoding.
+///
+/// Both settings apply only to the canonical URI. Canonical header values have
+/// leading and trailing ASCII spaces trimmed and runs of ASCII spaces collapsed.
+/// Repeated values are joined with commas in request order. `Authorization`
+/// never participates in canonicalization.
+pub fn canonical_request_string_with_uri_options(
+    request: &SigningRequest,
+    canonical_query: &[(String, String)],
+    percent_encoding_mode: PercentEncodingMode,
+    uri_path_normalization_mode: UriPathNormalizationMode,
 ) -> Result<String> {
     let signed_headers = signed_header_names(request, &[]);
     canonical_request_string_with_signed_headers(
         request,
         canonical_query,
         percent_encoding_mode,
+        uri_path_normalization_mode,
         &signed_headers,
     )
 }
@@ -90,16 +106,18 @@ pub fn canonical_request_string_with_signed_headers(
     request: &SigningRequest,
     canonical_query: &[(String, String)],
     percent_encoding_mode: PercentEncodingMode,
+    uri_path_normalization_mode: UriPathNormalizationMode,
     signed_headers: &[&str],
 ) -> Result<String> {
     let mut output = String::with_capacity(256);
+    let path = uri_path_normalization_mode.normalize(&request.path);
 
     writeln!(output, "{}", request.method)
         .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write method: {e}")))?;
     writeln!(
         output,
         "{}",
-        canonical_uri_with_encoding(&request.path, percent_encoding_mode)?
+        canonical_uri_with_encoding(&path, percent_encoding_mode)?
     )
     .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write encoded path: {e}")))?;
     writeln!(
@@ -593,6 +611,8 @@ pub struct SigV4SigningOptions<'a> {
     pub region: &'a str,
     /// Canonical URI percent-encoding mode.
     pub percent_encoding_mode: PercentEncodingMode,
+    /// Canonical URI path normalization mode.
+    pub uri_path_normalization_mode: UriPathNormalizationMode,
     /// Whether the signing service selected the S3 Express CreateSession token.
     pub uses_s3_express_session_token: bool,
     /// Additional header names to exclude from canonicalization.
@@ -685,6 +705,7 @@ fn sign_sigv4(
         &signed_req,
         &canonical_query,
         options.percent_encoding_mode,
+        options.uri_path_normalization_mode,
         &signed_headers,
     )?;
     let encoded_req = reqsign_core::hash::hex_sha256(provider, creq.as_bytes())?;

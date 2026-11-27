@@ -196,6 +196,7 @@ impl ProvideCredential for AssumeRoleChainCredentialProvider {
                     service: "sts",
                     region: &region,
                     percent_encoding_mode: crate::PercentEncodingMode::Single,
+                    uri_path_normalization_mode: crate::UriPathNormalizationMode::Disabled,
                     uses_s3_express_session_token: false,
                     excluded_headers: &[],
                 },
