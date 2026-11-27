@@ -56,8 +56,15 @@ impl fmt::Debug for S3PostPolicyFields {
 ///
 /// The top-level `expiration` must be an ISO 8601 timestamp after `signing_time`.
 /// The credential must be valid at signing time and any credential expiration
-/// must be strictly later than the policy expiration. Credentials carrying a
-/// session token must have a known expiration in [`Credential::expires_in`].
+/// must be strictly later than the policy expiration. Long-term credentials can
+/// omit both the session token and expiration.
+///
+/// A session token requires a known credential expiration. Environment
+/// variables, shared profiles with static keys, and
+/// [`StaticCredentialProvider`](crate::StaticCredentialProvider) can supply
+/// session credentials without an expiration. Set [`Credential::expires_in`]
+/// to the absolute expiration from the same credential issuance, or use a
+/// provider that preserves it, such as ECS or IMDS.
 ///
 /// Pass the [`CryptoProvider`] selected for this operation. Callers using a
 /// [`Context`](reqsign_core::Context) can pass `context.crypto_provider()?`.
