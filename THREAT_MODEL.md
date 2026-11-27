@@ -416,6 +416,13 @@ parameters, and upload or download URLs. Reqsign does not implement Yandex
 OAuth token issuance, refresh, or revocation, and forwarding a signed header to
 a different host is the caller's responsibility.
 
+Azure API key authentication uses a caller-supplied key or reads one
+caller-named variable through the context environment. The key is separate
+from Azure Storage credential discovery. Signing replaces only the selected
+header with a sensitive value, preserves the URI, and rejects presigning.
+The caller selects the endpoint and header, and replaces the signer or its
+credential provider when the key rotates.
+
 If a trusted caller configures a malicious file path, command, environment
 implementation, metadata endpoint, HTTP client, or custom provider, using that
 source is caller responsibility. If Reqsign ignores explicit source removal,
