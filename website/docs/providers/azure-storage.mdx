@@ -52,4 +52,12 @@ let mut req = http::Request::builder()
 signer.sign(&mut req, None).await?;
 ```
 
+## Azure API keys
+
+The `azure` feature also exposes `reqsign::azure::api_key` for Azure APIs that
+accept a key in a request header. Assemble a `Signer` with a static key or a
+caller-named environment variable and select the header required by the API.
+When the key rotates, create a new signer or call `with_credential_provider`
+with a provider for the rotated key. See the [signing example](https://docs.rs/reqsign/latest/reqsign/azure/index.html#azure-api-keys).
+
 <ProviderDetails id="azure-storage" />
