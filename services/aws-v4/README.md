@@ -42,30 +42,31 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-## Canonical URI Encoding
+## Canonical URI
 
-The signer uses `PercentEncodingMode::Single` by default for every signing
-service. This keeps Reqsign's existing canonical URI bytes and signatures stable
-across upgrades. Call `with_percent_encoding_mode` to opt in to
-`PercentEncodingMode::Double` when a service requires one additional encoding
-pass:
+The signer defaults to `PercentEncodingMode::Single` and
+`UriPathNormalizationMode::Disabled` for every service, including S3. Configure
+encoding and path normalization independently to match the signing service.
+The example enables both settings for a service that requires them.
 
 ```rust
-use reqsign_aws_v4::{PercentEncodingMode, RequestSigner};
+use reqsign_aws_v4::{PercentEncodingMode, RequestSigner, UriPathNormalizationMode};
 
 let signer = RequestSigner::new("execute-api", "us-east-1")
-    .with_percent_encoding_mode(PercentEncodingMode::Double);
+    .with_percent_encoding_mode(PercentEncodingMode::Double)
+    .with_uri_path_normalization_mode(UriPathNormalizationMode::Enabled);
 ```
 
-Both header signing and presigning use this setting. Supply the final wire-ready
-URI: a path of `/a%20b` is signed as `/a%2520b` in Double mode, while the outgoing
-path remains `/a%20b`. Double encodes the original path without decoding it; a
-literal `@` becomes `%40`, while an existing `%40` becomes `%2540`. It preserves
-literal `/` separators and does not normalize paths or change payload hashing.
+Both header signing and presigning use these settings to compute the canonical
+path. Supply the final wire-ready URI. With normalization enabled, literal `.`
+and `..` segments are resolved and repeated slashes are collapsed before encoding.
+The outgoing URI keeps its original path and existing query bytes.
 
-Single retains Reqsign's existing per-segment decode/re-encode behavior, including
-normalizing escape spelling and rejecting percent-encoded invalid UTF-8. It is
-not a raw-path pass-through for noncanonical wire paths.
+Double encodes the path without decoding its escapes. In the canonical request,
+`/a%20b` becomes `/a%2520b`, a literal `@` becomes `%40`, and an existing `%40`
+becomes `%2540`. Literal `/` separators are preserved. Single retains Reqsign's
+per-segment decode/re-encode behavior, including normalization of escape spelling
+and rejection of percent-encoded invalid UTF-8.
 
 ## Payload Signing
 

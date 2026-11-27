@@ -17,9 +17,8 @@
 
 /// Percent-encoding applied to the URI path in an AWS canonical request.
 ///
-/// Requests must already contain a wire-ready URI. This setting affects only the
-/// canonical URI used for signing; it does not rewrite the request URI, normalize
-/// path segments, or change query encoding.
+/// Requests must already contain a wire-ready URI. This setting encodes the
+/// canonical path after any normalization selected by [`crate::UriPathNormalizationMode`].
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PercentEncodingMode {
     /// Keep Reqsign's existing single-encoding behavior.
@@ -31,7 +30,7 @@ pub enum PercentEncodingMode {
     /// survive upgrades.
     #[default]
     Single,
-    /// Apply one additional encoding pass to the caller's wire path.
+    /// Apply one additional encoding pass to the encoded path.
     ///
     /// Existing escapes are encoded without decoding them first: `/a%20b`
     /// becomes `/a%2520b`, `%2f` becomes `%252f`, and `%FF` becomes `%25FF`.

@@ -435,6 +435,10 @@ Examples:
   query parameters, headers, payload hash rules, expiry, date, service, region,
   account, and provider-specific fields as required by their implemented
   contract.
+- SigV4 and SigV4a normalize URI paths only when the caller enables it.
+  Normalization applies before percent-encoding the canonical path. Header
+  signing preserves the wire URI, and presigning preserves the wire path and
+  existing query bytes when appending authentication parameters.
 - Header-based signing must apply authorization data to headers without
   unintentionally moving authority to query parameters.
 - Query-based signing and presigning must apply expiry and signed query
