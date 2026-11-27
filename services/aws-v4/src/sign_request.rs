@@ -1149,16 +1149,20 @@ mod tests {
             "{name} header mismatch"
         );
 
-        fn format_query(req: &Request<&str>) -> Vec<String> {
-            let query = req.uri().query().unwrap_or_default();
-            let mut query = form_urlencoded::parse(query.as_bytes())
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect::<Vec<_>>();
-            query.sort();
-            query
-        }
+        assert_eq!(
+            sorted_query(l.uri()),
+            sorted_query(r.uri()),
+            "{name} query mismatch"
+        );
+    }
 
-        assert_eq!(format_query(l), format_query(r), "{name} query mismatch");
+    fn sorted_query(uri: &http::Uri) -> Vec<(String, String)> {
+        let query = uri.query().unwrap_or_default();
+        let mut pairs = form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect::<Vec<_>>();
+        pairs.sort();
+        pairs
     }
 
     fn encoding_request(uri: &str) -> Result<Request<&'static str>> {
@@ -1167,19 +1171,18 @@ mod tests {
             .body("")?)
     }
 
-    fn aws_signed_encoding_request(
-        uri: &str,
+    fn aws_signed_execute_api_request(
+        mut request: Request<&'static str>,
         now: Timestamp,
         mode: PercentEncodingMode,
         presigned: bool,
     ) -> Result<Request<&'static str>> {
-        let mut request = encoding_request(uri)?;
         let mut settings = SigningSettings::default();
         settings.percent_encoding_mode = match mode {
             PercentEncodingMode::Single => AwsPercentEncodingMode::Single,
             PercentEncodingMode::Double => AwsPercentEncodingMode::Double,
         };
-        // Match reqsign's other signing choices so only URI encoding varies.
+        // Match reqsign's signing settings for unsigned payloads and wire-ready paths.
         settings.uri_path_normalization_mode = UriPathNormalizationMode::Disabled;
         settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         settings.session_token_mode = SessionTokenMode::Include;
@@ -1285,7 +1288,8 @@ mod tests {
             }
             for path in paths {
                 let uri = format!("https://example.com{path}?{QUERY}");
-                let expected = aws_signed_encoding_request(&uri, now, mode, presigned)?;
+                let expected =
+                    aws_signed_execute_api_request(encoding_request(&uri)?, now, mode, presigned)?;
                 let actual = reqsign_signed_encoding_request(
                     "execute-api",
                     &uri,
@@ -1406,8 +1410,8 @@ mod tests {
                 // SDK Single leaves the path verbatim. Legacy reqsign Single
                 // decodes and re-encodes each segment, so compare the default
                 // signature against the SDK signing the legacy canonical path.
-                let expected = aws_signed_encoding_request(
-                    &legacy_uri,
+                let expected = aws_signed_execute_api_request(
+                    encoding_request(&legacy_uri)?,
                     now,
                     PercentEncodingMode::Single,
                     presigned,
@@ -1415,8 +1419,12 @@ mod tests {
                 compare_request(wire_path, &expected, &actual);
                 assert_eq!(actual.uri().path(), wire_path);
 
-                let sdk_wire =
-                    aws_signed_encoding_request(&uri, now, PercentEncodingMode::Single, presigned)?;
+                let sdk_wire = aws_signed_execute_api_request(
+                    encoding_request(&uri)?,
+                    now,
+                    PercentEncodingMode::Single,
+                    presigned,
+                )?;
                 if presigned {
                     let signature = |request: &Request<&str>| {
                         form_urlencoded::parse(request.uri().query().unwrap().as_bytes())
@@ -1433,6 +1441,109 @@ mod tests {
                     );
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn canonical_headers_match_aws_sdk_signatures() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("execute-api", "us-east-1").with_time(now);
+        let credential = s3_express_credential(now);
+        let ctx = crate::test_context();
+
+        for (endpoint, supplied_host, expected_host) in [
+            ("http://example.com:80", None, "example.com"),
+            ("https://example.com:443", None, "example.com"),
+            ("http://example.com:443", None, "example.com:443"),
+            ("https://example.com:80", None, "example.com:80"),
+            ("https://[2001:db8::1]:443", None, "[2001:db8::1]"),
+            ("https://[2001:db8::1]:8443", None, "[2001:db8::1]:8443"),
+            (
+                "https://example.com:443",
+                Some("[2001:db8::2]:443"),
+                "[2001:db8::2]:443",
+            ),
+        ] {
+            let uri = format!("{endpoint}/object%2Fname?z=%2f&dup=two&dup=one");
+            let mut builder = Request::get(&uri)
+                .header("x-meta", "  z   word  ")
+                .header("x-meta", "  \ta   word\t  ");
+            if let Some(host) = supplied_host {
+                builder = builder.header(header::HOST, host);
+            }
+            let original = builder.body("")?;
+
+            for presigned in [false, true] {
+                let mut expected = aws_signed_execute_api_request(
+                    original.clone(),
+                    now,
+                    PercentEncodingMode::Single,
+                    presigned,
+                )?;
+                // The SDK synthesizes Host internally and only returns authentication fields.
+                expected
+                    .headers_mut()
+                    .entry(header::HOST)
+                    .or_insert(HeaderValue::from_static(expected_host));
+                let mut parts = original.clone().into_parts().0;
+                signer
+                    .sign_request(
+                        &ctx,
+                        &mut parts,
+                        Some(&credential),
+                        presigned.then_some(Duration::from_secs(60)),
+                    )
+                    .await?;
+
+                assert_eq!(
+                    parts.headers,
+                    *expected.headers(),
+                    "{uri}, presigned={presigned}"
+                );
+                if presigned {
+                    assert!(
+                        parts
+                            .uri
+                            .to_string()
+                            .starts_with(&format!("{uri}&X-Amz-Algorithm="))
+                    );
+                    assert_eq!(
+                        sorted_query(&parts.uri),
+                        sorted_query(expected.uri()),
+                        "{uri}"
+                    );
+                } else {
+                    assert_eq!(parts.uri.to_string(), uri);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn canonical_headers_reject_opaque_repeated_values_atomically() -> Result<()> {
+        let original = Request::get("https://example.com:443/object%2Fname?raw=%2f")
+            .header("x-meta", "valid first value")
+            .header("x-meta", HeaderValue::from_bytes(b"\xff")?)
+            .extension("original extension")
+            .body(())?
+            .into_parts()
+            .0;
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("execute-api", "us-east-1").with_time(now);
+        let ctx = crate::test_context();
+        let credential = presign_credential(None);
+
+        for expires_in in [None, Some(Duration::from_secs(60))] {
+            let mut parts = original.clone();
+            let error = signer
+                .sign_request(&ctx, &mut parts, Some(&credential), expires_in)
+                .await
+                .expect_err("every signed header value must be valid text");
+            assert_eq!(error.kind(), ErrorKind::RequestInvalid);
+            assert_parts_unchanged(&parts, &original);
+            assert_eq!(parts.extensions.get::<&str>(), Some(&"original extension"));
         }
         Ok(())
     }
