@@ -352,11 +352,11 @@ mod tests {
     use aws_sigv4::sign::v4a;
     use http::Request;
     use pretty_assertions::assert_eq;
-    use reqsign_core::ErrorKind;
     use reqsign_core::crypto::CryptoProvider;
+    use reqsign_core::{ErrorKind, Signer, StaticEnv};
     use std::sync::{Arc, Mutex};
 
-    use crate::PercentEncodingMode;
+    use crate::{PercentEncodingMode, SharedConfig, StaticCredentialProvider};
 
     // AWS CRT SigV4a get-vanilla test vector.
     const ACCESS_KEY_ID: &str = "AKIDEXAMPLE";
@@ -535,21 +535,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signs_headers_with_regionless_scope() -> AnyResult<()> {
+    async fn signs_headers_with_configured_region_set_and_regionless_scope() -> AnyResult<()> {
+        let ctx = crate::test_context().with_env(StaticEnv {
+            home_dir: None,
+            envs: [(
+                "AWS_SIGV4A_SIGNING_REGION_SET".into(),
+                " eu-west-1, , us-west-2, ".into(),
+            )]
+            .into(),
+        });
+        let profile = SharedConfig::new().load(&ctx).await?;
+        let value = profile
+            .sigv4a_signing_region_set()
+            .expect("the configured region set must be present");
+        let request_signer = RequestSigner::new("service", SigningRegionSet::new(value)?)
+            .with_time("2015-08-30T12:36:00Z".parse()?);
+        let signer = Signer::new(
+            ctx,
+            StaticCredentialProvider::new(ACCESS_KEY_ID, SECRET_ACCESS_KEY),
+            request_signer,
+        );
         let mut parts = Request::get("https://example.amazonaws.com/")
             .body(())?
             .into_parts()
             .0;
-        signer()
-            .sign_request(
-                &crate::test_context(),
-                &mut parts,
-                Some(&credential()),
-                None,
-            )
-            .await?;
+        signer.sign(&mut parts, None).await?;
 
-        assert_eq!(parts.headers[X_AMZ_REGION_SET], "us-east-1");
+        assert_eq!(parts.headers[X_AMZ_REGION_SET], "eu-west-1,us-west-2");
         assert_eq!(parts.headers["x-amz-date"], "20150830T123600Z");
         let authorization = parts.headers[header::AUTHORIZATION].to_str()?;
         assert!(authorization.starts_with(
@@ -559,7 +571,7 @@ mod tests {
             authorization
                 .contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-region-set")
         );
-        assert!(!authorization.contains("/us-east-1/service/"));
+        assert!(!authorization.contains("/eu-west-1/service/"));
         Ok(())
     }
 

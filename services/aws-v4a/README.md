@@ -22,7 +22,9 @@ let signer = RequestSigner::new("s3", region_set);
 ```
 
 Credential providers and shared AWS types are re-exported from
-`reqsign-aws-core`.
+`reqsign-aws-core`. Use [`SharedConfig::load`] to read the configured SigV4a
+signing region set. When [`Profile::sigv4a_signing_region_set`] returns a value,
+pass it to [`SigningRegionSet::new`].
 
 ## Canonical URI Encoding
 
