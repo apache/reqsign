@@ -102,8 +102,7 @@ e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 ```
 
 Use `reqsign_core::hash::hex_sha256` for non-empty bytes. Hash after any content
-encoding or compression, and do not change the payload after signing. Chunked
-or streaming payload signatures are not implemented.
+encoding or compression, and do not change the payload after signing.
 
 ```rust,no_run
 use reqsign_aws_v4::EMPTY_STRING_SHA256;
@@ -134,6 +133,26 @@ effect. If the header is set before presigning, it becomes part of
 `X-Amz-SignedHeaders`, and the same header must be sent with the presigned
 request. Leave it unset when the URL should use `UNSIGNED-PAYLOAD` without a
 payload header.
+
+### Signing S3 streaming uploads
+
+Prepare a fresh request head with `Content-Encoding: aws-chunked`, the
+operation's length headers, and `x-amz-trailer` for uploads with trailing
+headers. Set `x-amz-content-sha256` to the streaming mode the body will use.
+Then call `RequestSigner::sign_streaming_request` with the context, request
+parts, and credential. Its `StreamingSigner` is tied to the resulting head
+and exposes its seed signature through `seed_signature()`.
+
+| `x-amz-content-sha256` | Signatures produced by `StreamingSigner` |
+| --- | --- |
+| `STREAMING-AWS4-HMAC-SHA256-PAYLOAD` | Each chunk, including the final empty chunk |
+| `STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER` | Each chunk, then the trailing headers |
+| `STREAMING-UNSIGNED-PAYLOAD-TRAILER` | `None` for chunks and trailers. The request head still uses SigV4 header authentication. |
+
+Pass each chunk's data bytes to `sign_chunk`, including `&[]` for the final
+chunk. In signed trailer mode, call `sign_trailer` with the declared trailing
+headers after signing that final chunk. The caller computes checksum values,
+frames the `aws-chunked` body, sends the request, and prepares each retry.
 
 ### Signature hash, TLS, and S3 checksums
 

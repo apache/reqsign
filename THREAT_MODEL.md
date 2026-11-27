@@ -446,6 +446,10 @@ Examples:
   Normalization applies before percent-encoding the canonical path. Header
   signing preserves the wire URI, and presigning preserves the wire path and
   existing query bytes when appending authentication parameters.
+- S3 `aws-chunked` signing must use the initial request's signature, time,
+  credential scope, and signing key for each signed chunk and trailer. The
+  signing state keeps the derived key private. The caller owns the upload
+  framing, checksum calculation, and retries.
 - Azure Storage Shared Key header signing orders `x-ms-*` names using Azure's
   character weights, normalizes their values, and groups decoded query
   parameters in the signature input. It preserves the wire URI and caller
