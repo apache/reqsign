@@ -446,6 +446,10 @@ Examples:
   Normalization applies before percent-encoding the canonical path. Header
   signing preserves the wire URI, and presigning preserves the wire path and
   existing query bytes when appending authentication parameters.
+- S3 `aws-chunked` signing must use the initial request's signature, time,
+  credential scope, and signing key for each signed chunk and trailer. The
+  signing state keeps the derived key private. The caller owns the upload
+  framing, checksum calculation, and retries.
 - Header-based signing must apply authorization data to headers without
   unintentionally moving authority to query parameters.
 - Query-based signing and presigning must apply expiry and signed query
@@ -503,6 +507,12 @@ Out of scope by default:
 Reqsign can read local credential files and execute local credential-helper
 commands when the caller configures adapters and providers that require those
 features.
+
+Azure Storage providers use argument vectors for `az account get-access-token`
+and `azd auth token`. The context's `AZURE_TENANT_ID` supplies the Azure CLI
+tenant when the caller leaves it unset. The Azure Developer CLI provider is
+explicit and requests tokens with `--no-prompt`. Command output is excluded
+from errors for both providers.
 
 In scope:
 

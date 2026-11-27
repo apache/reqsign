@@ -74,6 +74,9 @@
 //!
 //! ### Environment Variables
 //!
+//! For Shared Key, `AZURE_STORAGE_ACCOUNT` is an alias for the account name
+//! when `AZBLOB_ACCOUNT_NAME` and `AZURE_STORAGE_ACCOUNT_NAME` are unset.
+//!
 //! ```bash
 //! # For Shared Key authentication
 //! export AZURE_STORAGE_ACCOUNT_NAME=mystorageaccount

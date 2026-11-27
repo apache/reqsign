@@ -19,6 +19,10 @@ use reqsign_core::{Context, ProvideCredential};
 
 use crate::credential::Credential;
 
+/// Load Shared Key, SAS, or bearer credentials from the context environment.
+///
+/// For Shared Key, the account name is selected from `AZBLOB_ACCOUNT_NAME`,
+/// `AZURE_STORAGE_ACCOUNT_NAME`, and `AZURE_STORAGE_ACCOUNT` in that order.
 #[derive(Clone, Debug, Default)]
 pub struct EnvCredentialProvider {}
 
@@ -40,6 +44,7 @@ impl ProvideCredential for EnvCredentialProvider {
         let account_name = envs
             .get("AZBLOB_ACCOUNT_NAME")
             .or_else(|| envs.get("AZURE_STORAGE_ACCOUNT_NAME"))
+            .or_else(|| envs.get("AZURE_STORAGE_ACCOUNT"))
             .cloned();
 
         // Check for account key
@@ -73,75 +78,85 @@ impl ProvideCredential for EnvCredentialProvider {
 mod tests {
     use super::*;
     use reqsign_core::StaticEnv;
-    use reqsign_file_read_tokio::TokioFileRead;
-    use reqsign_http_send_reqwest::ReqwestHttpSend;
-    use std::collections::HashMap;
 
     #[tokio::test]
-    async fn test_env_credential_provider_account_key() {
-        let envs = HashMap::from([
-            ("AZBLOB_ACCOUNT_NAME".to_string(), "myaccount".to_string()),
-            ("AZBLOB_ACCOUNT_KEY".to_string(), "mykey".to_string()),
-        ]);
-
-        let ctx = crate::test_context()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(StaticEnv {
-                home_dir: None,
-                envs,
-            });
-
+    async fn shared_key_uses_the_account_alias_after_the_existing_names() {
+        let cases = [
+            (
+                &[
+                    ("AZBLOB_ACCOUNT_NAME", "legacy-account"),
+                    ("AZBLOB_ACCOUNT_KEY", "legacy-key"),
+                    ("AZURE_STORAGE_ACCOUNT_NAME", "explicit-account"),
+                ][..],
+                "legacy-account",
+                "legacy-key",
+            ),
+            (
+                &[("AZURE_STORAGE_ACCOUNT_NAME", "explicit-account")][..],
+                "explicit-account",
+                "example-key",
+            ),
+            (&[][..], "alias-account", "example-key"),
+        ];
         let provider = EnvCredentialProvider::new();
-        let cred = provider.provide_credential(&ctx).await.unwrap();
-
-        match cred {
-            Some(Credential::SharedKey {
+        for (account_overrides, expected_name, expected_key) in cases {
+            let envs = [
+                ("AZURE_STORAGE_ACCOUNT", "alias-account"),
+                ("AZURE_STORAGE_ACCOUNT_KEY", "example-key"),
+                ("AZURE_STORAGE_SAS_TOKEN", "example-sas"),
+                ("AZURE_STORAGE_BEARER_TOKEN", "example-bearer"),
+            ]
+            .into_iter()
+            .chain(account_overrides.iter().copied())
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+            let ctx = Context::new().with_env(StaticEnv {
+                envs,
+                ..Default::default()
+            });
+            let Some(Credential::SharedKey {
                 account_name,
                 account_key,
-            }) => {
-                assert_eq!(account_name, "myaccount");
-                assert_eq!(account_key, "mykey");
-            }
-            _ => panic!("Expected AccountKey credential"),
+            }) = provider.provide_credential(&ctx).await.unwrap()
+            else {
+                panic!("expected a Shared Key credential");
+            };
+            assert_eq!(account_name, expected_name);
+            assert_eq!(account_key, expected_key);
         }
     }
 
     #[tokio::test]
-    async fn test_env_credential_provider_sas_token() {
-        let envs = HashMap::from([(
-            "AZURE_STORAGE_SAS_TOKEN".to_string(),
-            "mysastoken".to_string(),
-        )]);
-
-        let ctx = crate::test_context()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default())
-            .with_env(StaticEnv {
-                home_dir: None,
-                envs,
-            });
-
+    async fn the_account_alias_without_a_key_leaves_sas_and_bearer_selection_intact() {
+        let mut env = StaticEnv {
+            envs: [
+                ("AZURE_STORAGE_ACCOUNT".into(), "alias-account".into()),
+                ("AZURE_STORAGE_SAS_TOKEN".into(), "example-sas".into()),
+                ("AZURE_STORAGE_BEARER_TOKEN".into(), "example-bearer".into()),
+            ]
+            .into(),
+            ..Default::default()
+        };
         let provider = EnvCredentialProvider::new();
-        let cred = provider.provide_credential(&ctx).await.unwrap();
+        let ctx = Context::new().with_env(env.clone());
+        let Some(Credential::SasToken { token, .. }) =
+            provider.provide_credential(&ctx).await.unwrap()
+        else {
+            panic!("expected a SAS token");
+        };
+        assert_eq!(token, "example-sas");
 
-        match cred {
-            Some(Credential::SasToken { token, .. }) => {
-                assert_eq!(token, "mysastoken");
-            }
-            _ => panic!("Expected SasToken credential"),
-        }
-    }
+        env.envs.remove("AZURE_STORAGE_SAS_TOKEN");
+        let ctx = Context::new().with_env(env.clone());
+        let Some(Credential::BearerToken { token, .. }) =
+            provider.provide_credential(&ctx).await.unwrap()
+        else {
+            panic!("expected a bearer token");
+        };
+        assert_eq!(token, "example-bearer");
 
-    #[tokio::test]
-    async fn test_env_credential_provider_none() {
-        let ctx = crate::test_context()
-            .with_file_read(TokioFileRead)
-            .with_http_send(ReqwestHttpSend::default());
-
-        let provider = EnvCredentialProvider::new();
-        let cred = provider.provide_credential(&ctx).await.unwrap();
-
-        assert!(cred.is_none());
+        env.envs.remove("AZURE_STORAGE_BEARER_TOKEN");
+        let ctx = Context::new().with_env(env);
+        assert!(provider.provide_credential(&ctx).await.unwrap().is_none());
     }
 }

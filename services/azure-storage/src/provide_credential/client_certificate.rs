@@ -23,7 +23,7 @@ use crate::provide_credential::entra::{
     EntraTokenResponse, parse_token_response, token_request_error,
 };
 use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, ProvideCredential, hash};
@@ -46,13 +46,18 @@ fn generate_jti(now: u64) -> String {
     format!("{}-{}-{}", now, nano_time % 1_000_000_000, random_part)
 }
 
-/// ClientCertificateCredentialProvider provides credentials using a client certificate
+/// Provides Microsoft Entra ID credentials using a client certificate.
+///
+/// The PEM file must contain an unencrypted PKCS#8 or PKCS#1 RSA private key
+/// and its certificate. Place the leaf certificate first, followed by any
+/// issuer certificates in chain order.
 #[derive(Clone)]
 pub struct ClientCertificateCredentialProvider {
     tenant_id: Option<String>,
     client_id: Option<String>,
     certificate_path: Option<String>,
     certificate_password: Option<String>,
+    send_certificate_chain: Option<bool>,
 }
 
 impl Debug for ClientCertificateCredentialProvider {
@@ -82,6 +87,7 @@ impl ClientCertificateCredentialProvider {
             client_id: None,
             certificate_path: None,
             certificate_password: None,
+            send_certificate_chain: None,
         }
     }
 
@@ -103,51 +109,63 @@ impl ClientCertificateCredentialProvider {
         self
     }
 
-    /// Set the certificate password (for PFX files)
+    /// Set a certificate password for compatibility with existing callers.
+    ///
+    /// Credential loading ignores this setting and requires an unencrypted RSA
+    /// private key in the PEM file.
     pub fn with_certificate_password(mut self, password: &str) -> Self {
         self.certificate_password = Some(password.to_string());
         self
     }
 
-    /// Load certificate and private key from file
+    /// Include the public certificate chain in the assertion's `x5c` header.
+    ///
+    /// An explicit value overrides `AZURE_CLIENT_SEND_CERTIFICATE_CHAIN`,
+    /// including `false`. Without an explicit value, only a case-insensitive
+    /// `true` in the context environment enables the header.
+    pub fn with_send_certificate_chain(mut self, send_certificate_chain: bool) -> Self {
+        self.send_certificate_chain = Some(send_certificate_chain);
+        self
+    }
+
+    /// Load the certificates and private key from a PEM file.
     async fn load_certificate(
         &self,
         ctx: &Context,
         path: &str,
-    ) -> Result<(Vec<u8>, Vec<u8>), reqsign_core::Error> {
+    ) -> Result<ClientCertificate, reqsign_core::Error> {
         let cert_data = ctx.file_read(path).await.map_err(|e| {
             reqsign_core::Error::credential_invalid(format!("Failed to read certificate file: {e}"))
         })?;
 
-        // For now, we'll support PEM format. PFX support can be added later
-        let pem_str = String::from_utf8(cert_data.clone()).map_err(|e| {
+        let pem_str = String::from_utf8(cert_data).map_err(|e| {
             reqsign_core::Error::credential_invalid(format!(
                 "Certificate file is not valid UTF-8: {e}"
             ))
         })?;
 
-        // Parse all PEM blocks
         let pems = pem::parse_many(&pem_str).map_err(|e| {
             reqsign_core::Error::credential_invalid(format!("Failed to parse PEM: {e}"))
         })?;
 
-        // Find certificate and private key
-        let mut cert_der = None;
+        let mut leaf_der = None;
+        let mut issuer_chain_der = Vec::new();
         let mut private_key_pem = None;
 
-        for pem_block in &pems {
+        for pem_block in pems {
             match pem_block.tag() {
-                "CERTIFICATE" => {
-                    cert_der = Some(pem_block.contents().to_vec());
+                "CERTIFICATE" if leaf_der.is_none() => {
+                    leaf_der = Some(pem_block.into_contents());
                 }
+                "CERTIFICATE" => issuer_chain_der.push(pem_block.into_contents()),
                 "PRIVATE KEY" | "RSA PRIVATE KEY" => {
-                    private_key_pem = Some(pem::encode(pem_block));
+                    private_key_pem = Some(pem::encode(&pem_block));
                 }
                 _ => {}
             }
         }
 
-        let cert_der = cert_der.ok_or_else(|| {
+        let leaf_der = leaf_der.ok_or_else(|| {
             reqsign_core::Error::credential_invalid("PEM does not contain a certificate")
         })?;
 
@@ -155,7 +173,11 @@ impl ClientCertificateCredentialProvider {
             reqsign_core::Error::credential_invalid("PEM does not contain a private key")
         })?;
 
-        Ok((cert_der, private_key_pem.into_bytes()))
+        Ok(ClientCertificate {
+            leaf_der,
+            issuer_chain_der,
+            private_key_pem: private_key_pem.into_bytes(),
+        })
     }
 
     /// Format a JWS compact JWT using RS256 and the selected provider.
@@ -201,8 +223,8 @@ impl ClientCertificateCredentialProvider {
         provider: &dyn CryptoProvider,
         tenant_id: &str,
         client_id: &str,
-        cert_der: &[u8],
-        private_key_pem: &[u8],
+        certificate: &ClientCertificate,
+        send_certificate_chain: bool,
     ) -> Result<String, reqsign_core::Error> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -223,10 +245,16 @@ impl ClientCertificateCredentialProvider {
         let header = ClientAssertionHeader {
             alg: "RS256",
             typ: "JWT",
-            x5t: self.calculate_thumbprint(provider, cert_der)?,
+            x5t: self.calculate_thumbprint(provider, &certificate.leaf_der)?,
+            x5c: send_certificate_chain.then(|| {
+                std::iter::once(&certificate.leaf_der)
+                    .chain(&certificate.issuer_chain_der)
+                    .map(|der| STANDARD.encode(der))
+                    .collect()
+            }),
         };
 
-        Self::encode_rs256_jws(provider, &header, &claims, private_key_pem)
+        Self::encode_rs256_jws(provider, &header, &claims, &certificate.private_key_pem)
     }
 
     /// Exchange client assertion for access token
@@ -275,6 +303,12 @@ impl ClientCertificateCredentialProvider {
     }
 }
 
+struct ClientCertificate {
+    leaf_der: Vec<u8>,
+    issuer_chain_der: Vec<Vec<u8>>,
+    private_key_pem: Vec<u8>,
+}
+
 #[derive(Debug, Serialize)]
 struct ClientAssertionClaims {
     aud: String,
@@ -290,6 +324,8 @@ struct ClientAssertionHeader {
     alg: &'static str,
     typ: &'static str,
     x5t: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    x5c: Option<Vec<String>>,
 }
 
 impl ProvideCredential for ClientCertificateCredentialProvider {
@@ -327,18 +363,19 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
                 _ => return Ok(None),
             };
 
+        let send_certificate_chain = self.send_certificate_chain.unwrap_or_else(|| {
+            envs.get("AZURE_CLIENT_SEND_CERTIFICATE_CHAIN")
+                .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+        });
+
         let provider = ctx.crypto_provider()?;
-
-        // Load certificate and private key
-        let (cert_der, private_key_pem) = self.load_certificate(ctx, &certificate_path).await?;
-
-        // Create client assertion
+        let certificate = self.load_certificate(ctx, &certificate_path).await?;
         let client_assertion = self.create_client_assertion(
             provider,
             &tenant_id,
             &client_id,
-            &cert_der,
-            &private_key_pem,
+            &certificate,
+            send_certificate_chain,
         )?;
 
         // Exchange for access token
@@ -359,6 +396,172 @@ impl ProvideCredential for ClientCertificateCredentialProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
+    use reqsign_core::{FileRead, HttpSend, StaticEnv};
+    use serde_json::{Value, json};
+
+    // The leaf certificate matches the existing RSA signing fixture.
+    const LEAF_PEM: &[u8] = include_bytes!("../../tests/fixtures/client_cert_leaf.pem");
+    const ISSUER_PEM: &[u8] = include_bytes!("../../tests/fixtures/client_cert_issuer.pem");
+    const ROOT_PEM: &[u8] = include_bytes!("../../tests/fixtures/client_cert_root.pem");
+    const RSA_PKCS8: &[u8] = include_bytes!("../../tests/fixtures/rsa_pkcs8.pem");
+    // SHA-1 of the leaf DER, computed independently using OpenSSL and Python.
+    const LEAF_THUMBPRINT: &str = "49Y8PKhJSB3Xrhw3Xl1ubzZbydY";
+    const CERTIFICATE_PATH: &str = "/test/client-certificate.pem";
+
+    #[derive(Debug)]
+    struct CertificateFile(Vec<u8>);
+
+    impl FileRead for CertificateFile {
+        async fn file_read(&self, path: &str) -> reqsign_core::Result<Vec<u8>> {
+            assert_eq!(path, CERTIFICATE_PATH);
+            Ok(self.0.clone())
+        }
+    }
+
+    #[derive(Debug)]
+    struct TokenEndpoint {
+        expected_header: Value,
+    }
+
+    impl HttpSend for TokenEndpoint {
+        async fn http_send(
+            &self,
+            req: http::Request<Bytes>,
+        ) -> reqsign_core::Result<http::Response<Bytes>> {
+            assert_eq!(req.method(), http::Method::POST);
+            let assertion = form_urlencoded::parse(req.body())
+                .find_map(|(name, value)| (name == "client_assertion").then_some(value))
+                .expect("token request must include a client assertion");
+            let (encoded_header, _) = assertion.split_once('.').expect("JWS must have a header");
+            let header: Value = serde_json::from_slice(
+                &URL_SAFE_NO_PAD
+                    .decode(encoded_header)
+                    .expect("JWS header must decode"),
+            )
+            .expect("JWS header must be JSON");
+            assert_eq!(header, self.expected_header);
+
+            Ok(http::Response::new(Bytes::from_static(
+                br#"{"access_token":"mock-entra-token","expires_in":3600}"#,
+            )))
+        }
+    }
+
+    fn certificate_context(pem: Vec<u8>, send_certificate_chain: Option<&str>) -> Context {
+        let mut env = StaticEnv {
+            envs: HashMap::from([
+                ("AZURE_TENANT_ID".to_string(), "test-tenant".to_string()),
+                ("AZURE_CLIENT_ID".to_string(), "test-client".to_string()),
+                (
+                    "AZURE_CLIENT_CERTIFICATE_PATH".to_string(),
+                    CERTIFICATE_PATH.to_string(),
+                ),
+            ]),
+            ..Default::default()
+        };
+        if let Some(value) = send_certificate_chain {
+            env.envs.insert(
+                "AZURE_CLIENT_SEND_CERTIFICATE_CHAIN".to_string(),
+                value.to_string(),
+            );
+        }
+
+        crate::test_context()
+            .with_env(env)
+            .with_file_read(CertificateFile(pem))
+    }
+
+    async fn assert_certificate_header(
+        provider: ClientCertificateCredentialProvider,
+        ctx: Context,
+        expected_header: Value,
+    ) {
+        let credential = provider
+            .provide_credential(&ctx.with_http_send(TokenEndpoint { expected_header }))
+            .await
+            .expect("certificate token exchange must succeed");
+        assert!(
+            matches!(credential, Some(Credential::BearerToken { token, .. }) if token == "mock-entra-token")
+        );
+    }
+
+    #[tokio::test]
+    async fn default_assertion_uses_first_certificate_in_pem() {
+        for pem in [
+            [LEAF_PEM, RSA_PKCS8].concat(),
+            [LEAF_PEM, RSA_PKCS8, ISSUER_PEM, ROOT_PEM].concat(),
+        ] {
+            assert_certificate_header(
+                ClientCertificateCredentialProvider::new(),
+                certificate_context(pem, None),
+                json!({"alg": "RS256", "typ": "JWT", "x5t": LEAF_THUMBPRINT}),
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn assertion_sends_ordered_pem_chain_only_when_enabled() {
+        // PEM bodies are already standard base64 DER. Compare against the fixture
+        // text directly to check the alphabet, padding, and order independently.
+        let expected_chain = [LEAF_PEM, ISSUER_PEM, ROOT_PEM].map(|pem| {
+            std::str::from_utf8(pem)
+                .expect("fixture PEM must be UTF-8")
+                .lines()
+                .filter(|line| !line.starts_with("-----"))
+                .collect::<String>()
+        });
+
+        for (configured, env, send_chain) in [
+            (Some(true), Some("false"), true),
+            (Some(false), Some("true"), false),
+            (None, Some("TrUe"), true),
+            (None, Some("false"), false),
+            (None, Some("1"), false),
+        ] {
+            let mut provider = ClientCertificateCredentialProvider::new();
+            if let Some(value) = configured {
+                provider = provider.with_send_certificate_chain(value);
+            }
+            let mut expected_header = json!({"alg": "RS256", "typ": "JWT", "x5t": LEAF_THUMBPRINT});
+            if send_chain {
+                expected_header["x5c"] = json!(expected_chain);
+            }
+            assert_certificate_header(
+                provider,
+                certificate_context([LEAF_PEM, RSA_PKCS8, ISSUER_PEM, ROOT_PEM].concat(), env),
+                expected_header,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_pem_reports_credential_error_before_token_exchange() {
+        let encrypted_key =
+            b"-----BEGIN ENCRYPTED PRIVATE KEY-----\nAA==\n-----END ENCRYPTED PRIVATE KEY-----\n";
+        let malformed_certificate =
+            b"-----BEGIN CERTIFICATE-----\n%%%%\n-----END CERTIFICATE-----\n";
+
+        for (pem, message) in [
+            (RSA_PKCS8.to_vec(), "PEM does not contain a certificate"),
+            (
+                [LEAF_PEM, encrypted_key].concat(),
+                "PEM does not contain a private key",
+            ),
+            (malformed_certificate.to_vec(), "Failed to parse PEM:"),
+            (vec![0xff], "Certificate file is not valid UTF-8:"),
+        ] {
+            let ctx = certificate_context(pem, Some("true"));
+            let error = ClientCertificateCredentialProvider::new()
+                .provide_credential(&ctx)
+                .await
+                .expect_err("invalid PEM must fail before token exchange");
+            assert_eq!(error.kind(), reqsign_core::ErrorKind::CredentialInvalid);
+            assert!(error.to_string().starts_with(message), "{error}");
+        }
+    }
 
     #[test]
     fn test_calculate_thumbprint() {
@@ -379,7 +582,6 @@ mod tests {
 
     #[test]
     fn client_assertion_is_three_unpadded_verifiable_segments_for_both_pem_formats() {
-        const RSA_PKCS8: &[u8] = include_bytes!("../../tests/fixtures/rsa_pkcs8.pem");
         const RSA_PKCS1: &[u8] = include_bytes!("../../tests/fixtures/rsa_pkcs1.pem");
         // Fixed RS256 vector for the fixture key. The signature was cross-checked
         // with an independent RSA implementation before being recorded here.
@@ -394,6 +596,7 @@ mod tests {
             alg: "RS256",
             typ: "JWT",
             x5t: thumbprint.clone(),
+            x5c: None,
         };
         let claims = ClientAssertionClaims {
             aud: "https://example.com/token".to_string(),
@@ -450,6 +653,7 @@ mod tests {
                 alg: "RS256",
                 typ: "JWT",
                 x5t: "thumbprint".to_string(),
+                x5c: None,
             },
             &ClientAssertionClaims {
                 aud: "aud".to_string(),
