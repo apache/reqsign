@@ -1,9 +1,10 @@
 # Azure Storage Tests
 
 The Azure Storage test suite separates deterministic protocol parsing from live
-credential-provider acceptance tests. Unit tests parse sanitized responses that
-were captured from Azure. Integration tests obtain credentials from the real
-provider and use `RequestSigner` to read a private blob prepared for that test run.
+credential-provider acceptance tests. Unit tests parse sanitized responses from
+Azure, and `managed_identity.rs` exercises credential requests with mock HTTP
+responses. Live tests use `RequestSigner` with the real provider to read a
+private blob prepared for that test run.
 
 ## Test Structure
 
@@ -19,15 +20,15 @@ tests/
 │   ├── client_certificate.rs
 │   ├── azure_cli.rs
 │   └── azure_pipelines.rs
-├── fixtures/                 # Sanitized responses captured from Azure
+├── fixtures/                 # Sanitized or invented token responses
 │   ├── entra_token_response.json
 │   ├── azure_cli_token_response.json
 │   └── imds_token_response.json
+├── managed_identity.rs       # Managed identity protocol tests with mock HTTP
 └── signing/                  # Shared Key and SAS signing tests
 ```
 
-The credential-provider tests do not use HTTP mocks. A live test succeeds only
-after Azure Blob Storage returns the expected object body.
+A live test succeeds only after Azure Storage returns the expected object body.
 
 ## Local Tests
 

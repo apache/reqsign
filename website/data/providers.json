@@ -374,7 +374,7 @@
         },
         {
           "id": "imds",
-          "label": "Managed identity (IMDS)",
+          "label": "Managed identity (App Service, Functions, Container Apps, VM IMDS)",
           "provider": "ImdsCredentialProvider"
         }
       ],
