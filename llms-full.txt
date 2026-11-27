@@ -3105,6 +3105,12 @@ This provider can exchange credentials for downscoped ones before any request is
 
 * **User Delegation SAS** — Exchanges an Entra ID bearer token for a user delegation key and derives scoped SAS tokens from it.
 
+## Client certificate authentication[​](#client-certificate-authentication "Direct link to Client certificate authentication")
+
+On native targets, set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and`AZURE_CLIENT_CERTIFICATE_PATH`. The PEM file must contain an unencrypted PKCS#8 or PKCS#1 RSA private key and its certificate. Put the leaf certificate first, followed by any issuer certificates in chain order.
+
+For Microsoft Entra Subject Name/Issuer authentication, set`AZURE_CLIENT_SEND_CERTIFICATE_CHAIN=true` to send the public certificates in the assertion's `x5c` header. The header is omitted by default.`ClientCertificateCredentialProvider::with_send_certificate_chain` overrides the environment setting, including when set to `false`.
+
 ---
 
 ---
