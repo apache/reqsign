@@ -317,20 +317,28 @@ select a different identity. This policy belongs to the AWS default provider;
 caller-constructed `ProvideCredentialChain` values retain their own error
 policy. Disabling the SSO slot prevents it from participating.
 
-A selected AWS role chain follows its `source_profile` references or uses
-its declared `credential_source` slot. Static credentials, SSO, and a credential
-process can supply credentials from a source profile. The environment slot
-supplies the source for an explicitly selected role chain with
-`credential_source = Environment`, and the chain returns the assumed identity.
-Missing sources, cycles, conflicts between source declarations, and disabled
-required slots fail the selected chain. Signed STS calls in a role chain use
-the regional endpoint for the selected signing region.
+AWS providers added with `push_front` have first priority. When the profile name
+comes from `AWS_PROFILE` or the default name, available environment credentials
+take precedence without examining the graph. When the profile slot explicitly
+names a readable role chain, Reqsign validates the graph before choosing the
+credential source. Cycles, dangling references, and invalid source declarations
+fail even when environment credentials are available. A valid chain with
+`credential_source = Environment` uses those credentials as its source and
+returns the assumed identity. Other valid graphs keep the environment-first order.
+
+A role chain selected for credential acquisition follows its declared source.
+Static credentials, SSO, and a credential process can supply credentials from a
+source profile. Acquisition errors and disabled required slots fail the selected
+chain. Signed STS calls in a role chain use the regional endpoint for the selected
+signing region.
 
 A profile can specify a role and a web identity token file through the web
-identity slot. The provider keeps the profile's role and token file paired when
-it falls back to the shared config, and honors explicit provider settings. A web
-identity role selected by the profile slot fails on a disabled web identity slot
-or an error loading or exchanging the token.
+identity slot. Role settings and credential process commands come from the
+merged config and credentials files. The web identity provider keeps the
+profile's role and token file paired when it uses profile settings. Both slots
+honor explicit provider settings. A web identity role selected by the profile
+slot fails on a disabled web identity slot or an error loading or exchanging the
+token.
 
 `AssumeRoleCredentialProvider` and `AssumeRoleWithWebIdentityCredentialProvider`
 send STS requests to the endpoint configured on the provider, including any path

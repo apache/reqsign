@@ -187,15 +187,19 @@ credentials, SSO, or `credential_process`. A role can instead name
 Each STS call uses the previous hop's credential. The graph uses the configured
 slots, and removing a required slot returns an error for the selected role.
 
-If the profile slot explicitly selects a chain with `credential_source = Environment`,
-the `env` slot supplies the source credentials for STS and the provider returns
-the final role credentials. Other profiles keep the ordinary environment-first
-order. Providers added with `push_front` run first.
+Providers added with `push_front` run first. Environment credentials take
+precedence over profiles selected by `AWS_PROFILE` or the default name. For an
+explicitly named role chain, the provider checks the graph before choosing
+credentials. An invalid graph fails even when environment credentials are
+available. A valid chain with `credential_source = Environment` uses the
+`env` slot as its STS source and returns the final role credentials. Other valid
+chains retain the environment-first order.
 
-A profile in `~/.aws/config` can set `role_arn` and `web_identity_token_file`
-to use the `web_identity` slot. This slot can discover the profile even with
-`.no_profile()`. The role chain and the `sso` and `process` slots are available
-on targets other than `wasm32`.
+A profile can set `role_arn` and `web_identity_token_file` to use the
+`web_identity` slot. Web identity profile settings and role-chain process
+commands use the merged config and credentials files. The web identity slot can
+discover its profile even with `.no_profile()`. The role chain and the `sso` and
+`process` slots are available on targets other than `wasm32`.
 
 ## S3 Express Authentication
 

@@ -39,7 +39,53 @@ const AWS_SOURCE_PROFILE: &str = "source_profile";
 const AWS_EXTERNAL_ID: &str = "external_id";
 const AWS_DURATION_SECONDS: &str = "duration_seconds";
 const ENVIRONMENT_SOURCE: &str = "Environment";
+const EC2_INSTANCE_METADATA_SOURCE: &str = "Ec2InstanceMetadata";
+const ECS_CONTAINER_SOURCE: &str = "EcsContainer";
 const DEFAULT_ROLE_SESSION_NAME: &str = "reqsign";
+
+/// The credential source declared by a validated role path.
+enum RoleSource<'a> {
+    Environment,
+    Ec2InstanceMetadata,
+    EcsContainer,
+    Static,
+    Sso,
+    Process(&'a str),
+}
+
+impl<'a> RoleSource<'a> {
+    fn from_profile(profile: &'a Profile) -> Result<Self> {
+        if let Some(source) = profile
+            .get(AWS_CREDENTIAL_SOURCE)
+            .filter(|_| profile.get(AWS_ROLE_ARN).is_some())
+        {
+            return match source {
+                ENVIRONMENT_SOURCE => Ok(Self::Environment),
+                EC2_INSTANCE_METADATA_SOURCE => Ok(Self::Ec2InstanceMetadata),
+                ECS_CONTAINER_SOURCE => Ok(Self::EcsContainer),
+                _ => Err(Error::config_invalid(format!(
+                    "AWS role profile '{}' has an unsupported credential_source",
+                    profile.name()
+                ))),
+            };
+        }
+
+        if profile.get(AWS_ACCESS_KEY_ID).is_some() && profile.get(AWS_SECRET_ACCESS_KEY).is_some()
+        {
+            return Ok(Self::Static);
+        }
+        if has_sso_configuration(profile) {
+            return Ok(Self::Sso);
+        }
+        if let Some(command) = profile.get("credential_process") {
+            return Ok(Self::Process(command));
+        }
+        Err(Error::config_invalid(format!(
+            "AWS role profile source '{}' does not provide static credentials, SSO configuration, or credential_process",
+            profile.name()
+        )))
+    }
+}
 
 /// Resolves role profiles with the configured slots from the default provider.
 pub(crate) struct AssumeRoleChainCredentialProvider {
@@ -77,15 +123,17 @@ impl AssumeRoleChainCredentialProvider {
         }
     }
 
-    async fn profile_source_credential(
+    async fn source_credential(
         &self,
         ctx: &Context,
         shared: &SharedConfig,
         profile: &Profile,
+        source: RoleSource<'_>,
+        env_enabled: bool,
+        environment: Option<&Credential>,
     ) -> Result<Credential> {
-        if profile.get(AWS_ACCESS_KEY_ID).is_some() && profile.get(AWS_SECRET_ACCESS_KEY).is_some()
-        {
-            return self
+        match source {
+            RoleSource::Static => self
                 .profile
                 .clone()
                 .with_profile(profile.name())
@@ -96,82 +144,55 @@ impl AssumeRoleChainCredentialProvider {
                         "AWS role profile source '{}' has incomplete static credentials",
                         profile.name()
                     ))
-                });
-        }
-
-        if has_sso_configuration(profile) {
-            let Some(sso) = &self.sso else {
-                return Err(Error::config_invalid(format!(
-                    "AWS role profile source '{}' requires SSO, but the SSO provider is disabled",
-                    profile.name()
-                )));
-            };
-            return sso
-                .clone()
-                .with_shared_config(shared.clone())
-                .provide_credential_for_profile(ctx, profile.name())
-                .await?
-                .ok_or_else(|| {
-                    Error::config_invalid(format!(
-                        "AWS role profile source '{}' does not provide SSO credentials",
+                }),
+            RoleSource::Sso => {
+                let Some(sso) = &self.sso else {
+                    return Err(Error::config_invalid(format!(
+                        "AWS role profile source '{}' requires SSO, but the SSO provider is disabled",
                         profile.name()
-                    ))
-                });
-        }
-
-        if profile.get("credential_process").is_some() {
-            let Some(process) = &self.process else {
-                return Err(Error::config_invalid(format!(
-                    "AWS role profile source '{}' requires credential_process, but the process provider is disabled",
-                    profile.name()
-                )));
-            };
-            return process
-                .provide_credential_for_profile(ctx, shared, profile.name())
-                .await;
-        }
-
-        Err(Error::config_invalid(format!(
-            "AWS role profile source '{}' does not provide static credentials, SSO configuration, or credential_process",
-            profile.name()
-        )))
-    }
-
-    async fn named_source_credential(
-        &self,
-        ctx: &Context,
-        profile: &Profile,
-        source: &str,
-        env_enabled: bool,
-        environment: Option<&Credential>,
-    ) -> Result<Credential> {
-        match source {
-            ENVIRONMENT_SOURCE if !env_enabled => Err(disabled_source(profile, source, "env")),
-            ENVIRONMENT_SOURCE => environment
-                .cloned()
-                .ok_or_else(|| missing_source(profile, source)),
-            "Ec2InstanceMetadata" => {
-                let imds = self
-                    .imds
+                    )));
+                };
+                sso.clone()
+                    .with_shared_config(shared.clone())
+                    .provide_credential_for_profile(ctx, profile.name())
+                    .await?
+                    .ok_or_else(|| {
+                        Error::config_invalid(format!(
+                            "AWS role profile source '{}' does not provide SSO credentials",
+                            profile.name()
+                        ))
+                    })
+            }
+            RoleSource::Process(command) => {
+                let process = self
+                    .process
                     .as_ref()
-                    .ok_or_else(|| disabled_source(profile, source, "imds"))?;
+                    .ok_or_else(|| disabled_source(profile, "credential_process", "process"))?;
+                process.provide_credential_for_command(ctx, command).await
+            }
+            RoleSource::Environment if !env_enabled => {
+                Err(disabled_source(profile, ENVIRONMENT_SOURCE, "env"))
+            }
+            RoleSource::Environment => environment
+                .cloned()
+                .ok_or_else(|| missing_source(profile, ENVIRONMENT_SOURCE)),
+            RoleSource::Ec2InstanceMetadata => {
+                let imds = self.imds.as_ref().ok_or_else(|| {
+                    disabled_source(profile, EC2_INSTANCE_METADATA_SOURCE, "imds")
+                })?;
                 imds.provide_credential(ctx)
                     .await?
-                    .ok_or_else(|| missing_source(profile, source))
+                    .ok_or_else(|| missing_source(profile, EC2_INSTANCE_METADATA_SOURCE))
             }
-            "EcsContainer" => {
+            RoleSource::EcsContainer => {
                 let ecs = self
                     .ecs
                     .as_ref()
-                    .ok_or_else(|| disabled_source(profile, source, "ecs"))?;
+                    .ok_or_else(|| disabled_source(profile, ECS_CONTAINER_SOURCE, "ecs"))?;
                 ecs.provide_credential(ctx)
                     .await?
-                    .ok_or_else(|| missing_source(profile, source))
+                    .ok_or_else(|| missing_source(profile, ECS_CONTAINER_SOURCE))
             }
-            _ => Err(Error::config_invalid(format!(
-                "AWS role profile '{}' has an unsupported credential_source",
-                profile.name()
-            ))),
         }
     }
 
@@ -208,26 +229,13 @@ impl AssumeRoleChainCredentialProvider {
                 .as_ref()
                 .ok_or_else(|| disabled_source(&selected, "web identity", "web_identity"))?;
             let credential = web_identity
-                .provide_credential_with_config(ctx, &shared)
+                .provide_credential_with_config(ctx, &shared, Some(&selected))
                 .await?
                 .ok_or_else(|| missing_source(&selected, "web identity"))?;
             return Ok(Some(credential));
         }
 
-        let (roles, leaf) = match load_role_path(ctx, &shared, selected).await {
-            Ok(path) => path,
-            // Traversal ends at a declared credential_source. An error here
-            // means no such source was reached, so environment still wins.
-            Err(_) if environment.is_some() => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        let credential_source = leaf
-            .get(AWS_CREDENTIAL_SOURCE)
-            .filter(|_| leaf.get(AWS_ROLE_ARN).is_some());
-        if environment.is_some() && credential_source != Some(ENVIRONMENT_SOURCE) {
-            return Ok(None);
-        }
-
+        let (roles, leaf) = load_role_path(ctx, &shared, selected).await?;
         let selected = roles.first().unwrap_or(&leaf);
         let region = selected.region().ok_or_else(|| {
             Error::config_invalid(format!(
@@ -265,14 +273,18 @@ impl AssumeRoleChainCredentialProvider {
             operations.push(operation);
         }
 
+        let source = RoleSource::from_profile(&leaf)?;
+        // An explicit role graph must be valid before it can defer to the
+        // environment. Preserve env-first for valid non-environment graphs
+        // without acquiring credentials from their configured sources.
+        if environment.is_some() && !matches!(source, RoleSource::Environment) {
+            return Ok(None);
+        }
+
         let crypto = ctx.crypto_provider()?;
-        let mut credential = match credential_source {
-            Some(source) => {
-                self.named_source_credential(ctx, &leaf, source, env_enabled, environment)
-                    .await?
-            }
-            None => self.profile_source_credential(ctx, &shared, &leaf).await?,
-        };
+        let mut credential = self
+            .source_credential(ctx, &shared, &leaf, source, env_enabled, environment)
+            .await?;
         for operation in operations.into_iter().rev() {
             let request = operation.build_request(crypto)?;
             let (mut parts, body) = request.into_parts();

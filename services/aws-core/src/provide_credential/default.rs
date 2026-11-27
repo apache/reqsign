@@ -45,13 +45,18 @@ use reqsign_core::{Context, ProvideCredential, ProvideCredentialChain, Result};
 /// A role chain follows `source_profile` to static credentials, SSO, or a
 /// credential process, or uses the enabled slot named by `credential_source`
 /// (`Environment`, `Ec2InstanceMetadata`, or `EcsContainer`). Each role is assumed
-/// with the previous hop's credential. If the profile slot explicitly selects
-/// a chain with `credential_source = Environment`, the environment credential
-/// authorizes the role chain and the provider returns its final role credential.
-/// Providers added with [`Self::push_front`] still run first.
+/// with the previous hop's credential. Providers added with [`Self::push_front`]
+/// run first. Environment credentials take precedence over ambient profiles.
 ///
-/// Errors from a selected role profile or SSO stop resolution. The role-chain
-/// path is available on targets other than `wasm32`.
+/// If the profile slot explicitly names a role chain, the provider checks the
+/// role graph and source declarations before choosing credentials. Invalid
+/// graphs return an error even when environment credentials are available. A
+/// valid chain with `credential_source = Environment` uses the environment
+/// credential to authorize STS and returns the final role credential. Other
+/// valid chains use the ordinary environment-first order.
+///
+/// When credential acquisition reaches a selected role or SSO, errors stop
+/// resolution. The role-chain path is available on targets other than `wasm32`.
 #[derive(Debug)]
 pub struct DefaultCredentialProvider {
     front: ProvideCredentialChain<Credential>,

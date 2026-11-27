@@ -17,7 +17,7 @@
 
 use crate::provide_credential::sts_endpoint::resolve_sts_endpoint;
 use crate::provide_credential::utils::parse_sts_error;
-use crate::{Credential, SharedConfig};
+use crate::{Credential, Profile, SharedConfig};
 use bytes::Bytes;
 use form_urlencoded::Serializer;
 use quick_xml::de;
@@ -71,8 +71,9 @@ enum WebIdentityTokenSource {
 /// Role and token settings on the provider take precedence over `AWS_ROLE_ARN` and
 /// `AWS_WEB_IDENTITY_TOKEN_FILE`. If those sources do not yield a complete pair, the
 /// provider looks for `role_arn` and `web_identity_token_file` together in the selected
-/// shared config profile. Explicit provider settings still apply. A partial environment
-/// pair is skipped so the role and token file from the profile stay paired.
+/// profile merged from the config and credentials files. Explicit provider settings still
+/// apply. A partial environment pair is skipped so the role and token file from the
+/// profile stay paired.
 ///
 /// The STS endpoint follows the AWS SDKs' endpoint settings: an endpoint set with
 /// [`Self::with_sts_endpoint`], then `AWS_ENDPOINT_URL_STS`, `AWS_ENDPOINT_URL`, the selected
@@ -285,6 +286,7 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
         &self,
         ctx: &Context,
         shared: &SharedConfig,
+        selected_profile: Option<&Profile>,
     ) -> Result<Option<Credential>> {
         let envs = ctx.env_vars();
         let role_arn = self
@@ -296,30 +298,30 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
             .map(String::as_str)
             .filter(|path| !path.is_empty());
 
+        let loaded_profile;
         let profile = if role_arn.is_none()
             || (matches!(self.token_source, WebIdentityTokenSource::Discover)
                 && token_file.is_none())
         {
-            let name = shared.profile_name(ctx);
-            let config = shared.load_config_file(ctx).await?;
-            let Some(profile) = config
-                .section(Some(crate::config::config_section(&name)))
-                .filter(|section| {
-                    section
-                        .get("role_arn")
-                        .is_some_and(|value| !value.is_empty())
-                        && section
-                            .get(WEB_IDENTITY_TOKEN_FILE)
-                            .is_some_and(|value| !value.is_empty())
-                })
-            else {
-                return Ok(None);
+            let profile = match selected_profile {
+                Some(profile) => profile,
+                None => {
+                    loaded_profile = shared.load(ctx).await?;
+                    &loaded_profile
+                }
             };
-            Some(profile.clone())
+            let profile_role = profile.get("role_arn").filter(|value| !value.is_empty());
+            let profile_token = profile
+                .get(WEB_IDENTITY_TOKEN_FILE)
+                .filter(|value| !value.is_empty());
+            if profile_role.is_none() || profile_token.is_none() {
+                return Ok(None);
+            }
+            Some(profile)
         } else {
             None
         };
-        let (role_arn, token_file) = match &profile {
+        let (role_arn, token_file) = match profile {
             Some(profile) => (
                 self.role_arn.as_deref().or_else(|| profile.get("role_arn")),
                 profile.get(WEB_IDENTITY_TOKEN_FILE),
@@ -340,7 +342,7 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
             .region
             .as_deref()
             .or_else(|| envs.get("AWS_REGION").map(String::as_str))
-            .or_else(|| profile.as_ref().and_then(|profile| profile.get("region")));
+            .or_else(|| profile.and_then(|profile| profile.get("region")));
 
         // Check if we should use regional STS endpoint
         let use_regional = self.use_regional_sts_endpoint.unwrap_or_else(|| {
@@ -363,11 +365,7 @@ impl AssumeRoleWithWebIdentityCredentialProvider {
             .role_session_name
             .as_deref()
             .or_else(|| envs.get("AWS_ROLE_SESSION_NAME").map(String::as_str))
-            .or_else(|| {
-                profile
-                    .as_ref()
-                    .and_then(|profile| profile.get("role_session_name"))
-            })
+            .or_else(|| profile.and_then(|profile| profile.get("role_session_name")))
             .unwrap_or("reqsign");
 
         // Construct request to AWS STS Service.
@@ -463,7 +461,8 @@ impl ProvideCredential for AssumeRoleWithWebIdentityCredentialProvider {
         if let Some(profile) = &self.profile {
             shared = shared.with_profile(profile);
         }
-        self.provide_credential_with_config(ctx, &shared).await
+        self.provide_credential_with_config(ctx, &shared, None)
+            .await
     }
 }
 
@@ -950,6 +949,9 @@ mod tests {
         struct Config(AtomicUsize);
         impl FileRead for Config {
             async fn file_read(&self, path: &str) -> Result<Vec<u8>> {
+                if path == "/home/test/.aws/credentials" {
+                    return Err(Error::unexpected("credentials file not found"));
+                }
                 assert_eq!(path, "/home/test/.aws/config");
                 self.0.fetch_add(1, Ordering::Relaxed);
                 Ok(b"[profile prod]\nendpoint_url = https://unused.example.test\n".to_vec())

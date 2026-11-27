@@ -492,6 +492,36 @@ async fn explicit_profile_without_an_environment_source_keeps_env_precedence() {
     assert_eq!(http.calls(), 0);
 }
 
+#[tokio::test]
+async fn ambient_env_and_push_front_skip_a_malformed_role_graph() {
+    let mut envs = environment_credentials();
+    envs.insert("AWS_PROFILE".into(), "operator".into());
+    let config = operator_config("source_profile = missing");
+    let (ctx, http) = fixture(&config, envs);
+    let providers = [
+        (
+            DefaultCredentialProvider::builder().build(),
+            SOURCE_ACCESS_KEY,
+        ),
+        (
+            DefaultCredentialProvider::builder()
+                .with_profile("operator")
+                .build()
+                .push_front(crate::StaticCredentialProvider::new(
+                    "preferred-key",
+                    "preferred-secret",
+                )),
+            "preferred-key",
+        ),
+    ];
+
+    for (provider, access_key) in providers {
+        let credential = provider.provide_credential(&ctx).await.unwrap().unwrap();
+        assert_eq!(credential.access_key_id, access_key);
+    }
+    assert_eq!(http.calls(), 0);
+}
+
 fn operator_config(source_config: &str) -> String {
     format!("[profile operator]\nrole_arn = {OPERATOR_ROLE}\nregion = {REGION}\n{source_config}\n")
 }
@@ -658,50 +688,55 @@ impl CommandExecute for ProcessMock {
 }
 
 #[tokio::test]
-async fn process_source_uses_the_leaf_config_and_explicit_command_override() {
-    let config = operator_config(
-        "source_profile = process-source\n\n[profile process-source]\ncredential_process = leaf-helper --tenant \"test account\"",
-    );
-    for (provider, program) in [
-        (ProcessCredentialProvider::new(), "leaf-helper"),
-        (
-            ProcessCredentialProvider::new()
-                .with_command("configured-helper --tenant \"test account\""),
-            "configured-helper",
-        ),
+async fn process_source_uses_the_merged_leaf_and_explicit_command_override() {
+    for config_leaf in [
+        "",
+        "\n[profile process-source]\noutput = json\n",
+        "\n[profile process-source]\ncredential_process = config-helper\n",
     ] {
-        let files = Arc::new(Files::default());
-        files.put("/selected-config", config.as_str());
-        files.put(
-            "/config",
-            "[profile process-source]\ncredential_process = ambient-helper\n",
-        );
-        let (ctx, http) = fixture_with_files(files, HashMap::new());
-        let ctx = ctx.with_command_execute(ProcessMock {
-            program,
-            args: &["--tenant", "test account"],
-            status: 0,
-        });
-        http.assumed_role(OPERATOR_ACCESS_KEY, "operator-token");
+        let config = operator_config(&format!("source_profile = process-source\n{config_leaf}"));
+        for (provider, program) in [
+            (ProcessCredentialProvider::new(), "credentials-helper"),
+            (
+                ProcessCredentialProvider::new()
+                    .with_command("configured-helper --tenant \"test account\""),
+                "configured-helper",
+            ),
+        ] {
+            let files = Arc::new(Files::default());
+            files.put("/selected-config", config.as_str());
+            files.put(
+                "/selected-credentials",
+                "[process-source]\ncredential_process = credentials-helper --tenant \"test account\"\n",
+            );
+            let (ctx, http) = fixture_with_files(files, HashMap::new());
+            let ctx = ctx.with_command_execute(ProcessMock {
+                program,
+                args: &["--tenant", "test account"],
+                status: 0,
+            });
+            http.assumed_role(OPERATOR_ACCESS_KEY, "operator-token");
 
-        let credential = DefaultCredentialProvider::builder()
-            .with_profile("replaced")
-            .profile(
-                ProfileCredentialProvider::new()
-                    .with_profile("operator")
-                    .with_config_file("/selected-config"),
-            )
-            .process(provider)
-            .build()
-            .provide_credential(&ctx)
-            .await
-            .unwrap()
-            .unwrap();
+            let credential = DefaultCredentialProvider::builder()
+                .with_profile("replaced")
+                .profile(
+                    ProfileCredentialProvider::new()
+                        .with_profile("operator")
+                        .with_config_file("/selected-config")
+                        .with_credentials_file("/selected-credentials"),
+                )
+                .process(provider)
+                .build()
+                .provide_credential(&ctx)
+                .await
+                .unwrap()
+                .unwrap();
 
-        assert_eq!(credential.access_key_id, OPERATOR_ACCESS_KEY);
-        let requests = http.requests();
-        assert_eq!(requests.len(), 1);
-        assert_operator_role_request(&requests[0], "process-source-token");
+            assert_eq!(credential.access_key_id, OPERATOR_ACCESS_KEY);
+            let requests = http.requests();
+            assert_eq!(requests.len(), 1);
+            assert_operator_role_request(&requests[0], "process-source-token");
+        }
     }
 }
 
@@ -808,15 +843,15 @@ async fn conflicting_environment_source_profile_does_not_return_raw_env_credenti
 }
 
 #[tokio::test]
-async fn profile_web_identity_uses_the_selected_config_file_and_sts_settings() {
+async fn web_identity_uses_the_merged_profile_and_selected_sts_settings() {
     let files = Arc::new(Files::default());
     files.put(
         "/selected-config",
-        operator_config(
-            "web_identity_token_file = /subject-token
-role_session_name = operator-session
-endpoint_url = https://profile-sts.example.test/prefix",
-        ),
+        operator_config("endpoint_url = https://profile-sts.example.test/prefix"),
+    );
+    files.put(
+        "/selected-credentials",
+        "[operator]\nweb_identity_token_file = /subject-token\nrole_session_name = operator-session\nendpoint_url = https://credentials-file.example.test\n",
     );
     files.put(
         "/config",
@@ -839,7 +874,11 @@ endpoint_url = https://wrong-file.example.test
     http.web_identity_role();
 
     let credential = DefaultCredentialProvider::builder()
-        .profile(ProfileCredentialProvider::new().with_config_file("/selected-config"))
+        .profile(
+            ProfileCredentialProvider::new()
+                .with_config_file("/selected-config")
+                .with_credentials_file("/selected-credentials"),
+        )
         .with_profile("operator")
         .build()
         .provide_credential(&ctx)
@@ -863,11 +902,63 @@ endpoint_url = https://wrong-file.example.test
 }
 
 #[tokio::test]
+async fn web_identity_discovers_a_role_defined_in_the_credentials_file() {
+    let cases = [
+        (
+            AssumeRoleWithWebIdentityCredentialProvider::new(),
+            Some("profile.subject.token"),
+            "profile.subject.token",
+            "https://sts.amazonaws.com/",
+        ),
+        (
+            AssumeRoleWithWebIdentityCredentialProvider::new()
+                .with_subject_token("explicit.subject.token")
+                .with_sts_endpoint("https://explicit-sts.example.test"),
+            None,
+            "explicit.subject.token",
+            "https://explicit-sts.example.test/",
+        ),
+    ];
+    for (provider, file_token, expected_token, expected_endpoint) in cases {
+        let files = Arc::new(Files::default());
+        files.put(
+            "/credentials",
+            format!(
+                "[operator]\nrole_arn = {OPERATOR_ROLE}\nweb_identity_token_file = /subject-token\n"
+            ),
+        );
+        if let Some(token) = file_token {
+            files.put("/subject-token", token);
+        }
+        let (ctx, http) = fixture_with_files(files, HashMap::new());
+        http.web_identity_role();
+
+        let credential = DefaultCredentialProvider::builder()
+            .with_profile("operator")
+            .web_identity(provider)
+            .build()
+            .provide_credential(&ctx)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(credential.access_key_id, OPERATOR_ACCESS_KEY);
+        let requests = http.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].uri(), expected_endpoint);
+        let form: HashMap<_, _> = form_urlencoded::parse(requests[0].body()).collect();
+        assert_eq!(form["RoleArn"], OPERATOR_ROLE);
+        assert_eq!(form["WebIdentityToken"], expected_token);
+    }
+}
+
+#[tokio::test]
 async fn no_profile_keeps_the_web_identity_slot_and_its_profile_selection() {
     let files = Arc::new(Files::default());
+    files.put("/config", operator_config(""));
     files.put(
-        "/config",
-        operator_config("web_identity_token_file = /subject-token"),
+        "/credentials",
+        "[operator]\nweb_identity_token_file = /subject-token\n",
     );
     files.put("/subject-token", "profile.subject.token");
     let (ctx, http) = fixture_with_files(
@@ -957,6 +1048,11 @@ async fn rejects_invalid_role_graphs_before_http() {
             "unsupported credential_source",
         ),
         (
+            "source profile has no credential source",
+            operator_config("source_profile = source\n[profile source]\noutput = json"),
+            "does not provide static credentials, SSO configuration, or credential_process",
+        ),
+        (
             "missing region",
             format!(
                 "[profile operator]\nrole_arn = {OPERATOR_ROLE}\nsource_profile = source\n\
@@ -975,24 +1071,30 @@ async fn rejects_invalid_role_graphs_before_http() {
     ];
 
     for (name, config, expected) in cases {
-        let (ctx, http) = fixture(&config, HashMap::new());
-        let error = isolated_builder("operator")
-            .build()
-            .provide_credential(&ctx)
-            .await
-            .expect_err(name);
-        assert!(
-            error.to_string().contains(expected),
-            "{name}: unexpected error: {error}"
-        );
-        assert!(
-            matches!(
-                error.kind(),
-                ErrorKind::ConfigInvalid | ErrorKind::RequestInvalid
-            ),
-            "{name}: unexpected error kind"
-        );
-        assert_eq!(http.calls(), 0, "{name} must fail before HTTP");
+        for envs in [HashMap::new(), environment_credentials()] {
+            let has_environment = !envs.is_empty();
+            let (ctx, http) = fixture(&config, envs);
+            let description =
+                format!("{name}, environment credentials available: {has_environment}");
+            let error = DefaultCredentialProvider::builder()
+                .with_profile("operator")
+                .build()
+                .provide_credential(&ctx)
+                .await
+                .expect_err(&description);
+            assert!(
+                error.to_string().contains(expected),
+                "{description}: unexpected error: {error}"
+            );
+            assert!(
+                matches!(
+                    error.kind(),
+                    ErrorKind::ConfigInvalid | ErrorKind::RequestInvalid
+                ),
+                "{description}: unexpected error kind"
+            );
+            assert_eq!(http.calls(), 0, "{description} must fail before HTTP");
+        }
     }
 }
 

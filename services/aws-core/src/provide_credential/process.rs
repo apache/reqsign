@@ -88,7 +88,7 @@ impl ProcessCredentialProvider {
         }
 
         // Otherwise, load from config file
-        let mut shared = crate::SharedConfig::new();
+        let mut shared = SharedConfig::new();
         if let Some(profile) = &self.profile {
             shared = shared.with_profile(profile);
         }
@@ -118,18 +118,12 @@ impl ProcessCredentialProvider {
             .map(|s| s.to_string())
     }
 
-    pub(super) async fn provide_credential_for_profile(
+    pub(super) async fn provide_credential_for_command(
         &self,
         ctx: &Context,
-        shared: &SharedConfig,
-        profile: &str,
+        command: &str,
     ) -> Result<Credential> {
-        let configured_command = Self::load_command_from_config(ctx, shared, profile).await?;
-        let command = self.command.as_deref().unwrap_or(&configured_command);
-        self.credential_from_command(ctx, command).await
-    }
-
-    async fn credential_from_command(&self, ctx: &Context, command: &str) -> Result<Credential> {
+        let command = self.command.as_deref().unwrap_or(command);
         let output = self.execute_process(ctx, command).await?;
         let expires_in = output
             .expiration
@@ -250,7 +244,9 @@ impl ProvideCredential for ProcessCredentialProvider {
             }
         };
 
-        self.credential_from_command(ctx, &command).await.map(Some)
+        self.provide_credential_for_command(ctx, &command)
+            .await
+            .map(Some)
     }
 }
 

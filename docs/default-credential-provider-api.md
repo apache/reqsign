@@ -131,13 +131,19 @@ provides credential and STS endpoint settings for `web_identity`. The independen
 web identity slot is available with `no_profile()`. On `wasm32`, `with_profile`
 applies to the available `profile` and `web_identity` slots.
 
-When the profile slot explicitly selects a role chain with
-`credential_source = Environment`, the `env` slot supplies the credential that
-authorizes the first STS call and the chain returns the final role credential.
-Environment credentials still come first for other profiles and when
-`AWS_PROFILE` selects the profile. `push_front` takes precedence over both paths.
-A role chain uses the configured slots for its source credentials. Removing a
-required slot makes the selected chain fail.
+Providers added with `push_front` run first. Environment credentials take
+precedence when `AWS_PROFILE` or the default name selects the profile. When the
+profile slot explicitly names a readable role chain, the provider checks the
+role graph and source declarations before choosing credentials. An invalid
+graph fails even when environment credentials are available. For a valid chain
+with `credential_source = Environment`, the environment credential authorizes
+the first STS call and the chain returns its final role credential. Other valid
+chains keep the environment-first order.
+
+When a role chain runs, it uses its declared source and propagates acquisition
+errors, including disabled required slots. A selected `credential_process`
+source or web identity role gets its profile settings from the merged config and
+credentials files. Explicit settings on the corresponding provider still apply.
 
 ## Internal State Model
 
