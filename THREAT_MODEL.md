@@ -450,6 +450,12 @@ Examples:
   credential scope, and signing key for each signed chunk and trailer. The
   signing state keeps the derived key private. The caller owns the upload
   framing, checksum calculation, and retries.
+- Azure Storage Shared Key header signing orders `x-ms-*` names using Azure's
+  character weights, normalizes their values, and groups decoded query
+  parameters in the signature input. It preserves the wire URI and caller
+  headers other than `x-ms-date` and `Authorization`.
+  A signed header value that cannot be read as text returns `RequestInvalid`
+  before any request changes are committed.
 - Header-based signing must apply authorization data to headers without
   unintentionally moving authority to query parameters.
 - Query-based signing and presigning must apply expiry and signed query

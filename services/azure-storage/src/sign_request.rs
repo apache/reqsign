@@ -24,13 +24,12 @@ use crate::user_delegation::{
 };
 use http::request::Parts;
 use http::{HeaderValue, Uri, header};
-use log::debug;
 use reqsign_core::hash::{base64_decode, base64_hmac_sha256};
 use reqsign_core::time::Timestamp;
 use reqsign_core::{
-    Context, Result, SignRequest, SigningCredential, SigningMethod, SigningRequest,
+    Context, Error, Result, SignRequest, SigningCredential, SigningMethod, SigningRequest,
 };
-use std::fmt::Write;
+use std::collections::BTreeMap;
 use std::fmt::{Debug, Formatter};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -510,7 +509,13 @@ impl SignRequest for RequestSigner {
                     }
                     SigningMethod::Header => {
                         let provider = context.crypto_provider()?;
-                        let string_to_sign = string_to_sign(&mut sctx, account_name, signing_time)?;
+                        sctx.headers.insert(
+                            X_MS_DATE,
+                            signing_time.format_http_date().parse().map_err(|e| {
+                                Error::unexpected("failed to parse x-ms-date header").with_source(e)
+                            })?,
+                        );
+                        let string_to_sign = string_to_sign(&sctx, account_name)?;
                         let decode_content = base64_decode(account_key).map_err(|e| {
                             reqsign_core::Error::unexpected("failed to decode account key")
                                 .with_source(e)
@@ -611,204 +616,136 @@ fn infer_account_name(authority: &str) -> Result<String> {
 /// ## Reference
 ///
 /// - [Blob, Queue, and File Services (Shared Key authorization)](https://docs.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key)
-fn string_to_sign(
-    ctx: &mut SigningRequest,
-    account_name: &str,
-    now_time: Timestamp,
-) -> Result<String> {
-    let mut s = String::with_capacity(128);
+fn string_to_sign(ctx: &SigningRequest, account_name: &str) -> Result<String> {
+    let mut signing = String::with_capacity(128);
+    signing.push_str(ctx.method.as_str());
+    signing.push('\n');
 
-    writeln!(&mut s, "{}", ctx.method.as_str()).map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write method to string").with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&header::CONTENT_ENCODING)
-            .map_err(|e| reqsign_core::Error::unexpected(
-                "failed to get content-encoding header"
-            )
-            .with_source(e))?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write content-encoding to string").with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&header::CONTENT_LANGUAGE)
-            .map_err(|e| reqsign_core::Error::unexpected(
-                "failed to get content-language header"
-            )
-            .with_source(e))?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write content-language to string").with_source(e)
-    })?;
-    writeln!(&mut s, "{}", {
-        let content_length = ctx
-            .header_get_or_default(&header::CONTENT_LENGTH)
-            .map_err(|e| {
-                reqsign_core::Error::unexpected("failed to get content-length header")
-                    .with_source(e)
-            })?;
-        if content_length == "0" {
+    for name in [
+        header::CONTENT_ENCODING,
+        header::CONTENT_LANGUAGE,
+        header::CONTENT_LENGTH,
+        header::HeaderName::from_static(CONTENT_MD5),
+        header::CONTENT_TYPE,
+        header::DATE,
+        header::IF_MODIFIED_SINCE,
+        header::IF_MATCH,
+        header::IF_NONE_MATCH,
+        header::IF_UNMODIFIED_SINCE,
+        header::RANGE,
+    ] {
+        let value = if name == header::DATE {
+            // Shared Key signing supplies x-ms-date in the canonicalized headers.
             ""
         } else {
-            content_length
+            ctx.header_get_or_default(&name)
+                .map_err(|error| error.with_context(&name))?
+        };
+        if name != header::CONTENT_LENGTH || value != "0" {
+            signing.push_str(value);
         }
-    })
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write content-length to string").with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&"content-md5".parse().map_err(|e| {
-            reqsign_core::Error::unexpected("failed to parse content-md5 header name")
-                .with_source(e)
-        })?)
-        .map_err(
-            |e| reqsign_core::Error::unexpected("failed to get content-md5 header").with_source(e)
-        )?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write content-md5 to string").with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&header::CONTENT_TYPE)
-            .map_err(
-                |e| reqsign_core::Error::unexpected("failed to get content-type header")
-                    .with_source(e)
-            )?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write content-type to string").with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&header::DATE)
-            .map_err(
-                |e| reqsign_core::Error::unexpected("failed to get date header").with_source(e)
-            )?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write date to string").with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&header::IF_MODIFIED_SINCE)
-            .map_err(|e| reqsign_core::Error::unexpected(
-                "failed to get if-modified-since header"
-            )
-            .with_source(e))?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write if-modified-since to string")
-            .with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&header::IF_MATCH).map_err(|e| {
-            reqsign_core::Error::unexpected("failed to get if-match header").with_source(e)
-        })?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write if-match to string").with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&header::IF_NONE_MATCH)
-            .map_err(
-                |e| reqsign_core::Error::unexpected("failed to get if-none-match header")
-                    .with_source(e)
-            )?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write if-none-match to string").with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&header::IF_UNMODIFIED_SINCE)
-            .map_err(|e| reqsign_core::Error::unexpected(
-                "failed to get if-unmodified-since header"
-            )
-            .with_source(e))?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write if-unmodified-since to string")
-            .with_source(e)
-    })?;
-    writeln!(
-        &mut s,
-        "{}",
-        ctx.header_get_or_default(&header::RANGE)
-            .map_err(
-                |e| reqsign_core::Error::unexpected("failed to get range header").with_source(e)
-            )?
-    )
-    .map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write range to string").with_source(e)
-    })?;
-    writeln!(&mut s, "{}", canonicalize_header(ctx, now_time)?).map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write canonicalized headers to string")
-            .with_source(e)
-    })?;
-    write!(&mut s, "{}", canonicalize_resource(ctx, account_name)).map_err(|e| {
-        reqsign_core::Error::unexpected("failed to write canonicalized resource to string")
-            .with_source(e)
-    })?;
-
-    debug!("string to sign: {}", s);
-
-    Ok(s)
-}
-
-/// ## Reference
-///
-/// - [Constructing the canonicalized headers string](https://docs.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-headers-string)
-fn canonicalize_header(ctx: &mut SigningRequest, now_time: Timestamp) -> Result<String> {
-    ctx.headers.insert(
-        X_MS_DATE,
-        now_time.format_http_date().parse().map_err(|e| {
-            reqsign_core::Error::unexpected("failed to parse x-ms-date header").with_source(e)
-        })?,
-    );
-
-    Ok(SigningRequest::header_to_string(
-        ctx.header_to_vec_with_prefix("x-ms-"),
-        ":",
-        "\n",
-    ))
-}
-
-/// ## Reference
-///
-/// - [Constructing the canonicalized resource string](https://docs.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-resource-string)
-fn canonicalize_resource(ctx: &SigningRequest, account_name: &str) -> String {
-    if ctx.query.is_empty() {
-        return format!("/{}{}", account_name, ctx.path);
+        signing.push('\n');
     }
 
-    let query = ctx
-        .query
-        .iter()
-        .map(|(k, v)| (k.to_lowercase(), v.clone()))
-        .collect();
+    append_canonicalized_headers(ctx, &mut signing)?;
+    append_canonicalized_resource(ctx, account_name, &mut signing);
+    Ok(signing)
+}
 
-    format!(
-        "/{}{}\n{}",
-        account_name,
-        ctx.path,
-        SigningRequest::query_to_string(query, ":", "\n")
-    )
+/// [Constructing the canonicalized headers string](https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-headers-string)
+fn append_canonicalized_headers(ctx: &SigningRequest, output: &mut String) -> Result<()> {
+    let mut names: Vec<_> = ctx
+        .headers
+        .keys()
+        .map(header::HeaderName::as_str)
+        .filter(|name| name.starts_with("x-ms-"))
+        .collect();
+    names.sort_unstable_by(|left, right| header_name_weights(left).cmp(header_name_weights(right)));
+
+    for name in names {
+        output.push_str(name);
+        output.push(':');
+        // HeaderMap keeps values for a name in insertion order.
+        for (index, value) in ctx.headers.get_all(name).iter().enumerate() {
+            let value = value.to_str().map_err(|error| {
+                Error::request_invalid("invalid Azure Shared Key header value")
+                    .with_context(name)
+                    .with_source(error)
+            })?;
+            if index > 0 {
+                output.push(',');
+            }
+            append_normalized_header_value(output, value);
+        }
+        output.push('\n');
+    }
+    Ok(())
+}
+
+fn header_name_weights(name: &str) -> impl Iterator<Item = u8> + '_ {
+    // Azure sorts '_' before digits in metadata names. These are the Azure SDK for
+    // Python's character weights for lowercase ASCII header names.
+    // https://github.com/Azure/azure-sdk-for-python/pull/26991
+    const WEIGHTS: [u8; 128] = {
+        let order = b"-!#$%&*.^_|~+\"'`0123456789abcdefghijklmnopqrstuvwxyz";
+        let mut weights = [u8::MAX; 128];
+        let mut rank = 0;
+        while rank < order.len() {
+            weights[order[rank] as usize] = rank as u8;
+            rank += 1;
+        }
+        weights
+    };
+    name.bytes().map(|byte| WEIGHTS[usize::from(byte)])
+}
+
+fn append_normalized_header_value(output: &mut String, value: &str) {
+    let mut in_quotes = false;
+    let mut escaped = false;
+    let mut pending_space = false;
+    // HeaderValue excludes CR and LF, leaving only spaces and tabs to fold.
+    for character in value.trim_start_matches([' ', '\t']).chars() {
+        if !in_quotes && matches!(character, ' ' | '\t') {
+            pending_space = true;
+            continue;
+        }
+        if pending_space {
+            output.push(' ');
+            pending_space = false;
+        }
+        output.push(character);
+
+        if escaped {
+            escaped = false;
+        } else {
+            match character {
+                '\\' if in_quotes => escaped = true,
+                '"' => in_quotes = !in_quotes,
+                _ => {}
+            }
+        }
+    }
+}
+
+/// [Constructing the canonicalized resource string](https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#constructing-the-canonicalized-resource-string)
+fn append_canonicalized_resource(ctx: &SigningRequest, account_name: &str, output: &mut String) {
+    output.push('/');
+    output.push_str(account_name);
+    output.push_str(&ctx.path);
+
+    // The decoded query view preserves a raw '+' as data for Shared Key signing.
+    // https://github.com/Azure/azure-sdk-for-js/blob/bc12ee66f4cb9a1e3fddf51279ba254fe8953994/sdk/storage/storage-common/test/node/sharedKeySigning.spec.ts#L226-L231
+    let mut query: BTreeMap<String, Vec<&str>> = BTreeMap::new();
+    for (name, value) in &ctx.query {
+        query.entry(name.to_lowercase()).or_default().push(value);
+    }
+    for (name, mut values) in query {
+        values.sort_unstable();
+        output.push('\n');
+        output.push_str(&name);
+        output.push(':');
+        output.push_str(&values.join(","));
+    }
 }
 
 #[cfg(test)]
@@ -816,7 +753,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use http::Request;
-    use reqsign_core::{HttpSend, OsEnv};
+    use reqsign_core::{ErrorKind, HttpSend, OsEnv, Signer};
     use reqsign_file_read_tokio::TokioFileRead;
     use reqsign_http_send_reqwest::ReqwestHttpSend;
     use std::str::FromStr;
@@ -845,21 +782,152 @@ mod tests {
         );
     }
 
-    #[test]
-    fn canonical_resource_decodes_query_once_without_form_semantics() {
-        let mut parts = Request::get(
-            "https://account.blob.core.windows.net/container/blob?versionId=a%2Bb%3Dc%2525%26e&literal=+",
-        )
-        .body(())
-        .unwrap()
-        .into_parts()
-        .0;
-        let signing_req = SigningRequest::build(&mut parts).unwrap();
+    const SHARED_KEY_ACCOUNT: &str = "azsignfixture";
+    const SHARED_KEY_BYTES: &[u8] = b"reqsign-azure-shared-key-fixture";
+    const SHARED_KEY_URI: &str = "https://azsignfixture.example/container/blob%2fname";
+    const SHARED_KEY_DATE: &str = "Tue, 01 Mar 2022 08:12:34 GMT";
 
-        assert_eq!(
-            canonicalize_resource(&signing_req, "account"),
-            "/account/container/blob\nliteral:+\nversionid:a+b=c%25&e"
+    fn shared_key_request_signer() -> RequestSigner {
+        RequestSigner::new().with_time("2022-03-01T08:12:34Z".parse().unwrap())
+    }
+
+    #[tokio::test]
+    async fn shared_key_header_signs_x_ms_headers_in_azure_order() {
+        let key = reqsign_core::hash::base64_encode(SHARED_KEY_BYTES);
+        let signer = Signer::new(
+            crate::test_context(),
+            crate::StaticCredentialProvider::new_shared_key(SHARED_KEY_ACCOUNT, &key),
+            shared_key_request_signer(),
         );
+        let mut parts = Request::put(SHARED_KEY_URI)
+            .header(header::CONTENT_ENCODING, "gzip")
+            .header(header::CONTENT_LANGUAGE, "en")
+            .header(header::CONTENT_LENGTH, "42")
+            .header("content-md5", "bOWa0jy0OvR28Eh1kl5Cpg==")
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .header(header::IF_MATCH, "\"fixture-etag\"")
+            .header("x-ms-version", "2021-12-02")
+            .header("x-ms-meta-i0", "zero")
+            .header(
+                "X-MS-Meta-I_",
+                " \t zeta \t \"two\t  words \\\"stay  quoted\\\" ends\\\\\" \t tail \t",
+            )
+            .header("x-ms-meta-i9", "nine")
+            .header("x-ms-meta-ia", "letter")
+            .header("x-ms-meta-i", "prefix")
+            .header("x-ms-meta-blank", " \t ")
+            .header("x-ms-meta-i_", "  alpha \t\t beta \t")
+            .header("x-ms-meta-_leading", "leading underscore")
+            .header("x-ms-meta-i__", "two underscores")
+            .header("x-ms-blob-type", "BlockBlob")
+            .header("x-original", HeaderValue::from_bytes(b" \xff\t ").unwrap())
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+        let original_headers = parts.headers.clone();
+
+        signer.sign(&mut parts, None).await.unwrap();
+
+        let authorization = parts.headers.remove(header::AUTHORIZATION).unwrap();
+        // Python hmac over these lines in the Azure SDK for Python's order:
+        // x-ms-meta-_leading:leading underscore
+        // x-ms-meta-blank:
+        // x-ms-meta-i:prefix
+        // x-ms-meta-i_:zeta "two\t  words \"stay  quoted\" ends\\" tail,alpha beta
+        // x-ms-meta-i__:two underscores
+        // x-ms-meta-i0:zero
+        // x-ms-meta-i9:nine
+        // x-ms-meta-ia:letter
+        assert_eq!(
+            authorization,
+            concat!(
+                "SharedKey azsignfixture:",
+                "mFfPFGISqmdN+D/zGtbJd+1aygNlsWcD7ahCPjskLuM="
+            )
+        );
+        assert!(authorization.is_sensitive());
+        assert_eq!(parts.headers.remove(X_MS_DATE).unwrap(), SHARED_KEY_DATE);
+        assert_eq!(parts.headers, original_headers);
+        assert_eq!(parts.uri.to_string(), SHARED_KEY_URI);
+    }
+
+    #[tokio::test]
+    async fn shared_key_header_signs_grouped_decoded_query() {
+        let uri = format!(
+            "{SHARED_KEY_URI}?Zed=last&Dup=%7a&dUP=A&%44UP=%31&dup=A&dup=&flag&Empty=&raw=x+y&encoded-plus=x%2By&encoded-space=x%20y&escaped=%2B%3D%26%252F&comp=list&"
+        );
+        let mut parts = Request::get(&uri)
+            .header(header::CONTENT_LENGTH, "0")
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+        let original_headers = parts.headers.clone();
+        let key = reqsign_core::hash::base64_encode(SHARED_KEY_BYTES);
+        let credential = Credential::with_shared_key(SHARED_KEY_ACCOUNT, &key);
+
+        shared_key_request_signer()
+            .sign_request(&crate::test_context(), &mut parts, Some(&credential), None)
+            .await
+            .unwrap();
+
+        // HMAC over the output from Azure SDK for JavaScript storage-common 12.6.0-beta.1:
+        // /azsignfixture/container/blob%2fname
+        // comp:list
+        // dup:,1,A,A,z
+        // empty:
+        // encoded-plus:x+y
+        // encoded-space:x y
+        // escaped:+=&%2F
+        // flag:
+        // raw:x+y
+        // zed:last
+        assert_eq!(
+            parts.headers.remove(header::AUTHORIZATION).unwrap(),
+            concat!(
+                "SharedKey azsignfixture:",
+                "bnvwitjYdYeL2Pcg91shnx859540aU8lAye64pb1FqA="
+            )
+        );
+        assert_eq!(parts.headers.remove(X_MS_DATE).unwrap(), SHARED_KEY_DATE);
+        assert_eq!(parts.headers, original_headers);
+        assert_eq!(parts.uri.to_string(), uri);
+    }
+
+    #[tokio::test]
+    async fn shared_key_header_rejects_invalid_signed_values_atomically() {
+        let context = crate::test_context();
+        let signer = shared_key_request_signer();
+        let key = reqsign_core::hash::base64_encode(SHARED_KEY_BYTES);
+        let credential = Credential::with_shared_key(SHARED_KEY_ACCOUNT, &key);
+        let uri = format!("{SHARED_KEY_URI}?dup=%2f&dup=&flag");
+        for name in ["x-ms-meta-note", "content-type"] {
+            let mut parts = Request::get(&uri)
+                .header(header::AUTHORIZATION, "previous authorization")
+                .header(X_MS_DATE, "Mon, 28 Feb 2022 08:12:34 GMT")
+                .header("x-ms-meta-note", "valid first value")
+                .header(name, HeaderValue::from_bytes(b"opaque-\xff").unwrap())
+                .extension(42u32)
+                .body(())
+                .unwrap()
+                .into_parts()
+                .0;
+            let original = parts.clone();
+
+            let error = signer
+                .sign_request(&context, &mut parts, Some(&credential), None)
+                .await
+                .expect_err("malformed signed header must fail");
+
+            assert_eq!(error.kind(), ErrorKind::RequestInvalid, "{name}");
+            assert_eq!(error.context(), [name]);
+            assert_eq!(parts.headers, original.headers);
+            assert_eq!(parts.uri.to_string(), uri);
+            assert_eq!(parts.method, original.method);
+            assert_eq!(parts.version, original.version);
+            assert_eq!(parts.extensions.get::<u32>(), Some(&42));
+        }
     }
 
     #[tokio::test]
