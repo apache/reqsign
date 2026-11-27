@@ -16,13 +16,13 @@
 // under the License.
 
 use crate::credential::Credential;
+use crate::provide_credential::entra::STORAGE_SCOPE;
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 const STORAGE_RESOURCE: &str = "https://storage.azure.com/";
-const STORAGE_SCOPE: &str = "https://storage.azure.com/.default";
 
 /// Load a storage bearer token from an existing Azure CLI session.
 ///
@@ -44,12 +44,12 @@ impl AzureCliCredentialProvider {
         self,
         tenant_id: impl Into<String>,
     ) -> ConfiguredAzureCliCredentialProvider {
-        ConfiguredAzureCliCredentialProvider::default().with_tenant_id(tenant_id)
+        self.into_configured().with_tenant_id(tenant_id)
     }
 
     /// Request the given scope with `--scope`.
     pub fn with_scope(self, scope: impl Into<String>) -> ConfiguredAzureCliCredentialProvider {
-        ConfiguredAzureCliCredentialProvider::default().with_scope(scope)
+        self.into_configured().with_scope(scope)
     }
 
     /// Request the given resource with `--resource`.
@@ -57,7 +57,11 @@ impl AzureCliCredentialProvider {
         self,
         resource: impl Into<String>,
     ) -> ConfiguredAzureCliCredentialProvider {
-        ConfiguredAzureCliCredentialProvider::default().with_resource(resource)
+        self.into_configured().with_resource(resource)
+    }
+
+    pub(super) fn into_configured(self) -> ConfiguredAzureCliCredentialProvider {
+        ConfiguredAzureCliCredentialProvider::default()
     }
 }
 

@@ -15,10 +15,33 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//! Azure Storage signing and explicit [API key authentication](api_key) for Azure APIs.
+//! Azure Storage signing, Microsoft Entra ID bearer tokens, and [API keys](api_key).
 //!
-//! This module provides Azure Storage signing functionality along with convenience
-//! functions for common use cases.
+//! ## Microsoft Entra ID for Azure APIs
+//!
+//! Select the API's `<resource>/.default` scope and use [`RequestSigner::bearer`]
+//! to sign with `Authorization: Bearer`. Remove the Storage environment slot
+//! with `no_env()` when using the default chain for a different resource.
+//!
+//! ```no_run
+//! use reqsign::{Context, Signer};
+//! use reqsign::azure::{DefaultCredentialProvider, RequestSigner};
+//!
+//! # async fn example(ctx: Context) -> reqsign::Result<()> {
+//! let provider = DefaultCredentialProvider::builder()
+//!     .no_env()
+//!     .with_scope("https://management.core.windows.net//.default")?
+//!     .build();
+//! let signer = Signer::new(ctx, provider, RequestSigner::bearer());
+//! let mut request = http::Request::get("https://management.azure.com/subscriptions?api-version=2022-12-01")
+//!     .body(())
+//!     .unwrap()
+//!     .into_parts()
+//!     .0;
+//! signer.sign(&mut request, None).await?;
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! ## Azure API keys
 //!

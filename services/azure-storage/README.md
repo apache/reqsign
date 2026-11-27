@@ -228,6 +228,38 @@ five-line signature and includes only `comp` from the URI query. Supply the
 Table operation's service and OData headers on the request.
 [Authorize with Shared Key](https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key#table-service-shared-key-authorization)
 
+## Use Entra ID for another Azure API
+
+Choose the scope for one resource and use `RequestSigner::bearer()` to write
+only a sensitive `Authorization: Bearer` header. Pass `None` for `expires_in`.
+Use `no_env()` to exclude Storage credentials from the chain. This Azure
+Resource Manager example preserves the resource URI's trailing slash.
+
+```rust
+use reqsign::{azure, default_context, Signer};
+
+let provider = azure::DefaultCredentialProvider::builder()
+    .no_env()
+    .with_scope("https://management.core.windows.net//.default")?
+    .build();
+let signer = Signer::new(default_context(), provider, azure::RequestSigner::bearer());
+```
+
+`with_scope` applies to enabled Entra and Azure CLI slots as `scope` or
+`--scope`. Managed identity receives a `resource` value with just the terminal
+`/.default` removed. A provider installed after `with_scope` uses its own
+configuration. Use `with_scope` directly on a client secret, client certificate,
+workload identity, or Azure Pipelines provider. Use `with_resource` directly on
+`ImdsCredentialProvider`.
+
+The HTTP-based Entra exchanges use an explicit `with_authority_host` value,
+then `AZURE_AUTHORITY_HOST` from the context, then `https://login.microsoftonline.com`.
+A certificate assertion's audience is the resolved token endpoint. Azure
+Pipelines forwards the OIDC assertion issued by the pipeline unchanged.
+
+The default Azure Storage signer continues to use Storage credentials,
+including `x-ms-date` for a Storage bearer token.
+
 ## Grant an Account SAS
 
 Use `AccountSasGranter` with a Shared Key for the configured account to issue a
