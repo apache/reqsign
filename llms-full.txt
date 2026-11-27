@@ -3098,6 +3098,7 @@ Available `ProvideCredential` implementations. Construct any of them directly, r
 * [WorkloadIdentityCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.WorkloadIdentityCredentialProvider.html) — Workload identity federation
 * [ImdsCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.ImdsCredentialProvider.html) — Managed identity (IMDS)
 * [StaticCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.StaticCredentialProvider.html) — Static account key or SAS token
+* [AzureDeveloperCliCredentialProvider](https://docs.rs/reqsign-azure-storage/latest/reqsign%5Fazure%5Fstorage/struct.AzureDeveloperCliCredentialProvider.html) — Azure Developer CLI (native targets)
 
 ## Credential granting
 
