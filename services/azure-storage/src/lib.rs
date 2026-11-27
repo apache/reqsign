@@ -142,12 +142,8 @@
 //!
 //! ### Account SAS Generation
 //!
-//! Generate SAS tokens for delegated access:
-//!
-//! ```text
-//! // Account SAS is not yet exposed in the public API
-//! // This is planned for future releases
-//! ```
+//! Use [`AccountSasGranter`] to issue a SAS for explicit services, resource
+//! types, and permissions within one storage account.
 //!
 //! ### Using Specific Credential Providers
 //!
@@ -168,14 +164,18 @@
 //!
 //! Check out the examples directory for more detailed usage:
 //! - [Blob storage operations](examples/blob_storage.rs)
-//! - [SAS token generation](examples/sas_token.rs)
 
+mod account_sas;
 mod constants;
 mod service_sas;
 mod user_delegation;
 mod user_delegation_sas;
 
 mod credential;
+pub use account_sas::{
+    AccountSasConfig, AccountSasGrant, AccountSasGranter, AccountSasPermissions,
+    AccountSasResourceTypes, AccountSasServices, AccountSasVersion,
+};
 pub use credential::Credential;
 
 pub use service_sas::{
