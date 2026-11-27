@@ -585,6 +585,20 @@ pub fn sigv4_authentication_query(
     query
 }
 
+/// Sign a string with the SigV4 key scoped to the date, region, and service.
+#[doc(hidden)]
+pub fn sigv4_signature(
+    provider: &dyn CryptoProvider,
+    secret: &str,
+    time: Timestamp,
+    region: &str,
+    service: &str,
+    string_to_sign: &str,
+) -> Result<String> {
+    let signing_key = generate_signing_key(provider, secret, time, region, service)?;
+    reqsign_core::hash::hex_hmac_sha256(provider, &signing_key, string_to_sign.as_bytes())
+}
+
 fn generate_signing_key(
     provider: &dyn CryptoProvider,
     secret: &str,
