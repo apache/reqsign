@@ -439,6 +439,11 @@ Examples:
   Normalization applies before percent-encoding the canonical path. Header
   signing preserves the wire URI, and presigning preserves the wire path and
   existing query bytes when appending authentication parameters.
+- Azure Storage Shared Key header signing normalizes `x-ms-*` values and
+  groups decoded query parameters in the signature input. It preserves the
+  wire URI and caller headers other than `x-ms-date` and `Authorization`.
+  A signed header value that cannot be read as text returns `RequestInvalid`
+  before any request changes are committed.
 - Header-based signing must apply authorization data to headers without
   unintentionally moving authority to query parameters.
 - Query-based signing and presigning must apply expiry and signed query
