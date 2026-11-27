@@ -71,6 +71,21 @@ request signer uses that identity with IAMCredentials `signBlob`. An email set
 with `RequestSigner::with_signer_email` takes precedence over the
 provider-discovered identity.
 
+## ADC service-account impersonation
+
+An `impersonated_service_account` credential file accepts `authorized_user`,
+`service_account`, or `external_account` in `source_credentials`. Legacy
+`authorized_user` sources may omit `type`. List intermediate service accounts
+in order in `delegates`. A nested `impersonated_service_account` source is rejected.
+
+Service-account and external-account source tokens use the IAM scope.
+Authorized-user sources use their existing refresh grant. The configured OAuth
+scope or `GOOGLE_SCOPE` applies to the target token, whose signer identity comes
+from `service_account_impersonation_url`.
+
+Executable external-account sources require
+`GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES=1` in the `Context` environment.
+
 ## Trusted OAuth token endpoints
 
 `ServiceAccountTokenCredentialProvider::with_token_uri` and

@@ -47,16 +47,72 @@ impl ServiceAccount {
 }
 
 /// ImpersonatedServiceAccount holds the source credentials for impersonation.
-#[derive(Clone, serde::Deserialize, Debug)]
+#[derive(Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ImpersonatedServiceAccount {
     /// The URL to obtain the access token for the impersonated service account.
     pub service_account_impersonation_url: String,
-    /// The underlying OAuth2 credentials.
-    pub source_credentials: OAuth2Credentials,
+    /// The source credential to exchange for an IAM access token.
+    #[serde(deserialize_with = "ImpersonationSource::deserialize_with_legacy_user")]
+    pub(crate) source_credentials: ImpersonationSource,
     /// Optional delegates for the impersonation.
     #[serde(default)]
     pub delegates: Vec<String>,
+}
+
+impl Debug for ImpersonatedServiceAccount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ImpersonatedServiceAccount")
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub(crate) enum ImpersonationSource {
+    AuthorizedUser(OAuth2Credentials),
+    ServiceAccount(ServiceAccount),
+    ExternalAccount(ExternalAccount),
+    ImpersonatedServiceAccount,
+}
+
+impl ImpersonationSource {
+    fn deserialize_with_legacy_user<'de, D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Source {
+            Typed(ImpersonationSource),
+            Legacy {
+                // A present tag must never fall back to an authorized-user exchange.
+                #[serde(
+                    rename = "type",
+                    default,
+                    deserialize_with = "reject_legacy_source_type"
+                )]
+                _source_type: (),
+                #[serde(flatten)]
+                credentials: OAuth2Credentials,
+            },
+        }
+
+        let source: Source = serde::Deserialize::deserialize(deserializer)?;
+        match source {
+            Source::Typed(source) => Ok(source),
+            Source::Legacy { credentials, .. } => Ok(Self::AuthorizedUser(credentials)),
+        }
+    }
+}
+
+fn reject_legacy_source_type<'de, D>(_: D) -> std::result::Result<(), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Err(serde::de::Error::custom(
+        "legacy impersonation source must omit type",
+    ))
 }
 
 /// OAuth2 user credentials (for authorized users and impersonation sources).
