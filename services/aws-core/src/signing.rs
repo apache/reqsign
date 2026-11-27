@@ -31,6 +31,10 @@ use crate::constants::{
 };
 use crate::{Credential, PercentEncodingMode, UriPathNormalizationMode};
 
+mod streaming;
+
+pub use streaming::{StreamingSigner, sign_streaming_request_parts};
+
 static AWS_URI_DOUBLE_ENCODE_SET: AsciiSet = AWS_URI_ENCODE_SET.remove(b'/');
 
 const MAX_PRESIGN_LIFETIME: Duration = Duration::from_secs(604_800);
@@ -368,6 +372,15 @@ pub fn sign_request_parts(
     now: Timestamp,
     options: SigV4SigningOptions<'_>,
 ) -> Result<()> {
+    validate_sigv4_request(credential, expires_in, now)?;
+    sign_sigv4(provider, req, credential, expires_in, now, options).map(drop)
+}
+
+fn validate_sigv4_request(
+    credential: &Credential,
+    expires_in: Option<Duration>,
+    now: Timestamp,
+) -> Result<()> {
     use reqsign_core::SigningCredential;
 
     let required_until = now.saturating_add(expires_in.unwrap_or(Duration::from_secs(10)));
@@ -376,8 +389,24 @@ pub fn sign_request_parts(
             "credential expires before the requested signing operation deadline",
         ));
     }
-    validate_presign_lifetime(expires_in)?;
+    validate_presign_lifetime(expires_in)
+}
 
+struct SigV4RequestSignature {
+    timestamp: String,
+    scope: String,
+    signing_key: [u8; 32],
+    signature: String,
+}
+
+fn sign_sigv4(
+    provider: &dyn CryptoProvider,
+    req: &mut http::request::Parts,
+    credential: &Credential,
+    expires_in: Option<Duration>,
+    now: Timestamp,
+    options: SigV4SigningOptions<'_>,
+) -> Result<SigV4RequestSignature> {
     let original_uri = req.uri.clone();
     let mut signed_req = SigningRequest::build(req)?;
 
@@ -423,12 +452,13 @@ pub fn sign_request_parts(
     // 20220313T072004Z
     // 20220313/<region>/<service>/aws4_request
     // <hashed_canonical_request>
+    let timestamp = now.format_iso8601();
     let string_to_sign = {
         let mut f = String::new();
         writeln!(f, "AWS4-HMAC-SHA256").map_err(|e| {
             reqsign_core::Error::unexpected(format!("failed to write algorithm: {e}"))
         })?;
-        writeln!(f, "{}", now.format_iso8601()).map_err(|e| {
+        writeln!(f, "{timestamp}").map_err(|e| {
             reqsign_core::Error::unexpected(format!("failed to write timestamp: {e}"))
         })?;
         writeln!(f, "{scope}")
@@ -479,7 +509,12 @@ pub fn sign_request_parts(
     if let Some(uri) = final_uri {
         req.uri = uri;
     }
-    Ok(())
+    Ok(SigV4RequestSignature {
+        timestamp,
+        scope,
+        signing_key,
+        signature,
+    })
 }
 
 /// Add shared SigV4 headers and apply the service-selected session token choice.
@@ -556,7 +591,7 @@ fn generate_signing_key(
     time: Timestamp,
     region: &str,
     service: &str,
-) -> Result<Vec<u8>> {
+) -> Result<[u8; 32]> {
     let secret = format!("AWS4{secret}");
     let sign_date = reqsign_core::hash::hmac_sha256(
         provider,
@@ -567,12 +602,7 @@ fn generate_signing_key(
         reqsign_core::hash::hmac_sha256(provider, sign_date.as_slice(), region.as_bytes())?;
     let sign_service =
         reqsign_core::hash::hmac_sha256(provider, sign_region.as_slice(), service.as_bytes())?;
-    Ok(reqsign_core::hash::hmac_sha256(
-        provider,
-        sign_service.as_slice(),
-        "aws4_request".as_bytes(),
-    )?
-    .to_vec())
+    reqsign_core::hash::hmac_sha256(provider, &sign_service, b"aws4_request")
 }
 
 #[cfg(test)]
