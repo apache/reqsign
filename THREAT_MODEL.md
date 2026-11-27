@@ -450,6 +450,14 @@ Examples:
 - A service-specific signer must not send credentials to an unrelated endpoint
   during signing-time credential refresh or token exchange.
 
+Google Cloud Storage V4 signed URLs accept 1 through 604800 encoded whole
+seconds. The signer appends authentication parameters to the original URI and
+normalizes headers only in the canonical request. It synthesizes `Host` when
+missing and omits the default port for the URI's scheme. The canonical payload
+uses `x-goog-content-sha256` if supplied and `UNSIGNED-PAYLOAD` otherwise. For
+IAM `signBlob`, the OAuth token must cover the signing RPC. The resulting URL
+has its own expiration.
+
 Provider-side acceptance or rejection is not by itself the security boundary.
 A compatibility bug that causes a legitimate request to fail may be a normal
 bug. It becomes security-relevant when it grants unintended authority, signs a
