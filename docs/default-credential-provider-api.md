@@ -125,11 +125,25 @@ input applies to multiple provider slots. Such a method must:
 - Respect builder call order so that later slot-level replacement or removal
   still wins.
 
-For AWS V4, `with_profile(profile)` applies the explicit profile to the
-`profile`, `sso`, `process`, and `web_identity` slots. For `web_identity` it
-selects the profile whose STS endpoint settings apply; `no_profile()` removes only
-the profile credential source and does not stop that. On `wasm32`, it applies
-only to the available `profile` and `web_identity` slots.
+For AWS V4 and V4a, `with_profile(profile)` applies the explicit profile to the
+`profile`, `sso`, `process`, and `web_identity` slots. The selected profile
+provides credential and STS endpoint settings for `web_identity`. The independent
+web identity slot is available with `no_profile()`. On `wasm32`, `with_profile`
+applies to the available `profile` and `web_identity` slots.
+
+Providers added with `push_front` run first. Environment credentials take
+precedence when `AWS_PROFILE` or the default name selects the profile. When the
+profile slot explicitly names a readable role chain, the provider checks the
+role graph and source declarations before choosing credentials. An invalid
+graph fails even when environment credentials are available. For a valid chain
+with `credential_source = Environment`, the environment credential authorizes
+the first STS call and the chain returns its final role credential. Other valid
+chains keep the environment-first order.
+
+When a role chain runs, it uses its declared source and propagates acquisition
+errors, including disabled required slots. A selected `credential_process`
+source or web identity role gets its profile settings from the merged config and
+credentials files. Explicit settings on the corresponding provider still apply.
 
 ## Internal State Model
 

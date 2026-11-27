@@ -136,19 +136,18 @@ impl fmt::Display for StsEndpoint {
 
 /// Resolve the STS endpoint for one request. See the module documentation for the precedence.
 ///
-/// `profile` is an explicitly selected profile name; `None` selects `AWS_PROFILE`, then
-/// `default`.
+/// `shared` selects the profile and file used for shared endpoint settings.
 pub(crate) async fn resolve_sts_endpoint(
     ctx: &Context,
     explicit: Option<&str>,
-    profile: Option<&str>,
+    shared: &SharedConfig,
     region: Option<&str>,
     use_regional: bool,
 ) -> Result<StsEndpoint> {
     if let Some(url) = explicit {
         return StsEndpoint::parse(url, "explicit provider endpoint");
     }
-    if let Some(url) = configured_sts_endpoint(ctx, profile).await? {
+    if let Some(url) = configured_sts_endpoint(ctx, shared).await? {
         return Ok(url);
     }
     sts_endpoint(region, use_regional).map(|authority| StsEndpoint::https(&authority))
@@ -156,7 +155,7 @@ pub(crate) async fn resolve_sts_endpoint(
 
 async fn configured_sts_endpoint(
     ctx: &Context,
-    profile: Option<&str>,
+    shared: &SharedConfig,
 ) -> Result<Option<StsEndpoint>> {
     let env_endpoints = [
         (ctx.env_var("AWS_ENDPOINT_URL_STS"), "AWS_ENDPOINT_URL_STS"),
@@ -181,10 +180,6 @@ async fn configured_sts_endpoint(
         None => {}
     }
 
-    let mut shared = SharedConfig::new();
-    if let Some(profile) = profile {
-        shared = shared.with_profile(profile);
-    }
     let settings = shared.load_endpoint_settings(ctx, STS_SERVICE_KEY).await?;
     let ignore = env_ignore.unwrap_or_else(|| {
         non_empty(settings.ignore_configured_endpoint_urls.as_deref())
@@ -305,7 +300,7 @@ sts =
     ];
 
     async fn resolve(ctx: &Context, explicit: Option<&str>) -> String {
-        resolve_sts_endpoint(ctx, explicit, None, None, false)
+        resolve_sts_endpoint(ctx, explicit, &SharedConfig::new(), None, false)
             .await
             .expect("endpoint must resolve")
             .url()
@@ -315,13 +310,15 @@ sts =
     async fn defaults_are_unchanged_without_endpoint_settings() {
         let ctx = context(&[], ConfigFile::default());
         assert_eq!(resolve(&ctx, None).await, "https://sts.amazonaws.com/");
-        let regional = resolve_sts_endpoint(&ctx, None, None, Some("eu-west-1"), true)
-            .await
-            .expect("regional endpoint must resolve");
+        let regional =
+            resolve_sts_endpoint(&ctx, None, &SharedConfig::new(), Some("eu-west-1"), true)
+                .await
+                .expect("regional endpoint must resolve");
         assert_eq!(regional.url(), "https://sts.eu-west-1.amazonaws.com/");
-        let china = resolve_sts_endpoint(&ctx, None, None, Some("cn-north-1"), false)
-            .await
-            .expect("China endpoint must resolve");
+        let china =
+            resolve_sts_endpoint(&ctx, None, &SharedConfig::new(), Some("cn-north-1"), false)
+                .await
+                .expect("China endpoint must resolve");
         assert_eq!(china.url(), "https://sts.amazonaws.com.cn/");
 
         // A profile without endpoint settings changes nothing either.
@@ -513,7 +510,7 @@ s3 =
             "https://sts.example.com/%2E%2e/secret",
             "https://sts.example.com/.%2E/secret",
         ] {
-            let err = resolve_sts_endpoint(&ctx, Some(input), None, None, false)
+            let err = resolve_sts_endpoint(&ctx, Some(input), &SharedConfig::new(), None, false)
                 .await
                 .expect_err(input);
             assert_eq!(err.kind(), ErrorKind::ConfigInvalid, "{input}");
@@ -527,7 +524,7 @@ s3 =
             &[("AWS_ENDPOINT_URL_STS", "not a url")],
             ConfigFile::default(),
         );
-        let err = resolve_sts_endpoint(&ctx, None, None, None, false)
+        let err = resolve_sts_endpoint(&ctx, None, &SharedConfig::new(), None, false)
             .await
             .expect_err("an invalid environment endpoint must not fall through");
         assert!(format!("{err:?}").contains("AWS_ENDPOINT_URL_STS"));
@@ -591,9 +588,15 @@ endpoint_url = https://ambient.example.com
 endpoint_url = https://prod.example.com/sts
 ";
         let ctx = context(&[("AWS_PROFILE", "ambient")], ConfigFile::new(config));
-        let selected = resolve_sts_endpoint(&ctx, None, Some("prod"), None, false)
-            .await
-            .expect("endpoint must resolve");
+        let selected = resolve_sts_endpoint(
+            &ctx,
+            None,
+            &SharedConfig::new().with_profile("prod"),
+            None,
+            false,
+        )
+        .await
+        .expect("endpoint must resolve");
         assert_eq!(selected.url(), "https://prod.example.com/sts/");
         assert_eq!(resolve(&ctx, None).await, "https://ambient.example.com/");
 
@@ -602,9 +605,15 @@ endpoint_url = https://prod.example.com/sts
 
         // A selected profile without settings falls back to the default endpoint, never to
         // another profile.
-        let missing = resolve_sts_endpoint(&ctx, None, Some("absent"), None, false)
-            .await
-            .expect("endpoint must resolve");
+        let missing = resolve_sts_endpoint(
+            &ctx,
+            None,
+            &SharedConfig::new().with_profile("absent"),
+            None,
+            false,
+        )
+        .await
+        .expect("endpoint must resolve");
         assert_eq!(missing.url(), "https://sts.amazonaws.com/");
     }
 

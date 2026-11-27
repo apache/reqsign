@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-use crate::Credential;
+use crate::{Credential, SharedConfig};
 use log::debug;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 use serde::Deserialize;
@@ -88,16 +88,20 @@ impl ProcessCredentialProvider {
         }
 
         // Otherwise, load from config file
-        let mut shared = crate::SharedConfig::new();
+        let mut shared = SharedConfig::new();
         if let Some(profile) = &self.profile {
             shared = shared.with_profile(profile);
         }
         let profile_name = shared.profile_name(ctx);
-        self.load_command_from_config(ctx, &profile_name).await
+        Self::load_command_from_config(ctx, &shared, &profile_name).await
     }
 
-    async fn load_command_from_config(&self, ctx: &Context, profile: &str) -> Result<String> {
-        let conf = crate::SharedConfig::new().load_config_file(ctx).await?;
+    async fn load_command_from_config(
+        ctx: &Context,
+        shared: &SharedConfig,
+        profile: &str,
+    ) -> Result<String> {
+        let conf = shared.load_config_file(ctx).await?;
         let profile_section = crate::config::config_section(profile);
 
         let section = conf.section(Some(profile_section)).ok_or_else(|| {
@@ -114,12 +118,30 @@ impl ProcessCredentialProvider {
             .map(|s| s.to_string())
     }
 
+    pub(super) async fn provide_credential_for_command(
+        &self,
+        ctx: &Context,
+        command: &str,
+    ) -> Result<Credential> {
+        let command = self.command.as_deref().unwrap_or(command);
+        let output = self.execute_process(ctx, command).await?;
+        let expires_in = output
+            .expiration
+            .and_then(|expires_in| expires_in.parse().ok());
+        Ok(Credential {
+            access_key_id: output.access_key_id,
+            secret_access_key: output.secret_access_key,
+            session_token: output.session_token,
+            expires_in,
+        })
+    }
+
     async fn execute_process(
         &self,
         ctx: &Context,
         command: &str,
     ) -> Result<ProcessCredentialOutput> {
-        debug!("executing credential process: {command}");
+        debug!("executing credential process");
 
         let parts = parse_command(command)?;
         let program = parts[0].as_str();
@@ -129,18 +151,20 @@ impl ProcessCredentialProvider {
         let output = ctx.command_execute(program, &args).await?;
 
         if !output.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(Error::unexpected(format!(
-                "credential process failed with status {}: {}",
-                output.status, stderr
+                "credential process failed with status {}",
+                output.status
             )));
         }
 
-        // Parse the output
-        let stdout = &output.stdout;
-        let creds: ProcessCredentialOutput = serde_json::from_slice(stdout).map_err(|e| {
-            Error::unexpected(format!("failed to parse credential process output: {e}"))
-        })?;
+        let creds: ProcessCredentialOutput =
+            serde_json::from_slice(&output.stdout).map_err(|err| {
+                Error::unexpected(format!(
+                    "failed to parse credential process output at line {} column {}",
+                    err.line(),
+                    err.column()
+                ))
+            })?;
 
         // Validate version
         if creds.version != 1 {
@@ -220,16 +244,9 @@ impl ProvideCredential for ProcessCredentialProvider {
             }
         };
 
-        let output = self.execute_process(ctx, &command).await?;
-        let expires_in = output
-            .expiration
-            .and_then(|expires_in| expires_in.parse().ok());
-        Ok(Some(Credential {
-            access_key_id: output.access_key_id,
-            secret_access_key: output.secret_access_key,
-            session_token: output.session_token,
-            expires_in,
-        }))
+        self.provide_credential_for_command(ctx, &command)
+            .await
+            .map(Some)
     }
 }
 

@@ -181,12 +181,25 @@ than the SDK-only `x-amz-sdk-checksum-algorithm` selector.
 6. `ecs`
 7. `imds`
 
-The `profile` stage also resolves an assume-role profile through its
-`source_profile` chain. A named SSO source profile uses the `sso` slot; each
-role is assumed with the previous hop's credential. `.no_profile()` disables
-the graph and `.no_sso()` prevents an SSO source from participating.
+The `profile` stage resolves `source_profile` chains backed by static
+credentials, SSO, or `credential_process`. A role can instead name
+`Environment`, `Ec2InstanceMetadata`, or `EcsContainer` in `credential_source`.
+Each STS call uses the previous hop's credential. The graph uses the configured
+slots, and removing a required slot returns an error for the selected role.
 
-On `wasm32`, the non-portable `sso` and `process` slots are not available.
+Providers added with `push_front` run first. Environment credentials take
+precedence over profiles selected by `AWS_PROFILE` or the default name. For an
+explicitly named role chain, the provider checks the graph before choosing
+credentials. An invalid graph fails even when environment credentials are
+available. A valid chain with `credential_source = Environment` uses the
+`env` slot as its STS source and returns the final role credentials. Other valid
+chains retain the environment-first order.
+
+A profile can set `role_arn` and `web_identity_token_file` to use the
+`web_identity` slot. Web identity profile settings and role-chain process
+commands use the merged config and credentials files. The web identity slot can
+discover its profile even with `.no_profile()`. The role chain and the `sso` and
+`process` slots are available on targets other than `wasm32`.
 
 ## S3 Express Authentication
 
@@ -206,8 +219,8 @@ let _iam_signer = RequestSigner::new("s3express", "us-west-2")
 
 ## Select a Profile
 
-Use `with_profile(...)` to select one profile consistently for the shared
-profile, SSO, and process credential sources. The explicit selection takes
+Use `with_profile(...)` to select one profile for the shared profile, SSO,
+process, and web identity credential sources. The explicit selection takes
 precedence over `AWS_PROFILE`.
 
 ```rust,no_run

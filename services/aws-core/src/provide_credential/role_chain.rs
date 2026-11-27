@@ -16,15 +16,18 @@
 // under the License.
 
 use std::collections::HashSet;
+use std::fmt;
 
 use reqsign_core::time::Timestamp;
 use reqsign_core::{Context, Error, ProvideCredential, Result};
 
+use super::assume_role_with_web_identity::WEB_IDENTITY_TOKEN_FILE;
 use crate::assume_role::{AssumeRoleOperation, regional_sts_endpoint};
 use crate::signing::{SigV4SigningOptions, sign_request_parts};
 use crate::{
-    AssumeRoleGrant, Credential, Profile, ProfileCredentialProvider, SSOCredentialProvider,
-    SharedConfig,
+    AssumeRoleGrant, AssumeRoleWithWebIdentityCredentialProvider, Credential,
+    ECSCredentialProvider, IMDSv2CredentialProvider, ProcessCredentialProvider, Profile,
+    ProfileCredentialProvider, SSOCredentialProvider, SharedConfig,
 };
 
 const AWS_ACCESS_KEY_ID: &str = "aws_access_key_id";
@@ -35,31 +38,89 @@ const AWS_SECRET_ACCESS_KEY: &str = "aws_secret_access_key";
 const AWS_SOURCE_PROFILE: &str = "source_profile";
 const AWS_EXTERNAL_ID: &str = "external_id";
 const AWS_DURATION_SECONDS: &str = "duration_seconds";
+const ENVIRONMENT_SOURCE: &str = "Environment";
+const EC2_INSTANCE_METADATA_SOURCE: &str = "Ec2InstanceMetadata";
+const ECS_CONTAINER_SOURCE: &str = "EcsContainer";
 const DEFAULT_ROLE_SESSION_NAME: &str = "reqsign";
 
-/// Resolves the selected AWS shared profile as an assume-role credential graph.
-///
-/// The graph is read from `source_profile` references until a profile with
-/// static credentials or SSO configuration is reached. Each role transition is
-/// returned by an STS `AssumeRole` call signed with the previous hop's
-/// credential.
-///
-/// The default provider runs this provider after the environment and static
-/// profile slots and before the independent SSO slot. Disabling the profile
-/// slot removes the graph, while disabling the SSO slot prevents a graph from
-/// using an SSO source.
-#[derive(Debug, Clone)]
+/// The credential source declared by a validated role path.
+enum RoleSource<'a> {
+    Environment,
+    Ec2InstanceMetadata,
+    EcsContainer,
+    Static,
+    Sso,
+    Process(&'a str),
+}
+
+impl<'a> RoleSource<'a> {
+    fn from_profile(profile: &'a Profile) -> Result<Self> {
+        if let Some(source) = profile
+            .get(AWS_CREDENTIAL_SOURCE)
+            .filter(|_| profile.get(AWS_ROLE_ARN).is_some())
+        {
+            return match source {
+                ENVIRONMENT_SOURCE => Ok(Self::Environment),
+                EC2_INSTANCE_METADATA_SOURCE => Ok(Self::Ec2InstanceMetadata),
+                ECS_CONTAINER_SOURCE => Ok(Self::EcsContainer),
+                _ => Err(Error::config_invalid(format!(
+                    "AWS role profile '{}' has an unsupported credential_source",
+                    profile.name()
+                ))),
+            };
+        }
+
+        if profile.get(AWS_ACCESS_KEY_ID).is_some() && profile.get(AWS_SECRET_ACCESS_KEY).is_some()
+        {
+            return Ok(Self::Static);
+        }
+        if has_sso_configuration(profile) {
+            return Ok(Self::Sso);
+        }
+        if let Some(command) = profile.get("credential_process") {
+            return Ok(Self::Process(command));
+        }
+        Err(Error::config_invalid(format!(
+            "AWS role profile source '{}' does not provide static credentials, SSO configuration, or credential_process",
+            profile.name()
+        )))
+    }
+}
+
+/// Resolves role profiles with the configured slots from the default provider.
 pub(crate) struct AssumeRoleChainCredentialProvider {
     profile: ProfileCredentialProvider,
     sso: Option<SSOCredentialProvider>,
+    web_identity: Option<AssumeRoleWithWebIdentityCredentialProvider>,
+    process: Option<ProcessCredentialProvider>,
+    ecs: Option<ECSCredentialProvider>,
+    imds: Option<IMDSv2CredentialProvider>,
+}
+
+impl fmt::Debug for AssumeRoleChainCredentialProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AssumeRoleChainCredentialProvider")
+            .finish_non_exhaustive()
+    }
 }
 
 impl AssumeRoleChainCredentialProvider {
     pub(crate) fn new(
         profile: ProfileCredentialProvider,
         sso: Option<SSOCredentialProvider>,
+        web_identity: Option<AssumeRoleWithWebIdentityCredentialProvider>,
+        process: Option<ProcessCredentialProvider>,
+        ecs: Option<ECSCredentialProvider>,
+        imds: Option<IMDSv2CredentialProvider>,
     ) -> Self {
-        Self { profile, sso }
+        Self {
+            profile,
+            sso,
+            web_identity,
+            process,
+            ecs,
+            imds,
+        }
     }
 
     async fn source_credential(
@@ -67,10 +128,12 @@ impl AssumeRoleChainCredentialProvider {
         ctx: &Context,
         shared: &SharedConfig,
         profile: &Profile,
+        source: RoleSource<'_>,
+        env_enabled: bool,
+        environment: Option<&Credential>,
     ) -> Result<Credential> {
-        if profile.get(AWS_ACCESS_KEY_ID).is_some() && profile.get(AWS_SECRET_ACCESS_KEY).is_some()
-        {
-            return self
+        match source {
+            RoleSource::Static => self
                 .profile
                 .clone()
                 .with_profile(profile.name())
@@ -81,108 +144,147 @@ impl AssumeRoleChainCredentialProvider {
                         "AWS role profile source '{}' has incomplete static credentials",
                         profile.name()
                     ))
-                });
-        }
-
-        if has_sso_configuration(profile) {
-            let Some(sso) = &self.sso else {
-                return Err(Error::config_invalid(format!(
-                    "AWS role profile source '{}' requires SSO, but the SSO provider is disabled",
-                    profile.name()
-                )));
-            };
-            return sso
-                .clone()
-                .with_shared_config(shared.clone())
-                .provide_credential_for_profile(ctx, profile.name())
-                .await?
-                .ok_or_else(|| {
-                    Error::config_invalid(format!(
-                        "AWS role profile source '{}' does not provide SSO credentials",
+                }),
+            RoleSource::Sso => {
+                let Some(sso) = &self.sso else {
+                    return Err(Error::config_invalid(format!(
+                        "AWS role profile source '{}' requires SSO, but the SSO provider is disabled",
                         profile.name()
-                    ))
-                });
+                    )));
+                };
+                sso.clone()
+                    .with_shared_config(shared.clone())
+                    .provide_credential_for_profile(ctx, profile.name())
+                    .await?
+                    .ok_or_else(|| {
+                        Error::config_invalid(format!(
+                            "AWS role profile source '{}' does not provide SSO credentials",
+                            profile.name()
+                        ))
+                    })
+            }
+            RoleSource::Process(command) => {
+                let process = self
+                    .process
+                    .as_ref()
+                    .ok_or_else(|| disabled_source(profile, "credential_process", "process"))?;
+                process.provide_credential_for_command(ctx, command).await
+            }
+            RoleSource::Environment if !env_enabled => {
+                Err(disabled_source(profile, ENVIRONMENT_SOURCE, "env"))
+            }
+            RoleSource::Environment => environment
+                .cloned()
+                .ok_or_else(|| missing_source(profile, ENVIRONMENT_SOURCE)),
+            RoleSource::Ec2InstanceMetadata => {
+                let imds = self.imds.as_ref().ok_or_else(|| {
+                    disabled_source(profile, EC2_INSTANCE_METADATA_SOURCE, "imds")
+                })?;
+                imds.provide_credential(ctx)
+                    .await?
+                    .ok_or_else(|| missing_source(profile, EC2_INSTANCE_METADATA_SOURCE))
+            }
+            RoleSource::EcsContainer => {
+                let ecs = self
+                    .ecs
+                    .as_ref()
+                    .ok_or_else(|| disabled_source(profile, ECS_CONTAINER_SOURCE, "ecs"))?;
+                ecs.provide_credential(ctx)
+                    .await?
+                    .ok_or_else(|| missing_source(profile, ECS_CONTAINER_SOURCE))
+            }
+        }
+    }
+
+    pub(super) async fn provide_credential(
+        &self,
+        ctx: &Context,
+        env_enabled: bool,
+        environment: Option<&Credential>,
+    ) -> Result<Option<Credential>> {
+        // Ambient profile selection keeps the ordinary environment-first path.
+        if environment.is_some() && !self.profile.has_explicit_profile() {
+            return Ok(None);
         }
 
-        Err(Error::config_invalid(format!(
-            "AWS role profile source '{}' does not provide static credentials or SSO configuration",
-            profile.name()
-        )))
-    }
-}
-
-impl ProvideCredential for AssumeRoleChainCredentialProvider {
-    type Credential = Credential;
-
-    async fn provide_credential(&self, ctx: &Context) -> Result<Option<Self::Credential>> {
         let shared = self.profile.shared_config();
-        let selected = match shared.load(ctx).await {
-            Ok(selected) => selected,
-            // The shared profile slot already permits a malformed profile to
-            // fall through to later providers. Do not change that policy when
-            // the selected profile cannot be read well enough to identify a
-            // role graph.
-            Err(_) => return Ok(None),
+        let Ok(selected) = shared.load(ctx).await else {
+            // Until a role profile is identified, shared config does not own
+            // credential selection. Keep the ordinary discovery behavior.
+            return Ok(None);
         };
         if selected.get(AWS_ROLE_ARN).is_none() {
             return Ok(None);
         }
 
-        let region = selected.region().map(str::to_owned).ok_or_else(|| {
+        if selected.get(WEB_IDENTITY_TOKEN_FILE).is_some()
+            && selected.get(AWS_SOURCE_PROFILE).is_none()
+            && selected.get(AWS_CREDENTIAL_SOURCE).is_none()
+        {
+            if environment.is_some() {
+                return Ok(None);
+            }
+            let web_identity = self
+                .web_identity
+                .as_ref()
+                .ok_or_else(|| disabled_source(&selected, "web identity", "web_identity"))?;
+            let credential = web_identity
+                .provide_credential_with_config(ctx, &shared, Some(&selected))
+                .await?
+                .ok_or_else(|| missing_source(&selected, "web identity"))?;
+            return Ok(Some(credential));
+        }
+
+        let (roles, leaf) = load_role_path(ctx, &shared, selected).await?;
+        let selected = roles.first().unwrap_or(&leaf);
+        let region = selected.region().ok_or_else(|| {
             Error::config_invalid(format!(
                 "AWS role profile '{}' requires a region for STS",
                 selected.name()
             ))
         })?;
         let mut operations = Vec::new();
-        let mut seen = HashSet::new();
-        let mut current = selected;
-        let mut current_name = current.name().to_owned();
-
-        loop {
-            if !seen.insert(current_name.clone()) {
-                return Err(Error::config_invalid(format!(
-                    "AWS profile role chain contains a cycle at '{current_name}'"
-                )));
-            }
-
-            let Some(role_arn) = current.get(AWS_ROLE_ARN) else {
+        for role in roles.iter().chain(std::iter::once(&leaf)) {
+            let Some(role_arn) = role.get(AWS_ROLE_ARN) else {
                 break;
             };
-            let source_profile = current.get(AWS_SOURCE_PROFILE);
-            let credential_source = current.get(AWS_CREDENTIAL_SOURCE);
-            if source_profile.is_some() && credential_source.is_some() {
-                return Err(Error::config_invalid(format!(
-                    "AWS role profile '{current_name}' cannot set both source_profile and credential_source"
-                )));
+            match (
+                role.get(AWS_SOURCE_PROFILE),
+                role.get(AWS_CREDENTIAL_SOURCE),
+            ) {
+                (Some(_), Some(_)) => {
+                    return Err(Error::config_invalid(format!(
+                        "AWS role profile '{}' cannot set both source_profile and credential_source",
+                        role.name()
+                    )));
+                }
+                (None, None) => {
+                    return Err(Error::config_invalid(format!(
+                        "AWS role profile '{}' requires source_profile or credential_source",
+                        role.name()
+                    )));
+                }
+                _ => {}
             }
-            if credential_source.is_some() {
-                return Err(Error::config_invalid(format!(
-                    "AWS role profile '{current_name}' uses credential_source, which is not supported; set source_profile"
-                )));
-            }
-            let Some(source_profile) = source_profile else {
-                return Err(Error::config_invalid(format!(
-                    "AWS role profile '{current_name}' requires source_profile"
-                )));
-            };
 
-            let grant = role_grant(&current, role_arn)?;
-            let endpoint = regional_sts_endpoint(&region, &grant)?;
-            let operation = AssumeRoleOperation::new(endpoint, &grant, role_duration(&current)?)?;
+            let grant = role_grant(role, role_arn);
+            let endpoint = regional_sts_endpoint(region, &grant)?;
+            let operation = AssumeRoleOperation::new(endpoint, &grant, role_duration(role)?)?;
             operations.push(operation);
+        }
 
-            current_name = source_profile.to_owned();
-            current = shared.load_profile(ctx, &current_name).await?;
-            if current.is_empty() {
-                return Err(Error::config_invalid(format!(
-                    "AWS profile role chain references missing source profile '{current_name}'"
-                )));
-            }
+        let source = RoleSource::from_profile(&leaf)?;
+        // An explicit role graph must be valid before it can defer to the
+        // environment. Preserve env-first for valid non-environment graphs
+        // without acquiring credentials from their configured sources.
+        if environment.is_some() && !matches!(source, RoleSource::Environment) {
+            return Ok(None);
         }
 
         let crypto = ctx.crypto_provider()?;
-        let mut credential = self.source_credential(ctx, &shared, &current).await?;
+        let mut credential = self
+            .source_credential(ctx, &shared, &leaf, source, env_enabled, environment)
+            .await?;
         for operation in operations.into_iter().rev() {
             let request = operation.build_request(crypto)?;
             let (mut parts, body) = request.into_parts();
@@ -194,7 +296,7 @@ impl ProvideCredential for AssumeRoleChainCredentialProvider {
                 Timestamp::now(),
                 SigV4SigningOptions {
                     service: "sts",
-                    region: &region,
+                    region,
                     percent_encoding_mode: crate::PercentEncodingMode::Single,
                     uses_s3_express_session_token: false,
                 },
@@ -207,7 +309,49 @@ impl ProvideCredential for AssumeRoleChainCredentialProvider {
     }
 }
 
-fn role_grant(profile: &Profile, role_arn: &str) -> Result<AssumeRoleGrant> {
+async fn load_role_path(
+    ctx: &Context,
+    shared: &SharedConfig,
+    mut leaf: Profile,
+) -> Result<(Vec<Profile>, Profile)> {
+    let mut roles = Vec::new();
+    let mut seen = HashSet::from([leaf.name().to_owned()]);
+    while leaf.get(AWS_ROLE_ARN).is_some() && leaf.get(AWS_CREDENTIAL_SOURCE).is_none() {
+        let Some(source_profile) = leaf.get(AWS_SOURCE_PROFILE) else {
+            break;
+        };
+        if !seen.insert(source_profile.to_owned()) {
+            return Err(Error::config_invalid(format!(
+                "AWS profile role chain contains a cycle at '{source_profile}'"
+            )));
+        }
+        let next = shared.load_profile(ctx, source_profile).await?;
+        if next.is_empty() {
+            return Err(Error::config_invalid(format!(
+                "AWS profile role chain references missing source profile '{source_profile}'"
+            )));
+        }
+        roles.push(leaf);
+        leaf = next;
+    }
+    Ok((roles, leaf))
+}
+
+fn disabled_source(profile: &Profile, source: &str, slot: &str) -> Error {
+    Error::config_invalid(format!(
+        "AWS role profile '{}' requires {source}, but the {slot} provider is disabled",
+        profile.name()
+    ))
+}
+
+fn missing_source(profile: &Profile, source: &str) -> Error {
+    Error::config_invalid(format!(
+        "AWS role profile '{}' requires {source} credentials, but none were found",
+        profile.name()
+    ))
+}
+
+fn role_grant(profile: &Profile, role_arn: &str) -> AssumeRoleGrant {
     let role_session_name = profile
         .get(AWS_ROLE_SESSION_NAME)
         .unwrap_or(DEFAULT_ROLE_SESSION_NAME);
@@ -215,7 +359,7 @@ fn role_grant(profile: &Profile, role_arn: &str) -> Result<AssumeRoleGrant> {
     if let Some(id) = profile.get(AWS_EXTERNAL_ID) {
         grant = grant.with_external_id(id.to_owned());
     }
-    Ok(grant)
+    grant
 }
 
 fn role_duration(profile: &Profile) -> Result<Option<u32>> {

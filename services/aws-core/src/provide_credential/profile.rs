@@ -76,6 +76,11 @@ impl ProfileCredentialProvider {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn has_explicit_profile(&self) -> bool {
+        self.profile.is_some()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn shared_config(&self) -> crate::SharedConfig {
         let mut config = crate::SharedConfig::new();
         if let Some(v) = &self.profile {
