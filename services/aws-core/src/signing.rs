@@ -18,7 +18,7 @@
 use std::fmt::Write;
 use std::time::Duration;
 
-use http::{HeaderValue, Uri, header};
+use http::{HeaderMap, HeaderValue, Uri, header, request::Parts};
 use log::debug;
 use percent_encoding::{AsciiSet, percent_decode_str, utf8_percent_encode};
 use reqsign_core::crypto::CryptoProvider;
@@ -38,6 +38,11 @@ pub use streaming::{StreamingSigner, sign_streaming_request_parts};
 static AWS_URI_DOUBLE_ENCODE_SET: AsciiSet = AWS_URI_ENCODE_SET.remove(b'/');
 
 const MAX_PRESIGN_LIFETIME: Duration = Duration::from_secs(604_800);
+const SIGV4_ALGORITHM: &str = "AWS4-HMAC-SHA256";
+#[doc(hidden)]
+pub const SIGV4A_ALGORITHM: &str = "AWS4-ECDSA-P256-SHA256";
+#[doc(hidden)]
+pub const X_AMZ_REGION_SET: &str = "x-amz-region-set";
 
 /// Build the canonical request shared by AWS SigV4-family algorithms.
 pub fn canonical_request_string(
@@ -65,12 +70,48 @@ pub fn canonical_request_string_with_encoding(
 ///
 /// Both settings apply only to the canonical URI. Canonical header values have
 /// leading and trailing ASCII spaces trimmed and runs of ASCII spaces collapsed.
-/// Repeated values are joined with commas in request order.
+/// Repeated values are joined with commas in request order. `Authorization`
+/// never participates in canonicalization.
 pub fn canonical_request_string_with_uri_options(
     request: &SigningRequest,
     canonical_query: &[(String, String)],
     percent_encoding_mode: PercentEncodingMode,
     uri_path_normalization_mode: UriPathNormalizationMode,
+) -> Result<String> {
+    let signed_headers = signed_header_names(request, &[]);
+    canonical_request_string_with_signed_headers(
+        request,
+        canonical_query,
+        percent_encoding_mode,
+        uri_path_normalization_mode,
+        &signed_headers,
+    )
+}
+
+/// Select the headers shared by the canonical request and authentication fields.
+#[doc(hidden)]
+pub fn signed_header_names<'a>(
+    request: &'a SigningRequest,
+    excluded_headers: &[String],
+) -> Vec<&'a str> {
+    let mut names = request.header_name_to_vec_sorted();
+    names.retain(|name| {
+        *name != header::AUTHORIZATION.as_str()
+            && !excluded_headers
+                .iter()
+                .any(|excluded| excluded.eq_ignore_ascii_case(name))
+    });
+    names
+}
+
+/// Build the canonical request using the list from [`signed_header_names`].
+#[doc(hidden)]
+pub fn canonical_request_string_with_signed_headers(
+    request: &SigningRequest,
+    canonical_query: &[(String, String)],
+    percent_encoding_mode: PercentEncodingMode,
+    uri_path_normalization_mode: UriPathNormalizationMode,
+    signed_headers: &[&str],
 ) -> Result<String> {
     let mut output = String::with_capacity(256);
     let path = uri_path_normalization_mode.normalize(&request.path);
@@ -94,8 +135,7 @@ pub fn canonical_request_string_with_uri_options(
     )
     .map_err(|e| reqsign_core::Error::unexpected(format!("failed to write query: {e}")))?;
 
-    let signed_headers = request.header_name_to_vec_sorted();
-    for name in &signed_headers {
+    for name in signed_headers {
         output.push_str(name);
         output.push(':');
         for (index, value) in request.headers.get_all(*name).into_iter().enumerate() {
@@ -146,6 +186,9 @@ pub fn canonical_request_string_with_uri_options(
 
 /// Add headers shared by AWS SigV4-family algorithms.
 ///
+/// Refresh any previous SigV4 or SigV4a header authentication. A date supplied
+/// for first-time header signing is used as given.
+///
 /// When `Host` is absent, derive it from the URI authority and omit the
 /// scheme's default port for HTTP and HTTPS.
 ///
@@ -184,6 +227,8 @@ fn canonicalize_headers_inner(
     now: Timestamp,
     session_token_header: &'static str,
 ) -> Result<()> {
+    remove_previous_header_authentication(&mut request.headers)?;
+
     if !request.headers.contains_key(header::HOST) {
         let host = match (request.scheme.as_str(), request.authority.port_u16()) {
             ("http", Some(80)) | ("https", Some(443)) => request.authority.host(),
@@ -226,6 +271,107 @@ fn canonicalize_headers_inner(
         request.headers.insert(session_token_header, value);
     }
 
+    Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AwsAuthentication {
+    SigV4,
+    SigV4S3Express,
+    SigV4a,
+}
+
+impl AwsAuthentication {
+    fn from_authorization(value: &HeaderValue) -> Option<Self> {
+        let (algorithm, attributes) = value.to_str().ok()?.split_once(' ')?;
+        let mut credential = None;
+        let mut signed_headers = None;
+        let mut signature = None;
+        for attribute in attributes.split(',') {
+            let (name, value) = attribute.trim().split_once('=')?;
+            let field = match name {
+                "Credential" => &mut credential,
+                "SignedHeaders" => &mut signed_headers,
+                "Signature" => &mut signature,
+                _ => return None,
+            };
+            if field.replace(value).is_some() {
+                return None;
+            }
+        }
+        // SignedHeaders may be empty when the signer excluded every header.
+        signed_headers?;
+        if signature?.is_empty() {
+            return None;
+        }
+        Self::from_credential_scope(algorithm, credential?)
+    }
+
+    fn from_credential_scope(algorithm: &str, credential: &str) -> Option<Self> {
+        let (scope, service) = credential.strip_suffix("/aws4_request")?.rsplit_once('/')?;
+        let (kind, scope) = if algorithm.eq_ignore_ascii_case(SIGV4_ALGORITHM) {
+            let (scope, region) = scope.rsplit_once('/')?;
+            if region.is_empty() {
+                return None;
+            }
+            let kind = if service == "s3express" {
+                Self::SigV4S3Express
+            } else {
+                Self::SigV4
+            };
+            (kind, scope)
+        } else if algorithm.eq_ignore_ascii_case(SIGV4A_ALGORITHM) {
+            (Self::SigV4a, scope)
+        } else {
+            return None;
+        };
+        let (key, date) = scope.rsplit_once('/')?;
+        (!key.is_empty()
+            && !service.is_empty()
+            && date.len() == 8
+            && date.bytes().all(|byte| byte.is_ascii_digit()))
+        .then_some(kind)
+    }
+}
+
+fn remove_previous_header_authentication(headers: &mut HeaderMap) -> Result<()> {
+    let authorization = headers.get_all(header::AUTHORIZATION);
+    let mut previous = authorization
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            AwsAuthentication::from_authorization(value)
+                .map(|authentication| (index, authentication))
+        });
+    let Some((index, authentication)) = previous.next() else {
+        return Ok(());
+    };
+    if previous.next().is_some() {
+        return Err(reqsign_core::Error::request_invalid(
+            "multiple complete AWS Authorization values make retry authentication ambiguous",
+        ));
+    }
+
+    let retained = authorization
+        .iter()
+        .enumerate()
+        .filter(|(position, _)| *position != index)
+        .map(|(_, value)| value.clone())
+        .collect::<Vec<_>>();
+    headers.remove(header::AUTHORIZATION);
+    for value in retained {
+        headers.append(header::AUTHORIZATION, value);
+    }
+    headers.remove(X_AMZ_DATE);
+    let had_standard_token = headers.remove(X_AMZ_SECURITY_TOKEN).is_some();
+    // With no standard token, a caller-supplied Express token on a request
+    // signed with long-term credentials looks like a generated session token.
+    if authentication == AwsAuthentication::SigV4S3Express && !had_standard_token {
+        headers.remove(X_AMZ_S3_SESSION_TOKEN);
+    }
+    if authentication == AwsAuthentication::SigV4a {
+        headers.remove(X_AMZ_REGION_SET);
+    }
     Ok(())
 }
 
@@ -308,16 +454,192 @@ pub fn append_query_fragment(uri: &Uri, fragment: &str) -> Result<Uri> {
     }
 
     let mut value = uri.to_string();
-    if uri.query().is_none() {
-        value.push('?');
-    } else if !value.ends_with('?') && !value.ends_with('&') {
-        value.push('&');
+    match uri.query() {
+        None => value.push('?'),
+        Some(query) if !query.is_empty() && !query.ends_with('&') => value.push('&'),
+        Some(_) => {}
     }
     value.push_str(fragment);
 
     value.parse().map_err(|e| {
         reqsign_core::Error::request_invalid("failed to append signing query").with_source(e)
     })
+}
+
+/// Stage removal of previous AWS query authentication before signing.
+///
+/// The callback sees the same URI that will be used for canonicalization and
+/// query output. If it fails, the previous signed request remains intact.
+#[doc(hidden)]
+pub fn with_unsigned_uri(
+    req: &mut Parts,
+    presigning: bool,
+    sign: impl FnOnce(&mut Parts) -> Result<()>,
+) -> Result<()> {
+    let Some(uri) = uri_without_query_authentication(&req.uri, presigning)? else {
+        return sign(req);
+    };
+
+    let mut candidate = req.clone();
+    candidate.uri = uri;
+    sign(&mut candidate)?;
+
+    req.uri = candidate.uri;
+    req.headers = candidate.headers;
+    Ok(())
+}
+
+fn uri_without_query_authentication(uri: &Uri, presigning: bool) -> Result<Option<Uri>> {
+    let Some(query) = uri.query() else {
+        return Ok(None);
+    };
+    let auth_fields = previous_query_authentication_fields(query)?;
+    if auth_fields.is_empty() {
+        return Ok(None);
+    }
+
+    // Retain the raw spelling and order, including visible empty fields.
+    let mut retained = query
+        .split_inclusive('&')
+        .enumerate()
+        .filter_map(|(index, pair)| (!auth_fields.contains(&index)).then_some(pair))
+        .collect::<String>();
+
+    // The presign appender reuses an existing trailing ampersand. With one
+    // ampersand after a business field, the wire cannot distinguish reuse from
+    // insertion. An ampersand alone or a repeated separator was already there.
+    let ambiguous_separator =
+        retained.len() > 1 && retained.ends_with('&') && !retained.ends_with("&&");
+    if !presigning && !query.ends_with('&') && ambiguous_separator {
+        retained.pop();
+    }
+
+    let mut path_and_query = uri.path().to_owned();
+    if !retained.is_empty() {
+        path_and_query.push('?');
+        path_and_query.push_str(&retained);
+    }
+    let mut parts = uri.clone().into_parts();
+    parts.path_and_query = Some(path_and_query.try_into().map_err(|err| {
+        reqsign_core::Error::request_invalid("failed to remove AWS query authentication")
+            .with_source(err)
+    })?);
+    Uri::from_parts(parts).map(Some).map_err(|err| {
+        reqsign_core::Error::request_invalid("failed to remove AWS query authentication")
+            .with_source(err)
+    })
+}
+
+fn previous_query_authentication_fields(query: &str) -> Result<Vec<usize>> {
+    const NAMES: [&str; 9] = [
+        "X-Amz-Algorithm",
+        "X-Amz-Credential",
+        "X-Amz-Date",
+        "X-Amz-Expires",
+        "X-Amz-SignedHeaders",
+        "X-Amz-Signature",
+        "X-Amz-Region-Set",
+        "X-Amz-Security-Token",
+        "X-Amz-S3session-Token",
+    ];
+    let mut fields = [None; NAMES.len()];
+    let mut repeated = [false; NAMES.len()];
+    let mut last_index = 0;
+    for (index, pair) in query.split('&').enumerate() {
+        last_index = index;
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        let Ok(key) = percent_decode_str(key).decode_utf8() else {
+            continue;
+        };
+        if let Some(slot) = NAMES.iter().position(|name| *name == key) {
+            repeated[slot] |= fields[slot].replace((index, value)).is_some();
+        }
+    }
+    let [
+        Some((start, algorithm)),
+        Some((credential_index, credential)),
+        Some((date_index, date)),
+        Some((expires_index, expires)),
+        Some((signed_headers_index, _)),
+        Some((signature_index, signature)),
+        region_set,
+        standard_token,
+        express_token,
+    ] = fields
+    else {
+        return Ok(Vec::new());
+    };
+    let (Ok(algorithm), Ok(credential)) = (
+        percent_decode_str(algorithm).decode_utf8(),
+        percent_decode_str(credential).decode_utf8(),
+    ) else {
+        return Ok(Vec::new());
+    };
+    if !matches!(algorithm.as_ref(), SIGV4_ALGORITHM | SIGV4A_ALGORITHM)
+        || date.is_empty()
+        || expires.is_empty()
+        || signature.is_empty()
+    {
+        return Ok(Vec::new());
+    }
+    let Some(authentication) = AwsAuthentication::from_credential_scope(&algorithm, &credential)
+    else {
+        return Ok(Vec::new());
+    };
+
+    let region_set = if authentication == AwsAuthentication::SigV4a {
+        let Some((index, _)) = region_set.filter(|(_, value)| !value.is_empty()) else {
+            return Ok(Vec::new());
+        };
+        Some(index)
+    } else {
+        None
+    };
+    let standard_token = standard_token.map(|(index, _)| index);
+    let express_token = express_token
+        .filter(|_| authentication == AwsAuthentication::SigV4S3Express)
+        .map(|(index, _)| index);
+
+    // Reqsign appends a contiguous suffix ending in the signature. A matching
+    // suffix lets us keep caller parameters that use optional auth names and
+    // appear before that suffix. Other signers can order the fields differently.
+    let optional_range = (expires_index + 1)..signed_headers_index;
+    let optional_fields = [region_set, standard_token, express_token];
+    let appended_suffix = [credential_index, date_index, expires_index]
+        == [start + 1, start + 2, start + 3]
+        && signed_headers_index > expires_index
+        && signature_index == signed_headers_index + 1
+        && signature_index == last_index
+        && region_set.is_none_or(|index| optional_range.contains(&index))
+        && optional_range
+            .clone()
+            .all(|index| optional_fields.contains(&Some(index)));
+    let [standard_token, express_token] = [standard_token, express_token]
+        .map(|token| token.filter(|index| !appended_suffix || optional_range.contains(index)));
+    let owned_fields = [
+        Some(start),
+        Some(credential_index),
+        Some(date_index),
+        Some(expires_index),
+        Some(signed_headers_index),
+        Some(signature_index),
+        region_set,
+        standard_token,
+        express_token,
+    ];
+    let ambiguous = !appended_suffix
+        && owned_fields
+            .iter()
+            .zip(repeated)
+            .any(|(field, repeated)| field.is_some() && repeated);
+    if ambiguous || (standard_token.is_some() && express_token.is_some()) {
+        return Err(reqsign_core::Error::request_invalid(
+            "ambiguous fields in previous AWS query authentication",
+        ));
+    }
+    Ok(owned_fields.into_iter().flatten().collect())
 }
 
 /// Service-selected options for the shared SigV4 request implementation.
@@ -334,6 +656,8 @@ pub struct SigV4SigningOptions<'a> {
     pub uri_path_normalization_mode: UriPathNormalizationMode,
     /// Whether the signing service selected the S3 Express CreateSession token.
     pub uses_s3_express_session_token: bool,
+    /// Additional header names to exclude from canonicalization.
+    pub excluded_headers: &'a [String],
 }
 
 /// Validate a caller-supplied AWS presigned URL lifetime.
@@ -373,7 +697,9 @@ pub fn sign_request_parts(
     options: SigV4SigningOptions<'_>,
 ) -> Result<()> {
     validate_sigv4_request(credential, expires_in, now)?;
-    sign_sigv4(provider, req, credential, expires_in, now, options).map(drop)
+    with_unsigned_uri(req, expires_in.is_some(), |candidate| {
+        sign_sigv4(provider, candidate, credential, expires_in, now, options).map(drop)
+    })
 }
 
 fn validate_sigv4_request(
@@ -401,7 +727,7 @@ struct SigV4RequestSignature {
 
 fn sign_sigv4(
     provider: &dyn CryptoProvider,
-    req: &mut http::request::Parts,
+    req: &mut Parts,
     credential: &Credential,
     expires_in: Option<Duration>,
     now: Timestamp,
@@ -417,8 +743,9 @@ fn sign_sigv4(
         now,
         options.uses_s3_express_session_token,
     )?;
+    let signed_headers = signed_header_names(&signed_req, options.excluded_headers);
     let authentication_query = sigv4_authentication_query(
-        &signed_req,
+        &signed_headers,
         credential,
         expires_in,
         now,
@@ -429,11 +756,12 @@ fn sign_sigv4(
     let canonical_query = canonicalize_query(&signed_req, &authentication_query);
 
     // build canonical request and string to sign.
-    let creq = canonical_request_string_with_uri_options(
+    let creq = canonical_request_string_with_signed_headers(
         &signed_req,
         &canonical_query,
         options.percent_encoding_mode,
         options.uri_path_normalization_mode,
+        &signed_headers,
     )?;
     let encoded_req = reqsign_core::hash::hex_sha256(provider, creq.as_bytes())?;
 
@@ -455,7 +783,7 @@ fn sign_sigv4(
     let timestamp = now.format_iso8601();
     let string_to_sign = {
         let mut f = String::new();
-        writeln!(f, "AWS4-HMAC-SHA256").map_err(|e| {
+        writeln!(f, "{SIGV4_ALGORITHM}").map_err(|e| {
             reqsign_core::Error::unexpected(format!("failed to write algorithm: {e}"))
         })?;
         writeln!(f, "{timestamp}").map_err(|e| {
@@ -488,10 +816,10 @@ fn sign_sigv4(
         )?)
     } else {
         let mut authorization = HeaderValue::from_str(&format!(
-            "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+            "{SIGV4_ALGORITHM} Credential={}/{}, SignedHeaders={}, Signature={}",
             credential.access_key_id,
             scope,
-            signed_req.header_name_to_vec_sorted().join(";"),
+            signed_headers.join(";"),
             signature
         ))
         .map_err(|e| {
@@ -545,7 +873,7 @@ pub fn canonicalize_signing_headers(
 
 #[doc(hidden)]
 pub fn sigv4_authentication_query(
-    ctx: &SigningRequest,
+    signed_headers: &[&str],
     cred: &Credential,
     expires_in: Option<Duration>,
     now: Timestamp,
@@ -555,7 +883,7 @@ pub fn sigv4_authentication_query(
 ) -> Vec<(String, String)> {
     let mut query = Vec::new();
     if let Some(expire) = expires_in {
-        query.push(("X-Amz-Algorithm".into(), "AWS4-HMAC-SHA256".into()));
+        query.push(("X-Amz-Algorithm".into(), SIGV4_ALGORITHM.into()));
         query.push((
             "X-Amz-Credential".into(),
             format!(
@@ -568,10 +896,7 @@ pub fn sigv4_authentication_query(
         ));
         query.push(("X-Amz-Date".into(), now.format_iso8601()));
         query.push(("X-Amz-Expires".into(), expire.as_secs().to_string()));
-        query.push((
-            "X-Amz-SignedHeaders".into(),
-            ctx.header_name_to_vec_sorted().join(";"),
-        ));
+        query.push(("X-Amz-SignedHeaders".into(), signed_headers.join(";")));
 
         if let Some(token) = &cred.session_token {
             let name = if uses_s3_express_session_token {
@@ -653,6 +978,28 @@ mod tests {
             )?;
             assert_eq!(request.headers[header::HOST], host, "{uri}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn query_authentication_removal_preserves_raw_business_fields() -> Result<()> {
+        let uri: Uri = concat!(
+            "https://example.com/object?dup=%2f&%58-Amz-Algorithm=AWS4-HMAC-SHA256&flag&&",
+            "X-Amz-Date=20251231T235959Z&X-Amz-Credential=fixture%2F20251231%2Ftest%2Fs3%2Faws4_request",
+            "&X-Amz-Expires=60&X-Amz-SignedHeaders=host&X-Amz-Signature=fixture&dup=+&",
+        )
+        .parse()
+        .unwrap();
+        let unsigned = uri_without_query_authentication(&uri, true)?.unwrap();
+        assert_eq!(unsigned.query(), Some("dup=%2f&flag&&dup=+&"));
+        let signed = append_query_fragment(&unsigned, "X-Amz-Algorithm=AWS4-HMAC-SHA256")?;
+        assert_eq!(
+            signed.query(),
+            Some("dup=%2f&flag&&dup=+&X-Amz-Algorithm=AWS4-HMAC-SHA256")
+        );
+
+        let uri: Uri = "https://example.com/object?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=metadata&X-Amz-Signature=reference".parse().unwrap();
+        assert!(uri_without_query_authentication(&uri, true)?.is_none());
         Ok(())
     }
 

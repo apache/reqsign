@@ -34,6 +34,23 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 /// accepts 1 through 604800 seconds (seven days). Other encoded values return
 /// `RequestInvalid` before changing the request.
 ///
+/// Re-signing refreshes previous AWS authentication using its algorithm and
+/// credential scope. Header cleanup recognizes a single complete AWS
+/// `Authorization` value with exactly one `Credential`, `SignedHeaders`, and
+/// nonempty `Signature`. `SignedHeaders` can be empty after explicit exclusions.
+/// Multiple complete AWS values return `RequestInvalid`. Presigning keeps other
+/// `Authorization` values and requires a complete field set to refresh existing
+/// query authentication.
+///
+/// After presigning, an absent query and a bare `?` have the same wire form.
+/// A single trailing `&` can likewise have the same wire form as the separator
+/// added for signing. Keep the original URI if those bytes need to be recovered.
+///
+/// Switching from header signing to presigning keeps a present
+/// `x-amz-content-sha256` header. A generated `UNSIGNED-PAYLOAD` value has
+/// the same bytes as an explicit one. Use the original request when it is
+/// necessary to presign without that header.
+///
 /// - [AWS authentication methods](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-authentication-methods.html)
 ///
 /// # Payload signing
@@ -107,6 +124,7 @@ pub struct RequestSigner {
     percent_encoding_mode: PercentEncodingMode,
     uri_path_normalization_mode: UriPathNormalizationMode,
     use_standard_session_token: bool,
+    excluded_headers: Vec<String>,
 
     time: Option<Timestamp>,
 }
@@ -120,6 +138,7 @@ impl RequestSigner {
             percent_encoding_mode: PercentEncodingMode::default(),
             uri_path_normalization_mode: UriPathNormalizationMode::default(),
             use_standard_session_token: false,
+            excluded_headers: Vec::new(),
 
             time: None,
         }
@@ -143,6 +162,12 @@ impl RequestSigner {
     /// This setting only selects how an existing [`Credential`] session token
     /// is represented. It does not modify the credential or load a different
     /// credential source.
+    ///
+    /// Without `x-amz-security-token`, a header-signed `s3express` request
+    /// can carry the same Express token header whether supplied by the caller
+    /// or generated from CreateSession credentials. Re-signing treats that
+    /// header as the previous session token. Start from the original request
+    /// to keep a caller-supplied Express token in this case.
     ///
     /// # Example
     ///
@@ -195,6 +220,22 @@ impl RequestSigner {
         self
     }
 
+    /// Set additional headers to omit from canonical headers and `SignedHeaders`.
+    ///
+    /// The additional list defaults to empty. Header names match case-insensitively,
+    /// and `Authorization` is always excluded. Excluded headers still go on the
+    /// wire. Include any headers required by the target AWS service in the signature.
+    pub fn with_excluded_headers(
+        mut self,
+        names: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> Self {
+        self.excluded_headers = names
+            .into_iter()
+            .map(|name| name.as_ref().to_owned())
+            .collect();
+        self
+    }
+
     fn uses_s3_express_session_token(&self) -> bool {
         self.service == "s3express" && !self.use_standard_session_token
     }
@@ -203,8 +244,10 @@ impl RequestSigner {
     ///
     /// This signer reuses `time` for every request. The credential deadline
     /// is measured from `time` at full precision, while generated AWS dates
-    /// use whole seconds in UTC. Header signing preserves a supplied
-    /// `x-amz-date` header, which must match the chosen signing time.
+    /// use whole seconds in UTC. On first header signing, a supplied
+    /// `x-amz-date` header must match the chosen signing time. Re-signing a
+    /// request with AWS `Authorization` replaces the previous authentication
+    /// headers, including the signing date.
     ///
     /// To compensate for clock skew, pass the caller's adjusted timestamp.
     /// Build a new request signer when the adjusted time changes.
@@ -258,6 +301,7 @@ impl RequestSigner {
             percent_encoding_mode: self.percent_encoding_mode,
             uri_path_normalization_mode: self.uri_path_normalization_mode,
             uses_s3_express_session_token: self.uses_s3_express_session_token(),
+            excluded_headers: &self.excluded_headers,
         }
     }
 
@@ -330,7 +374,7 @@ mod tests {
     };
     use reqsign_aws_core::signing::{
         canonical_request_string, canonical_uri, canonicalize_query, canonicalize_signing_headers,
-        sigv4_authentication_query,
+        signed_header_names, sigv4_authentication_query,
     };
     use reqsign_core::hash::hex_sha256;
     use reqsign_core::{ErrorKind, ProvideCredential, Signer, SigningRequest};
@@ -424,7 +468,7 @@ mod tests {
             !use_standard_session_token,
         )?;
         let authentication_query = sigv4_authentication_query(
-            &signing_request,
+            &signed_header_names(&signing_request, &[]),
             &credential,
             expires_in,
             now,
@@ -768,6 +812,38 @@ mod tests {
             Some(TEST_SESSION_TOKEN)
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn s3_express_retry_replaces_create_session_token_with_standard_token() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let credential = s3_express_credential(now);
+        let iam_credential = Credential {
+            session_token: Some("iam-session-token".to_string()),
+            ..credential.clone()
+        };
+        let ctx = crate::test_context();
+        let session_signer = RequestSigner::new("s3express", S3_EXPRESS_REGION).with_time(now);
+        let iam_signer = RequestSigner::new("s3express", S3_EXPRESS_REGION)
+            .with_time(now)
+            .with_standard_session_token();
+        let original = Request::get(S3_EXPRESS_URI).body(())?.into_parts().0;
+        for expires_in in [None, Some(Duration::from_secs(60))] {
+            let mut retried = original.clone();
+            session_signer
+                .sign_request(&ctx, &mut retried, Some(&credential), expires_in)
+                .await?;
+            iam_signer
+                .sign_request(&ctx, &mut retried, Some(&iam_credential), expires_in)
+                .await?;
+            let mut fresh = original.clone();
+            iam_signer
+                .sign_request(&ctx, &mut fresh, Some(&iam_credential), expires_in)
+                .await?;
+            assert_eq!(retried.headers, fresh.headers);
+            assert_eq!(retried.uri, fresh.uri);
+        }
         Ok(())
     }
 
@@ -1238,6 +1314,7 @@ mod tests {
         mode: PercentEncodingMode,
         normalization_mode: AwsUriPathNormalizationMode,
         presigned: bool,
+        excluded_headers: &[&'static str],
     ) -> Result<Request<&'static str>> {
         let mut settings = SigningSettings::default();
         settings.percent_encoding_mode = match mode {
@@ -1249,7 +1326,12 @@ mod tests {
         settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         settings.session_token_mode = SessionTokenMode::Include;
         settings.session_token_name_override = None;
-        settings.excluded_headers = None;
+        settings.excluded_headers = Some(
+            std::iter::once("authorization")
+                .chain(excluded_headers.iter().copied())
+                .map(Into::into)
+                .collect(),
+        );
         settings.signature_location = if presigned {
             SignatureLocation::QueryParams
         } else {
@@ -1356,6 +1438,7 @@ mod tests {
                     mode,
                     AwsUriPathNormalizationMode::Disabled,
                     presigned,
+                    &[],
                 )?;
                 let actual = reqsign_signed_encoding_request(
                     "execute-api",
@@ -1430,6 +1513,7 @@ mod tests {
                         encoding,
                         sdk_normalization,
                         presigned,
+                        &[],
                     )?;
                     let (mut parts, body) = request.clone().into_parts();
                     signer
@@ -1550,6 +1634,7 @@ mod tests {
                     PercentEncodingMode::Single,
                     AwsUriPathNormalizationMode::Disabled,
                     presigned,
+                    &[],
                 )?;
                 compare_request(wire_path, &expected, &actual);
                 assert_eq!(actual.uri().path(), wire_path);
@@ -1560,6 +1645,7 @@ mod tests {
                     PercentEncodingMode::Single,
                     AwsUriPathNormalizationMode::Disabled,
                     presigned,
+                    &[],
                 )?;
                 if presigned {
                     let signature = |request: &Request<&str>| {
@@ -1577,6 +1663,47 @@ mod tests {
                     );
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn excluded_headers_match_aws_sdk_signatures() -> Result<()> {
+        let now: Timestamp = "2026-07-22T00:00:00Z".parse()?;
+        let signer = RequestSigner::new("execute-api", "us-east-1")
+            .with_time(now)
+            .with_excluded_headers(["UsEr-AgEnT", "X-AmZn-TrAcE-Id"]);
+        let credential = s3_express_credential(now);
+        let request = Request::get("https://example.com/object")
+            .header(header::HOST, "example.com")
+            .header(header::AUTHORIZATION, "Bearer fixture-token")
+            .header(header::USER_AGENT, "  first    agent  ")
+            .header(header::USER_AGENT, "second agent")
+            .header("x-amzn-trace-id", "fixture-trace")
+            .header("x-meta", "still signed")
+            .body("")?;
+
+        for presigned in [false, true] {
+            let expected = aws_signed_execute_api_request(
+                request.clone(),
+                now,
+                PercentEncodingMode::Single,
+                AwsUriPathNormalizationMode::Disabled,
+                presigned,
+                &["user-agent", "x-amzn-trace-id"],
+            )?;
+            let (mut parts, body) = request.clone().into_parts();
+            signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential),
+                    presigned.then_some(Duration::from_secs(60)),
+                )
+                .await?;
+            let actual = Request::from_parts(parts, body);
+            assert_eq!(actual.headers(), expected.headers());
+            assert_eq!(sorted_query(actual.uri()), sorted_query(expected.uri()));
         }
         Ok(())
     }
@@ -1603,6 +1730,7 @@ mod tests {
         ] {
             let uri = format!("{endpoint}/object%2Fname?z=%2f&dup=two&dup=one");
             let mut builder = Request::get(&uri)
+                .header(header::USER_AGENT, "fixture-agent")
                 .header("x-meta", "  z   word  ")
                 .header("x-meta", "  \ta   word\t  ");
             if let Some(host) = supplied_host {
@@ -1617,6 +1745,7 @@ mod tests {
                     PercentEncodingMode::Single,
                     AwsUriPathNormalizationMode::Disabled,
                     presigned,
+                    &[],
                 )?;
                 // The SDK synthesizes Host internally and only returns authentication fields.
                 expected
@@ -1732,7 +1861,7 @@ mod tests {
             false,
         )?;
         let auth_query = sigv4_authentication_query(
-            &signing_req,
+            &signed_header_names(&signing_req, &[]),
             &credential,
             Some(Duration::from_secs(60)),
             now,

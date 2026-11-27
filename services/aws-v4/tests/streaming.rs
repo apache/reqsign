@@ -31,7 +31,7 @@ use http::{HeaderMap, Request, header};
 use reqsign_aws_v4::{Credential, RequestSigner};
 use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::time::Timestamp;
-use reqsign_core::{Context, Error, ErrorKind};
+use reqsign_core::{Context, Error, ErrorKind, SignRequest};
 use reqsign_crypto_rustcrypto::RustCryptoProvider;
 
 const SIGNED: &str = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD";
@@ -139,6 +139,56 @@ fn published_s3_streaming_signatures() -> Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn streaming_seed_uses_the_same_signing_options_as_header_retry() -> Result<()> {
+    let ctx = Context::new().with_crypto(RustCryptoProvider::new());
+    let credential = example_credentials();
+    let signer = RequestSigner::new("s3", "us-east-1")
+        .with_time(example_time()?)
+        .with_uri_path_normalization_mode(reqsign_aws_v4::UriPathNormalizationMode::Enabled)
+        .with_excluded_headers(["X-PrOxY"]);
+    let mut head = example_head(SIGNED)?;
+    head.uri = "https://s3.amazonaws.com/examplebucket//skip/.././chunkObject.txt".parse()?;
+    let mut proxy = header::HeaderValue::from_bytes(b"  proxy \xff  ")?;
+    proxy.set_sensitive(true);
+    head.headers.insert("x-proxy", proxy.clone());
+    let original_uri = head.uri.clone();
+
+    // The configured normalization and exclusion recover the published signing input.
+    let mut stream = signer.sign_streaming_request(&ctx, &mut head, &credential)?;
+    let (_, authentication) = head.headers[header::AUTHORIZATION]
+        .to_str()?
+        .split_once(", SignedHeaders=")
+        .expect("the streaming authorization has a signed header list");
+    let (signed_headers, signature) = authentication
+        .split_once(", Signature=")
+        .expect("the streaming authorization has a signature");
+    assert_eq!(
+        signed_headers,
+        concat!(
+            "content-encoding;content-length;host;x-amz-content-sha256;",
+            "x-amz-date;x-amz-decoded-content-length;x-amz-storage-class",
+        )
+    );
+    assert_eq!(signature, SIGNED_SEED);
+    assert_eq!(stream.seed_signature(), signature);
+    assert_eq!(
+        stream.sign_chunk(&vec![b'a'; 65_536])?,
+        Some(SIGNED_CHUNKS[0])
+    );
+    assert_eq!(head.uri, original_uri);
+    assert_eq!(head.headers["x-proxy"].as_bytes(), proxy.as_bytes());
+    assert!(head.headers["x-proxy"].is_sensitive());
+
+    let mut retried = head.clone();
+    signer
+        .sign_request(&ctx, &mut retried, Some(&credential), None)
+        .await?;
+    assert_eq!(retried.headers, head.headers);
+    assert_eq!(retried.uri, head.uri);
     Ok(())
 }
 

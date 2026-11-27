@@ -23,9 +23,9 @@ use http::{HeaderValue, header};
 use log::debug;
 use reqsign_aws_core::Credential;
 use reqsign_aws_core::signing::{
-    append_query_fragment, append_query_pairs, canonical_request_string_with_uri_options,
-    canonicalize_headers_with_standard_session_token, canonicalize_query,
-    validate_presign_lifetime,
+    SIGV4A_ALGORITHM as ALGORITHM, X_AMZ_REGION_SET, append_query_fragment, append_query_pairs,
+    canonical_request_string_with_signed_headers, canonicalize_headers_with_standard_session_token,
+    canonicalize_query, signed_header_names, validate_presign_lifetime, with_unsigned_uri,
 };
 use reqsign_core::crypto;
 use reqsign_core::hash::{hex_sha256, hmac_sha256};
@@ -35,8 +35,6 @@ use zeroize::Zeroizing;
 
 use crate::{PercentEncodingMode, SigningRegionSet, UriPathNormalizationMode};
 
-const ALGORITHM: &str = "AWS4-ECDSA-P256-SHA256";
-const X_AMZ_REGION_SET: &str = "x-amz-region-set";
 // P-256 group order minus two: the largest KDF output k0 for which k0 + 1
 // remains a valid private scalar (k0 + 1 <= n - 1).
 const P256_ORDER_MINUS_2: [u8; 32] = [
@@ -52,6 +50,23 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 /// accepts 1 through 604800 seconds (seven days). Other encoded values return
 /// `RequestInvalid` before changing the request.
 ///
+/// Re-signing refreshes previous AWS authentication using its algorithm and
+/// credential scope. Header cleanup recognizes a single complete AWS
+/// `Authorization` value with exactly one `Credential`, `SignedHeaders`, and
+/// nonempty `Signature`. `SignedHeaders` can be empty after explicit exclusions.
+/// Multiple complete AWS values return `RequestInvalid`. Presigning keeps other
+/// `Authorization` values and requires a complete field set to refresh existing
+/// query authentication.
+///
+/// After presigning, an absent query and a bare `?` have the same wire form.
+/// A single trailing `&` can likewise have the same wire form as the separator
+/// added for signing. Keep the original URI if those bytes need to be recovered.
+///
+/// Switching from header signing to presigning keeps a present
+/// `x-amz-content-sha256` header. A generated `UNSIGNED-PAYLOAD` value has
+/// the same bytes as an explicit one. Use the original request when it is
+/// necessary to presign without that header.
+///
 /// - [AWS authentication methods](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv-authentication-methods.html)
 #[derive(Debug)]
 pub struct RequestSigner {
@@ -59,6 +74,7 @@ pub struct RequestSigner {
     region_set: SigningRegionSet,
     percent_encoding_mode: PercentEncodingMode,
     uri_path_normalization_mode: UriPathNormalizationMode,
+    excluded_headers: Vec<String>,
     time: Option<Timestamp>,
 }
 
@@ -70,6 +86,7 @@ impl RequestSigner {
             region_set,
             percent_encoding_mode: PercentEncodingMode::default(),
             uri_path_normalization_mode: UriPathNormalizationMode::default(),
+            excluded_headers: Vec::new(),
             time: None,
         }
     }
@@ -108,12 +125,30 @@ impl RequestSigner {
         self
     }
 
+    /// Set additional headers to omit from canonical headers and `SignedHeaders`.
+    ///
+    /// The additional list defaults to empty. Header names match case-insensitively,
+    /// and `Authorization` is always excluded. Excluded headers still go on the
+    /// wire. Include any headers required by the target AWS service in the signature.
+    pub fn with_excluded_headers(
+        mut self,
+        names: impl IntoIterator<Item = impl AsRef<str>>,
+    ) -> Self {
+        self.excluded_headers = names
+            .into_iter()
+            .map(|name| name.as_ref().to_owned())
+            .collect();
+        self
+    }
+
     /// Use a fixed signing timestamp for header signing and presigning.
     ///
     /// This signer reuses `time` for every request. The credential deadline
     /// is measured from `time` at full precision, while generated AWS dates
-    /// use whole seconds in UTC. Header signing preserves a supplied
-    /// `x-amz-date` header, which must match the chosen signing time.
+    /// use whole seconds in UTC. On first header signing, a supplied
+    /// `x-amz-date` header must match the chosen signing time. Re-signing a
+    /// request with AWS `Authorization` replaces the previous authentication
+    /// headers, including the signing date.
     ///
     /// To compensate for clock skew, pass the caller's adjusted timestamp.
     /// Build a new request signer when the adjusted time changes.
@@ -171,6 +206,21 @@ impl SignRequest for RequestSigner {
         }
         validate_presign_lifetime(expires_in)?;
 
+        with_unsigned_uri(req, expires_in.is_some(), |candidate| {
+            self.sign_at(crypto, candidate, credential, expires_in, now)
+        })
+    }
+}
+
+impl RequestSigner {
+    fn sign_at(
+        &self,
+        crypto: &dyn crypto::CryptoProvider,
+        req: &mut Parts,
+        credential: &Credential,
+        expires_in: Option<Duration>,
+        now: Timestamp,
+    ) -> Result<()> {
         let original_uri = req.uri.clone();
         let mut signing_request = SigningRequest::build(req)?;
         canonicalize_headers_with_standard_session_token(
@@ -188,8 +238,9 @@ impl SignRequest for RequestSigner {
             signing_request.headers.insert(X_AMZ_REGION_SET, region_set);
         }
 
+        let signed_headers = signed_header_names(&signing_request, &self.excluded_headers);
         let authentication_query = authentication_query(
-            &signing_request,
+            &signed_headers,
             credential,
             expires_in,
             now,
@@ -197,11 +248,12 @@ impl SignRequest for RequestSigner {
             &self.region_set,
         );
         let canonical_query = canonicalize_query(&signing_request, &authentication_query);
-        let canonical_request = canonical_request_string_with_uri_options(
+        let canonical_request = canonical_request_string_with_signed_headers(
             &signing_request,
             &canonical_query,
             self.percent_encoding_mode,
             self.uri_path_normalization_mode,
+            &signed_headers,
         )?;
         let encoded_request = hex_sha256(crypto, canonical_request.as_bytes())?;
 
@@ -228,7 +280,7 @@ impl SignRequest for RequestSigner {
             let mut authorization = HeaderValue::from_str(&format!(
                 "{ALGORITHM} Credential={}/{scope}, SignedHeaders={}, Signature={signature}",
                 credential.access_key_id,
-                signing_request.header_name_to_vec_sorted().join(";"),
+                signed_headers.join(";"),
             ))
             .map_err(|e| {
                 Error::unexpected(format!("failed to create authorization header: {e}"))
@@ -249,7 +301,7 @@ impl SignRequest for RequestSigner {
 }
 
 fn authentication_query(
-    request: &SigningRequest,
+    signed_headers: &[&str],
     credential: &Credential,
     expires_in: Option<Duration>,
     now: Timestamp,
@@ -280,10 +332,7 @@ fn authentication_query(
             "X-Amz-Region-Set".to_string(),
             region_set.as_str().to_string(),
         ),
-        (
-            "X-Amz-SignedHeaders".to_string(),
-            request.header_name_to_vec_sorted().join(";"),
-        ),
+        ("X-Amz-SignedHeaders".to_string(), signed_headers.join(";")),
     ];
 
     if let Some(token) = &credential.session_token {
@@ -765,22 +814,18 @@ mod tests {
     }
 
     fn request_signature(request: &Request<()>) -> AnyResult<String> {
-        if let Some(authorization) = request.headers().get(header::AUTHORIZATION) {
-            Ok(authorization
-                .to_str()?
-                .rsplit_once(", Signature=")
-                .expect("authorization must contain signature")
-                .1
-                .to_string())
-        } else {
-            Ok(
-                form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-                    .find(|(key, _)| key == "X-Amz-Signature")
-                    .expect("presigned request must contain signature")
-                    .1
-                    .into_owned(),
-            )
+        if let Some((_, signature)) =
+            form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+                .find(|(key, _)| key == "X-Amz-Signature")
+        {
+            return Ok(signature.into_owned());
         }
+        Ok(request.headers()[header::AUTHORIZATION]
+            .to_str()?
+            .rsplit_once(", Signature=")
+            .expect("authorization must contain signature")
+            .1
+            .to_string())
     }
 
     fn sdk_signature(string_to_sign: &str) -> String {
@@ -830,6 +875,7 @@ mod tests {
         mode: AwsPercentEncodingMode,
         normalization_mode: AwsUriPathNormalizationMode,
         expires_in: Option<Duration>,
+        excluded_headers: &[&'static str],
     ) -> AnyResult<Request<()>> {
         let now: Timestamp = "2015-08-30T12:36:00Z".parse()?;
         let mut settings = SigningSettings::default();
@@ -837,7 +883,12 @@ mod tests {
         settings.uri_path_normalization_mode = normalization_mode;
         settings.payload_checksum_kind = PayloadChecksumKind::XAmzSha256;
         settings.session_token_mode = SessionTokenMode::Include;
-        settings.excluded_headers = None;
+        settings.excluded_headers = Some(
+            std::iter::once("authorization")
+                .chain(excluded_headers.iter().copied())
+                .map(Into::into)
+                .collect(),
+        );
         settings.expires_in = expires_in;
         settings.signature_location = if expires_in.is_some() {
             SignatureLocation::QueryParams
@@ -912,6 +963,7 @@ mod tests {
                         sdk_mode,
                         AwsUriPathNormalizationMode::Disabled,
                         expires_in,
+                        &[],
                     )?;
                     let (mut parts, body) = request.into_parts();
                     let provider = RecordingProvider::new();
@@ -993,6 +1045,7 @@ mod tests {
                         sdk_encoding,
                         sdk_normalization,
                         expires_in,
+                        &[],
                     )?;
                     let (mut parts, body) = request.clone().into_parts();
                     signer
@@ -1153,6 +1206,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn excluded_headers_match_aws_sdk_signatures() -> AnyResult<()> {
+        let signer = signer().with_excluded_headers(["UsEr-AgEnT", "X-AmZn-TrAcE-Id"]);
+        let request = Request::get("https://example.com/object")
+            .header(header::HOST, "example.com")
+            .header(header::AUTHORIZATION, "Bearer fixture-token")
+            .header(header::USER_AGENT, "  first    agent  ")
+            .header(header::USER_AGENT, "second agent")
+            .header("x-amzn-trace-id", "fixture-trace")
+            .header("x-meta", "still signed")
+            .body(())?;
+
+        for expires_in in [None, Some(Duration::from_secs(60))] {
+            let expected = sign_with_aws_sdk(
+                request.clone(),
+                AwsPercentEncodingMode::Single,
+                AwsUriPathNormalizationMode::Disabled,
+                expires_in,
+                &["user-agent", "x-amzn-trace-id"],
+            )?;
+            let (mut parts, body) = request.clone().into_parts();
+            signer
+                .sign_request(
+                    &crate::test_context(),
+                    &mut parts,
+                    Some(&credential()),
+                    expires_in,
+                )
+                .await?;
+            let actual = Request::from_parts(parts, body);
+            assert_eq!(actual.headers(), expected.headers());
+            assert_eq!(comparable_query(&actual), comparable_query(&expected));
+            assert_eq!(request_signature(&actual)?, request_signature(&expected)?);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn canonical_headers_match_aws_sdk_signatures() -> AnyResult<()> {
         let signer = signer();
         let credential = credential();
@@ -1173,6 +1263,7 @@ mod tests {
         ] {
             let uri = format!("{endpoint}/object%2Fname?z=%2f&dup=two&dup=one");
             let mut builder = Request::get(&uri)
+                .header(header::USER_AGENT, "fixture-agent")
                 .header("x-meta", "  z   word  ")
                 .header("x-meta", "  \ta   word\t  ");
             if let Some(host) = supplied_host {
@@ -1186,6 +1277,7 @@ mod tests {
                     AwsPercentEncodingMode::Single,
                     AwsUriPathNormalizationMode::Disabled,
                     expires_in,
+                    &[],
                 )?;
                 // The SDK synthesizes Host internally and only returns authentication fields.
                 expected
