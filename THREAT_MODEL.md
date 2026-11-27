@@ -500,6 +500,12 @@ Reqsign can read local credential files and execute local credential-helper
 commands when the caller configures adapters and providers that require those
 features.
 
+Azure Storage providers use argument vectors for `az account get-access-token`
+and `azd auth token`. The context's `AZURE_TENANT_ID` supplies the Azure CLI
+tenant when the caller leaves it unset. The Azure Developer CLI provider is
+explicit and requests tokens with `--no-prompt`. Command output is excluded
+from errors for both providers.
+
 In scope:
 
 - Reqsign-owned default path expansion and provider path selection must match
