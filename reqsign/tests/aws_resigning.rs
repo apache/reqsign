@@ -20,7 +20,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use http::{HeaderValue, Request, request::Parts};
+use http::{HeaderValue, Request, header, request::Parts};
 use reqsign::aws::{v4, v4a};
 use reqsign::time::Timestamp;
 use reqsign::{Context, ErrorKind, RustCryptoProvider, SignRequest, Signer};
@@ -304,6 +304,199 @@ async fn s3_express_standard_authentication_preserves_the_caller_express_token()
             .contains("ambiguous fields in previous AWS query authentication")
     );
     assert_request_unchanged(&ambiguous, &original);
+    Ok(())
+}
+
+#[tokio::test]
+async fn incomplete_aws_authorization_keeps_caller_headers() -> Result<()> {
+    let time: Timestamp = "2025-01-01T00:00:01Z".parse()?;
+    let wire_date = time.format_iso8601();
+    let signers = signers("2025-01-01T00:00:01Z")?;
+    let mut lookalikes = Vec::new();
+    for signer in &signers {
+        let mut signed = request(OBJECT_URI);
+        signer.sign(&mut signed, None).await?;
+        let authorization = signed.headers[header::AUTHORIZATION].to_str()?;
+        let (scope, attributes) = authorization.split_once(',').unwrap();
+        let (signed_headers, signature) = attributes.rsplit_once(',').unwrap();
+        lookalikes.extend([
+            scope.to_owned(),
+            format!("{scope},{signed_headers}"),
+            format!("{scope},{signed_headers}, Signature=  "),
+            format!("{scope},{signature}"),
+            format!("{scope},{attributes}, SignedHeaders=host"),
+            format!("{scope},{attributes},{}", scope.split_once(' ').unwrap().1),
+            format!("{scope},{attributes}, Signature=duplicate"),
+        ]);
+    }
+
+    for signer in &signers {
+        let mut input = request(OBJECT_URI);
+        let mut date = HeaderValue::from_str(&wire_date)?;
+        date.set_sensitive(true);
+        input.headers.insert("x-amz-date", date);
+        input.headers.insert(
+            "x-amz-security-token",
+            HeaderValue::from_static("caller-token"),
+        );
+        input.headers.insert(
+            "x-amz-s3session-token",
+            HeaderValue::from_static("caller-express-token"),
+        );
+        input.headers.insert(
+            "x-amz-region-set",
+            HeaderValue::from_static("caller-region"),
+        );
+        for mode in [None, PRESIGN] {
+            let mut expected = input.clone();
+            signer.sign(&mut expected, mode).await?;
+            for (index, lookalike) in lookalikes.iter().enumerate() {
+                let mut actual = input.clone();
+                let mut provided = HeaderValue::from_str(lookalike)?;
+                provided.set_sensitive(true);
+                actual
+                    .headers
+                    .insert(header::AUTHORIZATION, provided.clone());
+                signer.sign(&mut actual, mode).await?;
+
+                if mode.is_some() {
+                    let preserved = actual.headers.remove(header::AUTHORIZATION).unwrap();
+                    assert_eq!(preserved.as_bytes(), provided.as_bytes());
+                    assert!(preserved.is_sensitive());
+                }
+                assert_eq!(
+                    actual.headers, expected.headers,
+                    "lookalike {index}, {mode:?}"
+                );
+                assert_eq!(actual.uri, expected.uri);
+                assert!(actual.headers["x-amz-date"].is_sensitive());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn mixed_authorization_values_preserve_only_the_caller_values_on_presign() -> Result<()> {
+    let context = Context::new().with_crypto(RustCryptoProvider::new());
+    let time: Timestamp = "2024-12-31T23:59:59Z".parse()?;
+    let credential = credential("fixture-access-key", Some("fixture-session-token"));
+    let first_signers = [
+        static_signer(
+            &context,
+            v4_signer(time).with_excluded_headers([
+                "Host",
+                "X-Amz-Date",
+                "X-Amz-Security-Token",
+                "X-Amz-Content-Sha256",
+            ]),
+            &credential,
+        ),
+        static_signer(
+            &context,
+            v4a_signer(time).with_excluded_headers([
+                "Host",
+                "X-Amz-Date",
+                "X-Amz-Security-Token",
+                "X-Amz-Content-Sha256",
+                "X-Amz-Region-Set",
+            ]),
+            &credential,
+        ),
+    ];
+    let prior_signers = first_signers
+        .into_iter()
+        .zip(signers("2025-01-01T00:00:01Z")?);
+    let mut opaque = HeaderValue::from_bytes(b"  Fixture \xff  ")?;
+    opaque.set_sensitive(true);
+    let caller_values = [
+        HeaderValue::from_static("Bearer  fixture-value  "),
+        opaque,
+        HeaderValue::from_static("Bearer  fixture-value  "),
+    ];
+    for (first, next) in prior_signers {
+        let mut input = request(BUSINESS_URI);
+        input.headers.insert(
+            "x-amz-content-sha256",
+            HeaderValue::from_static(v4::EMPTY_STRING_SHA256),
+        );
+        let mut signed = input.clone();
+        first.sign(&mut signed, None).await?;
+        let prior_authorization = signed.headers.remove(header::AUTHORIZATION).unwrap();
+        assert!(
+            prior_authorization
+                .to_str()?
+                .contains("SignedHeaders=, Signature=")
+        );
+
+        for mode in [None, PRESIGN] {
+            let mut expected = input.clone();
+            next.sign(&mut expected, mode).await?;
+            for position in [0, 1, caller_values.len()] {
+                let mut retried = signed.clone();
+                let mut mixed = caller_values.to_vec();
+                mixed.insert(position, prior_authorization.clone());
+                for value in mixed {
+                    retried.headers.append(header::AUTHORIZATION, value);
+                }
+                next.sign(&mut retried, mode).await?;
+
+                if mode.is_some() {
+                    let remaining = retried.headers.get_all(header::AUTHORIZATION);
+                    let value_and_sensitivity =
+                        |value: &HeaderValue| (value.as_bytes().to_vec(), value.is_sensitive());
+                    assert_eq!(
+                        remaining
+                            .iter()
+                            .map(value_and_sensitivity)
+                            .collect::<Vec<_>>(),
+                        caller_values
+                            .iter()
+                            .map(value_and_sensitivity)
+                            .collect::<Vec<_>>()
+                    );
+                    retried.headers.remove(header::AUTHORIZATION);
+                }
+                assert_request_unchanged(&retried, &expected);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn multiple_complete_aws_authorization_values_fail_atomically() -> Result<()> {
+    let [v4, v4a] = signers("2024-12-31T23:59:59Z")?;
+    let mut signed_v4 = request(BUSINESS_URI);
+    let mut signed_v4a = signed_v4.clone();
+    v4.sign(&mut signed_v4, None).await?;
+    v4a.sign(&mut signed_v4a, None).await?;
+    let v4_auth = signed_v4.headers[header::AUTHORIZATION].clone();
+    let v4a_auth = signed_v4a.headers[header::AUTHORIZATION].clone();
+
+    for (mut request, extra) in [(signed_v4, v4a_auth), (signed_v4a, v4_auth)] {
+        request.headers.append(header::AUTHORIZATION, extra);
+        let original = request.clone();
+        for signer in [&v4, &v4a] {
+            for mode in [None, PRESIGN] {
+                let error = signer.sign(&mut request, mode).await.unwrap_err();
+                assert_eq!(error.kind(), ErrorKind::RequestInvalid);
+                assert!(
+                    error
+                        .to_string()
+                        .contains("multiple complete AWS Authorization values")
+                );
+                assert_request_unchanged(&request, &original);
+                assert!(
+                    request
+                        .headers
+                        .get_all(header::AUTHORIZATION)
+                        .iter()
+                        .all(HeaderValue::is_sensitive)
+                );
+            }
+        }
+    }
     Ok(())
 }
 

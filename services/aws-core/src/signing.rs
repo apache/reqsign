@@ -223,7 +223,7 @@ fn canonicalize_headers_inner(
     now: Timestamp,
     session_token_header: &'static str,
 ) -> Result<()> {
-    remove_previous_header_authentication(&mut request.headers);
+    remove_previous_header_authentication(&mut request.headers)?;
 
     if !request.headers.contains_key(header::HOST) {
         let host = match (request.scheme.as_str(), request.authority.port_u16()) {
@@ -278,6 +278,31 @@ enum AwsAuthentication {
 }
 
 impl AwsAuthentication {
+    fn from_authorization(value: &HeaderValue) -> Option<Self> {
+        let (algorithm, attributes) = value.to_str().ok()?.split_once(' ')?;
+        let mut credential = None;
+        let mut signed_headers = None;
+        let mut signature = None;
+        for attribute in attributes.split(',') {
+            let (name, value) = attribute.trim().split_once('=')?;
+            let field = match name {
+                "Credential" => &mut credential,
+                "SignedHeaders" => &mut signed_headers,
+                "Signature" => &mut signature,
+                _ => return None,
+            };
+            if field.replace(value).is_some() {
+                return None;
+            }
+        }
+        // SignedHeaders may be empty when the signer excluded every header.
+        signed_headers?;
+        if signature?.is_empty() {
+            return None;
+        }
+        Self::from_credential_scope(algorithm, credential?)
+    }
+
     fn from_credential_scope(algorithm: &str, credential: &str) -> Option<Self> {
         let (scope, service) = credential.strip_suffix("/aws4_request")?.rsplit_once('/')?;
         let (kind, scope) = if algorithm.eq_ignore_ascii_case(SIGV4_ALGORITHM) {
@@ -305,33 +330,45 @@ impl AwsAuthentication {
     }
 }
 
-fn remove_previous_header_authentication(headers: &mut HeaderMap) {
-    let Some((algorithm, attributes)) = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split_once(' '))
-    else {
-        return;
+fn remove_previous_header_authentication(headers: &mut HeaderMap) -> Result<()> {
+    let authorization = headers.get_all(header::AUTHORIZATION);
+    let mut previous = authorization
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            AwsAuthentication::from_authorization(value)
+                .map(|authentication| (index, authentication))
+        });
+    let Some((index, authentication)) = previous.next() else {
+        return Ok(());
     };
-    let Some(authentication) = attributes
-        .split(',')
-        .find_map(|part| part.trim().strip_prefix("Credential="))
-        .and_then(|credential| AwsAuthentication::from_credential_scope(algorithm, credential))
-    else {
-        return;
-    };
+    if previous.next().is_some() {
+        return Err(reqsign_core::Error::request_invalid(
+            "multiple complete AWS Authorization values make retry authentication ambiguous",
+        ));
+    }
 
+    let retained = authorization
+        .iter()
+        .enumerate()
+        .filter(|(position, _)| *position != index)
+        .map(|(_, value)| value.clone())
+        .collect::<Vec<_>>();
     headers.remove(header::AUTHORIZATION);
+    for value in retained {
+        headers.append(header::AUTHORIZATION, value);
+    }
     headers.remove(X_AMZ_DATE);
     let had_standard_token = headers.remove(X_AMZ_SECURITY_TOKEN).is_some();
-    // CreateSession header signing moves the standard token to the S3 Express
-    // header. A previous standard token identifies the standard representation.
+    // With no standard token, a caller-supplied Express token on a request
+    // signed with long-term credentials looks like a generated session token.
     if authentication == AwsAuthentication::SigV4S3Express && !had_standard_token {
         headers.remove(X_AMZ_S3_SESSION_TOKEN);
     }
     if authentication == AwsAuthentication::SigV4a {
         headers.remove(X_AMZ_REGION_SET);
     }
+    Ok(())
 }
 
 /// Encode and sort the complete canonical query.

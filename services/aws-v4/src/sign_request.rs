@@ -33,7 +33,13 @@ const CREDENTIAL_OPERATION_HEADROOM: Duration = Duration::from_secs(10);
 /// `RequestInvalid` before changing the request.
 ///
 /// Re-signing refreshes previous AWS authentication using its algorithm and
-/// credential scope. Query cleanup requires a complete presign field set.
+/// credential scope. Header cleanup recognizes a single complete AWS
+/// `Authorization` value with exactly one `Credential`, `SignedHeaders`, and
+/// nonempty `Signature`. `SignedHeaders` can be empty after explicit exclusions.
+/// Multiple complete AWS values return `RequestInvalid`. Presigning keeps other
+/// `Authorization` values and requires a complete field set to refresh existing
+/// query authentication.
+///
 /// After presigning, an absent query and a bare `?` have the same wire form.
 /// A single trailing `&` can likewise have the same wire form as the separator
 /// added for signing. Keep the original URI if those bytes need to be recovered.
@@ -154,6 +160,12 @@ impl RequestSigner {
     /// This setting only selects how an existing [`Credential`] session token
     /// is represented. It does not modify the credential or load a different
     /// credential source.
+    ///
+    /// Without `x-amz-security-token`, a header-signed `s3express` request
+    /// can carry the same Express token header whether supplied by the caller
+    /// or generated from CreateSession credentials. Re-signing treats that
+    /// header as the previous session token. Start from the original request
+    /// to keep a caller-supplied Express token in this case.
     ///
     /// # Example
     ///
