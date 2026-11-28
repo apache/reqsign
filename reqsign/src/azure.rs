@@ -89,9 +89,11 @@
 //! Pass the request signer to [`Signer::with_request_signer`] or [`Signer::new`].
 //! Table Shared Key uses the five-line format when signing with no expiry.
 //!
-//! ## Blob Storage Service SAS
+//! ## Storage Service SAS
 //!
-//! Shared Key credentials can grant a typed Blob Storage Service SAS.
+//! Shared Key credentials can grant a typed Service SAS for Blob Storage,
+//! Azure Files, or Queue Storage. Set [`SasResponseOverrides`] on a Blob
+//! Storage or Azure Files grant to sign response header overrides.
 //!
 //! ```no_run
 //! use std::time::Duration;

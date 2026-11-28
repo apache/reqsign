@@ -27,6 +27,7 @@ use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
 use std::time::Duration;
 
+use crate::sas_response_overrides::SasResponseOverrides;
 use crate::service_sas::ServiceSasResource;
 
 pub(crate) const DEFAULT_USER_DELEGATION_KEY_API_VERSION: &str = "2020-12-06";
@@ -401,6 +402,7 @@ pub(crate) struct UserDelegationSharedAccessSignature {
     ip: Option<String>,
     protocol: Option<String>,
     sas_version: String,
+    response_overrides: SasResponseOverrides,
 }
 
 impl UserDelegationSharedAccessSignature {
@@ -422,6 +424,7 @@ impl UserDelegationSharedAccessSignature {
             ip: None,
             protocol: None,
             sas_version: sas_version.to_string(),
+            response_overrides: SasResponseOverrides::default(),
         }
     }
 
@@ -437,6 +440,11 @@ impl UserDelegationSharedAccessSignature {
 
     pub(crate) fn with_protocol(mut self, protocol: impl Into<String>) -> Self {
         self.protocol = Some(protocol.into());
+        self
+    }
+
+    pub(crate) fn with_response_overrides(mut self, overrides: SasResponseOverrides) -> Self {
+        self.response_overrides = overrides;
         self
     }
 
@@ -475,13 +483,11 @@ impl UserDelegationSharedAccessSignature {
             fields.push(String::new()); // encryption scope
         }
 
-        fields.extend([
-            String::new(), // rscc
-            String::new(), // rscd
-            String::new(), // rsce
-            String::new(), // rscl
-            String::new(), // rsct
-        ]);
+        fields.extend(
+            self.response_overrides
+                .fields()
+                .map(|(_, value)| value.to_owned()),
+        );
 
         let string_to_sign = fields.join("\n");
 
@@ -525,6 +531,7 @@ impl UserDelegationSharedAccessSignature {
             elements.push(("spr".to_string(), protocol.to_string()))
         }
 
+        self.response_overrides.append_to_query(&mut elements);
         let sig = self.signature(provider)?;
         elements.push(("sig".to_string(), sig));
 

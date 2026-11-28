@@ -16,7 +16,8 @@
 // under the License.
 
 use crate::constants::{
-    SAS_ENCRYPTION_SCOPE_VERSION, SAS_VERSIONS_WITH_ENCRYPTION_SCOPE, STORAGE_ACCOUNT_KEY_LENGTH,
+    LEGACY_SAS_VERSIONS_WITH_IP_AND_PROTOCOL, SAS_ENCRYPTION_SCOPE_VERSION,
+    SAS_VERSIONS_WITH_ENCRYPTION_SCOPE, STORAGE_ACCOUNT_KEY_LENGTH,
 };
 use crate::service_sas::{
     ceil_to_wire_second, encode_query_pairs, expiry_at_wire_second, validate_account,
@@ -28,26 +29,6 @@ use reqsign_core::{Context, Error, GrantCredential, Result};
 use std::fmt::{Debug, Formatter};
 use std::ops::{BitOr, BitOrAssign};
 use std::time::Duration;
-
-const LEGACY_ACCOUNT_SAS_VERSIONS: &[&str] = &[
-    "2015-04-05",
-    "2015-07-08",
-    "2015-12-11",
-    "2016-05-31",
-    "2017-04-17",
-    "2017-07-29",
-    "2017-11-09",
-    "2018-03-28",
-    "2018-11-09",
-    "2019-02-02",
-    "2019-07-07",
-    "2019-12-12",
-    "2020-02-10",
-    "2020-04-08",
-    "2020-06-12",
-    "2020-08-04",
-    "2020-10-02",
-];
 
 macro_rules! account_sas_flags {
     (
@@ -169,7 +150,7 @@ impl AccountSasVersion {
     /// Validate and create a supported Azure Storage service version.
     pub fn new(version: impl AsRef<str>) -> Result<Self> {
         let version = version.as_ref();
-        LEGACY_ACCOUNT_SAS_VERSIONS
+        LEGACY_SAS_VERSIONS_WITH_IP_AND_PROTOCOL
             .iter()
             .chain(SAS_VERSIONS_WITH_ENCRYPTION_SCOPE)
             .copied()

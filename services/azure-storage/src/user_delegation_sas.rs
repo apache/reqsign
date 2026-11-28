@@ -16,7 +16,8 @@
 // under the License.
 
 use crate::Credential;
-use crate::constants::AZURE_QUERY_ENCODE_SET;
+use crate::sas_response_overrides::SasResponseOverrides;
+use crate::service_sas::encode_query_pairs;
 use crate::user_delegation::{
     DEFAULT_USER_DELEGATION_KEY_API_VERSION, DEFAULT_USER_DELEGATION_SAS_VERSION,
     MAX_USER_DELEGATION_KEY_LIFETIME, UserDelegationKey, UserDelegationKeyCache,
@@ -24,7 +25,6 @@ use crate::user_delegation::{
     ceil_to_wire_second, floor_to_wire_second, get_user_delegation_key, user_delegation_key_covers,
 };
 use asyncband::singleflight::Group;
-use percent_encoding::percent_encode;
 use reqsign_core::crypto::CryptoProvider;
 use reqsign_core::hash::hex_sha256;
 use reqsign_core::time::Timestamp;
@@ -178,6 +178,7 @@ enum UserDelegationSasGrantResource {
 pub struct UserDelegationSasGrant {
     resource: UserDelegationSasGrantResource,
     permissions: UserDelegationSasPermissions,
+    response_overrides: SasResponseOverrides,
 }
 
 impl Debug for UserDelegationSasGrant {
@@ -198,6 +199,7 @@ impl UserDelegationSasGrant {
                 container: container.into(),
             },
             permissions,
+            response_overrides: SasResponseOverrides::default(),
         }
     }
 
@@ -216,6 +218,7 @@ impl UserDelegationSasGrant {
                 blob: blob.into(),
             },
             permissions,
+            response_overrides: SasResponseOverrides::default(),
         }
     }
 
@@ -236,10 +239,18 @@ impl UserDelegationSasGrant {
                 path_prefix: path_prefix.into(),
             },
             permissions,
+            response_overrides: SasResponseOverrides::default(),
         }
     }
 
+    /// Sign response header overrides for this Blob Storage grant.
+    pub fn with_response_overrides(mut self, overrides: SasResponseOverrides) -> Self {
+        self.response_overrides = overrides;
+        self
+    }
+
     fn validate(&self) -> Result<ValidatedGrant> {
+        self.response_overrides.validate()?;
         if self.permissions.is_empty() {
             return Err(Error::request_invalid(
                 "user delegation SAS permissions must not be empty",
@@ -799,7 +810,8 @@ impl GrantCredential for UserDelegationSasGranter {
             times.expiry,
             DEFAULT_USER_DELEGATION_SAS_VERSION,
         )
-        .with_protocol(self.protocol.as_str());
+        .with_protocol(self.protocol.as_str())
+        .with_response_overrides(self.grant.response_overrides.clone());
         if let Some(start) = times.start {
             signer = signer.with_start(start);
         }
@@ -825,20 +837,6 @@ impl GrantCredential for UserDelegationSasGranter {
 
         Ok(output)
     }
-}
-
-fn encode_query_pairs(pairs: &[(String, String)]) -> String {
-    pairs
-        .iter()
-        .map(|(key, value)| {
-            format!(
-                "{}={}",
-                percent_encode(key.as_bytes(), &AZURE_QUERY_ENCODE_SET),
-                percent_encode(value.as_bytes(), &AZURE_QUERY_ENCODE_SET)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("&")
 }
 
 #[cfg(test)]
@@ -1065,6 +1063,10 @@ mod tests {
 
     #[tokio::test]
     async fn grants_real_user_delegation_protocol_shape() {
+        use crate::sas_response_overrides::{
+            TEST_RESPONSE_OVERRIDE_QUERY, test_response_overrides,
+        };
+
         let now = timestamp("2022-03-01T08:12:34Z");
         let key_expiry = now + MAX_USER_DELEGATION_LIFETIME;
         let http = MockUserDelegationHttpSend::new([delegation_key_response(
@@ -1076,7 +1078,8 @@ mod tests {
             blob_grant(
                 "path/to/blob name.txt",
                 UserDelegationSasPermissions::WRITE | UserDelegationSasPermissions::READ,
-            ),
+            )
+            .with_response_overrides(test_response_overrides()),
         )
         .with_time(now);
 
@@ -1115,17 +1118,11 @@ mod tests {
 
         let (token, expires_at) = output_parts(&output);
         assert_eq!(expires_at, timestamp("2022-03-01T08:17:34Z"));
-        assert_eq!(query_value(token, "sv").as_deref(), Some("2020-12-06"));
         assert_eq!(
-            query_value(token, "se").as_deref(),
-            Some("2022-03-01T08:17:34Z")
-        );
-        assert_eq!(query_value(token, "sp").as_deref(), Some("rw"));
-        assert_eq!(query_value(token, "sr").as_deref(), Some("b"));
-        assert_eq!(query_value(token, "spr").as_deref(), Some("https"));
-        assert_eq!(
-            query_value(token, "sig").as_deref(),
-            Some("aoHQpVbSMBC3EY94Aw7g2XFUZxtqh48MWBZLxq32Q6g=")
+            token,
+            format!(
+                "sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=rw&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-08T08%3A12%3A34Z&sks=b&skv=2020-12-06&spr=https&{TEST_RESPONSE_OVERRIDE_QUERY}&sig=IXziSIBh5PJcw%2BzXE1d2%2BrtyuSGSnT9lVv7y0VO%2Br2g%3D"
+            ),
         );
         assert!(!token.contains("source-bearer-secret"));
     }

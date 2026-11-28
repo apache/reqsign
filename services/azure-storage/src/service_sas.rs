@@ -17,9 +17,10 @@
 
 use crate::Credential;
 use crate::constants::{
-    AZURE_QUERY_ENCODE_SET, SAS_ENCRYPTION_SCOPE_VERSION, SAS_VERSIONS_WITH_ENCRYPTION_SCOPE,
-    STORAGE_ACCOUNT_KEY_LENGTH,
+    AZURE_QUERY_ENCODE_SET, LEGACY_SAS_VERSIONS_WITH_IP_AND_PROTOCOL, SAS_ENCRYPTION_SCOPE_VERSION,
+    SAS_VERSIONS_WITH_ENCRYPTION_SCOPE, STORAGE_ACCOUNT_KEY_LENGTH,
 };
+use crate::sas_response_overrides::SasResponseOverrides;
 use crate::user_delegation_sas::SasProtocol;
 use percent_encoding::{percent_decode_str, percent_encode};
 use reqsign_core::crypto::CryptoProvider;
@@ -31,9 +32,16 @@ use std::net::Ipv4Addr;
 use std::ops::{BitOr, BitOrAssign};
 use std::time::Duration;
 
-const BLOB_SERVICE: &str = "blob";
+mod target;
 
-/// Resource level for Azure Blob Storage Service SAS.
+use target::BLOB_SNAPSHOT_SAS_VERSION;
+pub use target::{ServiceSasMode, ServiceSasTarget};
+
+const FIRST_SERVICE_SAS_VERSION: &str = "2015-02-21";
+const SAS_IP_AND_PROTOCOL_VERSION: &str = "2015-04-05";
+
+/// Blob Storage resource for the original Service SAS constructor.
+/// For additional resource types, use [`ServiceSasTarget`].
 #[derive(Clone, PartialEq, Eq)]
 pub enum ServiceSasResource {
     /// A container resource.
@@ -83,221 +91,168 @@ impl ServiceSasResource {
             })
         }
     }
+}
 
-    pub(crate) fn signed_resource(&self) -> &'static str {
-        match self {
-            ServiceSasResource::Container { .. } => "c",
-            ServiceSasResource::Blob { .. } => "b",
-        }
-    }
+macro_rules! service_sas_permissions {
+    ($(#[$type_doc:meta])* $name:ident($bits:ty) {
+        $($(#[$doc:meta])* $flag:ident = $bit:literal => $letter:literal,)+
+    }) => {
+        $(#[$type_doc])*
+        #[derive(Clone, Copy, Default, PartialEq, Eq)]
+        pub struct $name($bits);
 
-    pub(crate) fn canonicalized_resource(&self, account: &str) -> String {
-        match self {
-            ServiceSasResource::Container { container } => {
-                format!("/{BLOB_SERVICE}/{account}/{container}")
+        impl $name {
+            $($(#[$doc])* pub const $flag: Self = Self(1 << $bit);)+
+
+            /// Return whether no permission is selected.
+            pub const fn is_empty(self) -> bool {
+                self.0 == 0
             }
-            ServiceSasResource::Blob { container, blob } => {
-                format!("/{BLOB_SERVICE}/{account}/{container}/{blob}")
+
+            /// Return whether all permissions in `other` are selected.
+            pub const fn contains(self, other: Self) -> bool {
+                self.0 & other.0 == other.0
+            }
+
+            fn as_canonical_string(self) -> String {
+                [$((Self::$flag, $letter)),+]
+                    .into_iter()
+                    .filter_map(|(flag, letter)| self.contains(flag).then_some(letter))
+                    .collect()
             }
         }
+
+        impl Debug for $name {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                f.write_str(concat!(stringify!($name), "(REDACTED)"))
+            }
+        }
+
+        impl BitOr for $name {
+            type Output = Self;
+
+            fn bitor(self, rhs: Self) -> Self::Output {
+                Self(self.0 | rhs.0)
+            }
+        }
+
+        impl BitOrAssign for $name {
+            fn bitor_assign(&mut self, rhs: Self) {
+                self.0 |= rhs.0;
+            }
+        }
+    };
+}
+
+service_sas_permissions! {
+    /// Permissions for a container-scoped Blob Storage Service SAS.
+    ///
+    /// Combining values with `|` produces Azure's canonical permission order.
+    ServiceSasContainerPermissions(u16) {
+        /// Read blobs in the container.
+        READ = 0 => 'r',
+        /// Add blocks to append blobs.
+        ADD = 1 => 'a',
+        /// Create blobs.
+        CREATE = 2 => 'c',
+        /// Write blob data and metadata.
+        WRITE = 3 => 'w',
+        /// Delete blobs.
+        DELETE = 4 => 'd',
+        /// Delete blob versions.
+        DELETE_VERSION = 5 => 'x',
+        /// Permanently delete blob snapshots or versions.
+        PERMANENT_DELETE = 6 => 'y',
+        /// List blobs.
+        LIST = 7 => 'l',
+        /// Read or write blob index tags.
+        TAGS = 8 => 't',
+        /// Find blobs by index tags.
+        FILTER_BY_TAGS = 9 => 'f',
+        /// Move blobs in hierarchical-namespace accounts.
+        MOVE = 10 => 'm',
+        /// Read system properties or POSIX ACLs.
+        EXECUTE = 11 => 'e',
+        /// Set the owner or owning group for hierarchical namespace resources.
+        OWNERSHIP = 12 => 'o',
+        /// Set POSIX permissions or ACLs for hierarchical namespace resources.
+        PERMISSIONS = 13 => 'p',
+        /// Set an immutability policy or legal hold.
+        SET_IMMUTABILITY_POLICY = 14 => 'i',
     }
 }
 
-/// Permissions for a container-scoped Blob Storage Service SAS.
-///
-/// Combining values with `|` produces Azure's canonical permission order.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct ServiceSasContainerPermissions(u16);
-
-impl ServiceSasContainerPermissions {
-    /// Read blobs in the container.
-    pub const READ: Self = Self(1 << 0);
-    /// Add blocks to append blobs.
-    pub const ADD: Self = Self(1 << 1);
-    /// Create blobs.
-    pub const CREATE: Self = Self(1 << 2);
-    /// Write blob data and metadata.
-    pub const WRITE: Self = Self(1 << 3);
-    /// Delete blobs.
-    pub const DELETE: Self = Self(1 << 4);
-    /// Delete blob versions.
-    pub const DELETE_VERSION: Self = Self(1 << 5);
-    /// Permanently delete blob snapshots or versions.
-    pub const PERMANENT_DELETE: Self = Self(1 << 6);
-    /// List blobs.
-    pub const LIST: Self = Self(1 << 7);
-    /// Read or write blob index tags.
-    pub const TAGS: Self = Self(1 << 8);
-    /// Find blobs by index tags.
-    pub const FILTER_BY_TAGS: Self = Self(1 << 9);
-    /// Move blobs in hierarchical-namespace accounts.
-    pub const MOVE: Self = Self(1 << 10);
-    /// Read system properties or POSIX ACLs.
-    pub const EXECUTE: Self = Self(1 << 11);
-    /// Set the owner or owning group for hierarchical namespace resources.
-    pub const OWNERSHIP: Self = Self(1 << 12);
-    /// Set POSIX permissions or ACLs for hierarchical namespace resources.
-    pub const PERMISSIONS: Self = Self(1 << 13);
-    /// Set an immutability policy or legal hold.
-    pub const SET_IMMUTABILITY_POLICY: Self = Self(1 << 14);
-
-    /// Return whether no permission is selected.
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// Return whether all permissions in `other` are selected.
-    pub const fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
-    }
-
-    fn as_canonical_string(self) -> String {
-        [
-            (Self::READ, 'r'),
-            (Self::ADD, 'a'),
-            (Self::CREATE, 'c'),
-            (Self::WRITE, 'w'),
-            (Self::DELETE, 'd'),
-            (Self::DELETE_VERSION, 'x'),
-            (Self::PERMANENT_DELETE, 'y'),
-            (Self::LIST, 'l'),
-            (Self::TAGS, 't'),
-            (Self::FILTER_BY_TAGS, 'f'),
-            (Self::MOVE, 'm'),
-            (Self::EXECUTE, 'e'),
-            (Self::OWNERSHIP, 'o'),
-            (Self::PERMISSIONS, 'p'),
-            (Self::SET_IMMUTABILITY_POLICY, 'i'),
-        ]
-        .into_iter()
-        .filter_map(|(permission, symbol)| self.contains(permission).then_some(symbol))
-        .collect()
+service_sas_permissions! {
+    /// Permissions for a blob-scoped Blob Storage Service SAS.
+    ///
+    /// Combining values with `|` produces Azure's canonical permission order.
+    ServiceSasBlobPermissions(u16) {
+        /// Read the blob.
+        READ = 0 => 'r',
+        /// Add blocks to an append blob.
+        ADD = 1 => 'a',
+        /// Create the blob.
+        CREATE = 2 => 'c',
+        /// Write blob data and metadata.
+        WRITE = 3 => 'w',
+        /// Delete the blob.
+        DELETE = 4 => 'd',
+        /// Delete a blob version.
+        DELETE_VERSION = 5 => 'x',
+        /// Permanently delete a blob snapshot or version.
+        PERMANENT_DELETE = 6 => 'y',
+        /// Read or write blob index tags.
+        TAGS = 7 => 't',
+        /// Move the blob in hierarchical-namespace accounts.
+        MOVE = 8 => 'm',
+        /// Read system properties or POSIX ACLs.
+        EXECUTE = 9 => 'e',
+        /// Set the owner or owning group for hierarchical namespace resources.
+        OWNERSHIP = 10 => 'o',
+        /// Set POSIX permissions or ACLs for hierarchical namespace resources.
+        PERMISSIONS = 11 => 'p',
+        /// Set an immutability policy or legal hold.
+        SET_IMMUTABILITY_POLICY = 12 => 'i',
     }
 }
 
-impl Debug for ServiceSasContainerPermissions {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ServiceSasContainerPermissions(REDACTED)")
+service_sas_permissions! {
+    /// Permissions for an Azure Files share or file Service SAS. Combine with `|`.
+    ServiceSasFilePermissions(u8) {
+        /// Read files and their properties and metadata.
+        READ = 0 => 'r',
+        /// Create or copy a file.
+        CREATE = 1 => 'c',
+        /// Write file data, properties, or metadata.
+        WRITE = 2 => 'w',
+        /// Delete a file.
+        DELETE = 3 => 'd',
+        /// List directories and files. Valid only for a share grant.
+        LIST = 4 => 'l',
     }
 }
 
-impl BitOr for ServiceSasContainerPermissions {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self(self.0 | rhs.0)
+service_sas_permissions! {
+    /// Permissions for an Azure Queue Service SAS. Combine with `|`.
+    ServiceSasQueuePermissions(u8) {
+        /// Read properties and metadata or peek at messages.
+        READ = 0 => 'r',
+        /// Add messages.
+        ADD = 1 => 'a',
+        /// Update messages.
+        UPDATE = 2 => 'u',
+        /// Retrieve and delete messages.
+        PROCESS = 3 => 'p',
     }
 }
 
-impl BitOrAssign for ServiceSasContainerPermissions {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0;
-    }
-}
-
-/// Permissions for a blob-scoped Blob Storage Service SAS.
-///
-/// Combining values with `|` produces Azure's canonical permission order.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct ServiceSasBlobPermissions(u16);
-
-impl ServiceSasBlobPermissions {
-    /// Read the blob.
-    pub const READ: Self = Self(1 << 0);
-    /// Add blocks to an append blob.
-    pub const ADD: Self = Self(1 << 1);
-    /// Create the blob.
-    pub const CREATE: Self = Self(1 << 2);
-    /// Write blob data and metadata.
-    pub const WRITE: Self = Self(1 << 3);
-    /// Delete the blob.
-    pub const DELETE: Self = Self(1 << 4);
-    /// Delete a blob version.
-    pub const DELETE_VERSION: Self = Self(1 << 5);
-    /// Permanently delete a blob snapshot or version.
-    pub const PERMANENT_DELETE: Self = Self(1 << 6);
-    /// Read or write blob index tags.
-    pub const TAGS: Self = Self(1 << 7);
-    /// Move the blob in hierarchical-namespace accounts.
-    pub const MOVE: Self = Self(1 << 8);
-    /// Read system properties or POSIX ACLs.
-    pub const EXECUTE: Self = Self(1 << 9);
-    /// Set the owner or owning group for hierarchical namespace resources.
-    pub const OWNERSHIP: Self = Self(1 << 10);
-    /// Set POSIX permissions or ACLs for hierarchical namespace resources.
-    pub const PERMISSIONS: Self = Self(1 << 11);
-    /// Set an immutability policy or legal hold.
-    pub const SET_IMMUTABILITY_POLICY: Self = Self(1 << 12);
-
-    /// Return whether no permission is selected.
-    pub const fn is_empty(self) -> bool {
-        self.0 == 0
-    }
-
-    /// Return whether all permissions in `other` are selected.
-    pub const fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
-    }
-
-    fn as_canonical_string(self) -> String {
-        [
-            (Self::READ, 'r'),
-            (Self::ADD, 'a'),
-            (Self::CREATE, 'c'),
-            (Self::WRITE, 'w'),
-            (Self::DELETE, 'd'),
-            (Self::DELETE_VERSION, 'x'),
-            (Self::PERMANENT_DELETE, 'y'),
-            (Self::TAGS, 't'),
-            (Self::MOVE, 'm'),
-            (Self::EXECUTE, 'e'),
-            (Self::OWNERSHIP, 'o'),
-            (Self::PERMISSIONS, 'p'),
-            (Self::SET_IMMUTABILITY_POLICY, 'i'),
-        ]
-        .into_iter()
-        .filter_map(|(permission, symbol)| self.contains(permission).then_some(symbol))
-        .collect()
-    }
-}
-
-impl Debug for ServiceSasBlobPermissions {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ServiceSasBlobPermissions(REDACTED)")
-    }
-}
-
-impl BitOr for ServiceSasBlobPermissions {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self(self.0 | rhs.0)
-    }
-}
-
-impl BitOrAssign for ServiceSasBlobPermissions {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.0 |= rhs.0;
-    }
-}
-
-#[derive(Clone)]
-enum ServiceSasGrantResource {
-    Container {
-        container: String,
-        permissions: ServiceSasContainerPermissions,
-    },
-    Blob {
-        container: String,
-        blob: String,
-        permissions: ServiceSasBlobPermissions,
-    },
-}
-
-/// One complete, typed Blob Storage Service SAS grant.
+/// One complete, typed Azure Storage Service SAS grant.
 #[derive(Clone)]
 pub struct ServiceSasGrant {
-    resource: ServiceSasGrantResource,
+    target: ServiceSasTarget,
+    permissions: String,
+    identifier: Option<String>,
+    response_overrides: SasResponseOverrides,
 }
 
 impl Debug for ServiceSasGrant {
@@ -307,17 +262,26 @@ impl Debug for ServiceSasGrant {
 }
 
 impl ServiceSasGrant {
+    fn new(target: ServiceSasTarget, permissions: String) -> Self {
+        Self {
+            target,
+            permissions,
+            identifier: None,
+            response_overrides: SasResponseOverrides::default(),
+        }
+    }
+
     /// Grant permissions over one container and its blobs.
     pub fn for_container(
         container: impl Into<String>,
         permissions: ServiceSasContainerPermissions,
     ) -> Self {
-        Self {
-            resource: ServiceSasGrantResource::Container {
+        Self::new(
+            ServiceSasTarget::Container {
                 container: container.into(),
-                permissions,
             },
-        }
+            permissions.as_canonical_string(),
+        )
     }
 
     /// Grant permissions over one exact blob.
@@ -326,66 +290,136 @@ impl ServiceSasGrant {
         blob: impl Into<String>,
         permissions: ServiceSasBlobPermissions,
     ) -> Self {
-        Self {
-            resource: ServiceSasGrantResource::Blob {
+        Self::new(
+            ServiceSasTarget::Blob {
                 container: container.into(),
                 blob: blob.into(),
-                permissions,
             },
-        }
+            permissions.as_canonical_string(),
+        )
     }
 
-    fn validate(&self) -> Result<ValidatedGrant> {
-        match &self.resource {
-            ServiceSasGrantResource::Container {
-                container,
-                permissions,
-            } => {
-                validate_container(container)?;
-                if permissions.is_empty() {
-                    return Err(Error::request_invalid(
-                        "Azure Service SAS container permissions must not be empty",
-                    ));
-                }
-                Ok(ValidatedGrant {
-                    resource: ServiceSasResource::Container {
-                        container: container.clone(),
-                    },
-                    permissions: permissions.as_canonical_string(),
-                })
-            }
-            ServiceSasGrantResource::Blob {
-                container,
-                blob,
-                permissions,
-            } => {
+    /// Grant permissions over one blob snapshot. The request must carry the
+    /// matching `snapshot` query parameter.
+    pub fn for_blob_snapshot(
+        container: impl Into<String>,
+        blob: impl Into<String>,
+        snapshot: impl Into<String>,
+        permissions: ServiceSasBlobPermissions,
+    ) -> Self {
+        Self::new(
+            ServiceSasTarget::BlobSnapshot {
+                container: container.into(),
+                blob: blob.into(),
+                snapshot: snapshot.into(),
+            },
+            permissions.as_canonical_string(),
+        )
+    }
+
+    /// Grant permissions over one blob version. The request must carry the
+    /// matching `versionid` query parameter.
+    pub fn for_blob_version(
+        container: impl Into<String>,
+        blob: impl Into<String>,
+        version_id: impl Into<String>,
+        permissions: ServiceSasBlobPermissions,
+    ) -> Self {
+        Self::new(
+            ServiceSasTarget::BlobVersion {
+                container: container.into(),
+                blob: blob.into(),
+                version_id: version_id.into(),
+            },
+            permissions.as_canonical_string(),
+        )
+    }
+
+    /// Grant permissions over a hierarchical-namespace directory. An empty
+    /// path selects the container's root directory.
+    pub fn for_directory(
+        container: impl Into<String>,
+        path: impl Into<String>,
+        permissions: ServiceSasContainerPermissions,
+    ) -> Self {
+        Self::new(
+            ServiceSasTarget::Directory {
+                container: container.into(),
+                path: path.into(),
+            },
+            permissions.as_canonical_string(),
+        )
+    }
+
+    /// Grant permissions over one share and its files.
+    pub fn for_file_share(
+        share: impl Into<String>,
+        permissions: ServiceSasFilePermissions,
+    ) -> Self {
+        Self::new(
+            ServiceSasTarget::FileShare {
+                share: share.into(),
+            },
+            permissions.as_canonical_string(),
+        )
+    }
+
+    /// Grant permissions over one file at a path relative to the share.
+    pub fn for_file(
+        share: impl Into<String>,
+        path: impl Into<String>,
+        permissions: ServiceSasFilePermissions,
+    ) -> Self {
+        Self::new(
+            ServiceSasTarget::File {
+                share: share.into(),
+                path: path.into(),
+            },
+            permissions.as_canonical_string(),
+        )
+    }
+
+    /// Grant permissions over one queue and its messages.
+    pub fn for_queue(queue: impl Into<String>, permissions: ServiceSasQueuePermissions) -> Self {
+        Self::new(
+            ServiceSasTarget::Queue {
+                queue: queue.into(),
+            },
+            permissions.as_canonical_string(),
+        )
+    }
+
+    /// Associate the grant with an existing stored access policy (`si`).
+    ///
+    /// The policy must leave expiry unspecified because the granter signs an
+    /// explicit expiry. Use an empty permission set to let the policy supply
+    /// permissions. Set a start time or permissions on only one side.
+    pub fn with_identifier(mut self, identifier: impl Into<String>) -> Self {
+        self.identifier = Some(identifier.into());
+        self
+    }
+
+    /// Sign response header overrides for a Blob Storage or Azure Files grant.
+    pub fn with_response_overrides(mut self, overrides: SasResponseOverrides) -> Self {
+        self.response_overrides = overrides;
+        self
+    }
+
+    fn validate(&self) -> Result<()> {
+        match &self.target {
+            ServiceSasTarget::Container { container } => validate_container(container)?,
+            ServiceSasTarget::Blob { container, blob } => {
                 validate_container(container)?;
                 validate_blob(blob)?;
-                if permissions.is_empty() {
-                    return Err(Error::request_invalid(
-                        "Azure Service SAS blob permissions must not be empty",
-                    ));
-                }
-                Ok(ValidatedGrant {
-                    resource: ServiceSasResource::Blob {
-                        container: container.clone(),
-                        blob: blob.clone(),
-                    },
-                    permissions: permissions.as_canonical_string(),
-                })
             }
+            _ => {}
         }
-    }
-}
-
-struct ValidatedGrant {
-    resource: ServiceSasResource,
-    permissions: String,
-}
-
-impl Debug for ValidatedGrant {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ValidatedGrant").finish_non_exhaustive()
+        if self.identifier.is_none() && self.permissions.is_empty() {
+            return Err(Error::request_invalid(
+                "Azure Service SAS permissions must not be empty",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -440,10 +474,9 @@ impl Debug for SasIpRange {
 
 /// Azure Storage service version used to authorize a Service SAS.
 ///
-/// This type accepts documented Azure Storage versions from `2020-12-06`
-/// onward, whose Blob Storage Service SAS string-to-sign includes the signed
-/// encryption-scope field. Unknown future versions are rejected until their
-/// wire contract is understood by this crate.
+/// This type accepts documented Azure Storage versions from `2015-04-05`
+/// through `2026-10-06` and defaults to `2020-12-06`. Certain resources and
+/// permissions require a newer version.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ServiceSasVersion(String);
 
@@ -451,7 +484,9 @@ impl ServiceSasVersion {
     /// Validate and create a supported Azure Storage service version.
     pub fn new(version: impl Into<String>) -> Result<Self> {
         let version = version.into();
-        if !SAS_VERSIONS_WITH_ENCRYPTION_SCOPE.contains(&version.as_str()) {
+        if !LEGACY_SAS_VERSIONS_WITH_IP_AND_PROTOCOL.contains(&version.as_str())
+            && !SAS_VERSIONS_WITH_ENCRYPTION_SCOPE.contains(&version.as_str())
+        {
             return Err(Error::config_invalid(
                 "Azure Service SAS version is not supported by this signer",
             ));
@@ -477,7 +512,7 @@ impl Debug for ServiceSasVersion {
     }
 }
 
-/// Stable configuration for locally generating one Blob Storage Service SAS.
+/// Stable configuration for locally generating one Azure Storage Service SAS.
 #[derive(Clone)]
 pub struct ServiceSasConfig {
     account: String,
@@ -569,25 +604,28 @@ fn validate_container(container: &str) -> Result<()> {
     if matches!(container, "$root" | "$web" | "$logs") {
         return Ok(());
     }
-    if !(3..=63).contains(&container.len())
-        || !container
-            .bytes()
-            .all(|value| value.is_ascii_lowercase() || value.is_ascii_digit() || value == b'-')
-        || !container
-            .as_bytes()
-            .first()
-            .is_some_and(u8::is_ascii_alphanumeric)
-        || !container
-            .as_bytes()
-            .last()
-            .is_some_and(u8::is_ascii_alphanumeric)
-        || container.contains("--")
-    {
+    if !valid_dns_name(container) {
         return Err(Error::request_invalid(
             "invalid Azure Blob Storage container name",
         ));
     }
     Ok(())
+}
+
+fn valid_dns_name(name: &str) -> bool {
+    (3..=63).contains(&name.len())
+        && name
+            .bytes()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == b'-')
+        && name
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && name
+            .as_bytes()
+            .last()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        && !name.contains("--")
 }
 
 fn validate_blob(blob: &str) -> Result<()> {
@@ -611,18 +649,19 @@ pub struct ServiceSharedAccessSignature {
     account: String,
     key: String,
 
-    resource: ServiceSasResource,
+    target: ServiceSasTarget,
     permissions: String,
-    expiry: Timestamp,
+    expiry: Option<Timestamp>,
     start: Option<Timestamp>,
     ip: Option<String>,
     protocol: Option<String>,
     version: String,
-    content_disposition: String,
+    identifier: Option<String>,
+    response_overrides: SasResponseOverrides,
 }
 
 impl ServiceSharedAccessSignature {
-    /// Create a Service SAS signer.
+    /// Create a Service SAS signer for a blob or container with an explicit expiry.
     pub fn new(
         account: String,
         key: String,
@@ -630,17 +669,35 @@ impl ServiceSharedAccessSignature {
         permissions: String,
         expiry: Timestamp,
     ) -> Self {
+        Self::for_target(account, key, resource, permissions, Some(expiry))
+    }
+
+    /// Create a Service SAS signer for an Azure Storage target.
+    ///
+    /// The permission string must use Azure's order for the target. An empty
+    /// permission string or absent expiry delegates that field to a stored
+    /// access policy set with [`Self::with_identifier`]. Set each of start,
+    /// expiry, and permissions on only one side. This constructor signs raw
+    /// query parameters and does not infer a policy's expiry.
+    pub fn for_target(
+        account: String,
+        key: String,
+        target: impl Into<ServiceSasTarget>,
+        permissions: String,
+        expiry: Option<Timestamp>,
+    ) -> Self {
         Self {
             account,
             key,
-            resource,
+            target: target.into(),
             permissions,
             expiry,
             start: None,
             ip: None,
             protocol: None,
             version: SAS_ENCRYPTION_SCOPE_VERSION.to_string(),
-            content_disposition: String::new(),
+            identifier: None,
+            response_overrides: SasResponseOverrides::default(),
         }
     }
 
@@ -662,42 +719,114 @@ impl ServiceSharedAccessSignature {
         self
     }
 
-    /// Set the service version.
+    /// Set the Azure Storage service version (`2015-02-21` or later).
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
         self.version = version.into();
         self
     }
 
-    /// Sign a `rscd` Content-Disposition response override.
-    ///
-    /// The value must be the percent-decoded query value, as required by the
-    /// Service SAS string-to-sign contract.
-    pub(crate) fn with_content_disposition(mut self, content_disposition: String) -> Self {
-        self.content_disposition = content_disposition;
+    /// Associate the SAS with a stored access policy (`si`).
+    pub fn with_identifier(mut self, identifier: impl Into<String>) -> Self {
+        self.identifier = Some(identifier.into());
         self
     }
 
+    /// Sign response header overrides for a Blob Storage or Azure Files SAS.
+    pub fn with_response_overrides(mut self, overrides: SasResponseOverrides) -> Self {
+        self.response_overrides = overrides;
+        self
+    }
+
+    fn validate(&self) -> Result<()> {
+        let version = self.version.as_str();
+        if version.len() != 10
+            || version < FIRST_SERVICE_SAS_VERSION
+            || format!("{version}T00:00:00Z").parse::<Timestamp>().is_err()
+        {
+            return Err(Error::request_invalid(
+                "invalid or unsupported Azure Service SAS version",
+            ));
+        }
+        if version < SAS_IP_AND_PROTOCOL_VERSION && (self.ip.is_some() || self.protocol.is_some()) {
+            return Err(Error::request_invalid(
+                "Azure Service SAS IP and protocol restrictions require version 2015-04-05 or later",
+            ));
+        }
+        if let Some(identifier) = &self.identifier {
+            if identifier.is_empty()
+                || identifier.chars().count() > 64
+                || identifier.chars().any(char::is_control)
+            {
+                return Err(Error::request_invalid(
+                    "Azure stored access policy identifier must be 1-64 characters without control characters",
+                ));
+            }
+        } else if self.expiry.is_none() || self.permissions.is_empty() {
+            return Err(Error::request_invalid(
+                "Azure Service SAS requires permissions and expiry without a stored access policy",
+            ));
+        }
+        self.response_overrides.validate()?;
+        if self.target.signed_resource().is_none()
+            && self
+                .response_overrides
+                .fields()
+                .iter()
+                .any(|(_, value)| !value.is_empty())
+        {
+            return Err(Error::request_invalid(
+                "Azure Queue Service SAS does not support response header overrides",
+            ));
+        }
+        self.target.validate(version, &self.permissions)?;
+        if self.target.is_blob_storage() {
+            for (since, permissions) in [
+                ("2019-12-12", ['x', 't', 'f'].as_slice()),
+                ("2020-02-10", ['y', 'm', 'e', 'o', 'p'].as_slice()),
+                ("2020-06-12", ['i'].as_slice()),
+            ] {
+                if version < since && self.permissions.contains(permissions) {
+                    return Err(Error::request_invalid(
+                        "Azure Service SAS permission is unavailable for the selected version",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn string_to_sign(&self) -> String {
-        [
-            self.permissions.clone(),
-            self.start
-                .map_or_else(String::new, Timestamp::format_rfc3339_zulu),
-            self.expiry.format_rfc3339_zulu(),
-            self.resource.canonicalized_resource(&self.account),
-            String::new(), // signed identifier
-            self.ip.clone().unwrap_or_default(),
-            self.protocol.clone().unwrap_or_default(),
-            self.version.clone(),
-            self.resource.signed_resource().to_string(),
-            String::new(), // snapshot time
-            String::new(), // encryption scope
-            String::new(), // rscc
-            self.content_disposition.clone(),
-            String::new(), // rsce
-            String::new(), // rscl
-            String::new(), // rsct
-        ]
-        .join("\n")
+        let start = self.start.map(Timestamp::format_rfc3339_zulu);
+        let expiry = self.expiry.map(Timestamp::format_rfc3339_zulu);
+        let resource = self.target.canonicalized_resource(&self.account);
+        let mut fields = vec![
+            self.permissions.as_str(),
+            start.as_deref().unwrap_or_default(),
+            expiry.as_deref().unwrap_or_default(),
+            &resource,
+            self.identifier.as_deref().unwrap_or_default(),
+        ];
+        let version = self.version.as_str();
+        if version >= SAS_IP_AND_PROTOCOL_VERSION {
+            fields.extend([
+                self.ip.as_deref().unwrap_or_default(),
+                self.protocol.as_deref().unwrap_or_default(),
+            ]);
+        }
+        fields.push(version);
+        if self.target.is_blob_storage() && version >= BLOB_SNAPSHOT_SAS_VERSION {
+            fields.push(self.target.signed_resource().unwrap_or_default());
+            fields.push(self.target.signed_timestamp());
+            if version >= SAS_ENCRYPTION_SCOPE_VERSION {
+                fields.push(""); // signed encryption scope
+            }
+        }
+        // Files uses sr on the wire but does not include it in the string-to-sign.
+        // Queue includes neither sr nor the response override fields.
+        if self.target.signed_resource().is_some() {
+            fields.extend(self.response_overrides.fields().map(|(_, value)| value));
+        }
+        fields.join("\n")
     }
 
     fn signature_with_decoded_key(
@@ -713,16 +842,23 @@ impl ServiceSharedAccessSignature {
         provider: &dyn CryptoProvider,
         decoded_key: &[u8],
     ) -> reqsign_core::Result<Vec<(String, String)>> {
-        let mut elements: Vec<(String, String)> = vec![
-            ("sv".to_string(), self.version.to_string()),
-            ("se".to_string(), self.expiry.format_rfc3339_zulu()),
-            ("sp".to_string(), self.permissions.to_string()),
-            (
-                "sr".to_string(),
-                self.resource.signed_resource().to_string(),
-            ),
-        ];
-
+        self.validate()?;
+        let mut elements = vec![("sv".to_string(), self.version.clone())];
+        if let Some(expiry) = self.expiry {
+            elements.push(("se".to_string(), expiry.format_rfc3339_zulu()));
+        }
+        if !self.permissions.is_empty() {
+            elements.push(("sp".to_string(), self.permissions.clone()));
+        }
+        if let Some(resource) = self.target.signed_resource() {
+            elements.push(("sr".to_string(), resource.to_string()));
+        }
+        if let Some(depth) = self.target.directory_depth() {
+            elements.push(("sdd".to_string(), depth.to_string()));
+        }
+        if let Some(identifier) = &self.identifier {
+            elements.push(("si".to_string(), identifier.clone()));
+        }
         if let Some(start) = &self.start {
             elements.push(("st".to_string(), start.format_rfc3339_zulu()))
         }
@@ -733,6 +869,7 @@ impl ServiceSharedAccessSignature {
             elements.push(("spr".to_string(), protocol.to_string()))
         }
 
+        self.response_overrides.append_to_query(&mut elements);
         elements.push((
             "sig".to_string(),
             self.signature_with_decoded_key(provider, decoded_key)?,
@@ -744,7 +881,9 @@ impl ServiceSharedAccessSignature {
     /// Generate SAS query parameters.
     ///
     /// `provider` must be the provider selected for this operation. Callers with
-    /// a [`Context`] resolve it with `context.crypto_provider()?`.
+    /// a [`Context`] resolve it with `context.crypto_provider()?`. Supply the
+    /// matching `snapshot` or `versionid` request query parameter separately
+    /// when using a snapshot or version SAS.
     pub fn token(&self, provider: &dyn CryptoProvider) -> Result<Vec<(String, String)>> {
         let decoded_key = hash::base64_decode(&self.key)?;
         self.token_with_decoded_key(provider, &decoded_key)
@@ -771,7 +910,7 @@ struct OperationTimes {
     expiry: Timestamp,
 }
 
-/// Grants expiration-aware Azure Blob Storage Service SAS credentials.
+/// Grants expiration-aware Azure Storage Service SAS credentials.
 ///
 /// The source credential must be [`Credential::SharedKey`] for exactly the
 /// account bound in [`ServiceSasConfig`], with a Base64-encoded 512-bit Azure
@@ -932,7 +1071,7 @@ impl GrantCredential for ServiceSasGranter {
             ));
         }
 
-        let grant = self.grant.validate()?;
+        self.grant.validate()?;
         let times = self.operation_times(config.start, expires_in)?;
         if !credential.is_valid_at(times.now) {
             return Err(Error::credential_invalid(
@@ -940,15 +1079,19 @@ impl GrantCredential for ServiceSasGranter {
             ));
         }
 
-        let mut signer = ServiceSharedAccessSignature::new(
+        let mut signer = ServiceSharedAccessSignature::for_target(
             config.account,
             String::new(),
-            grant.resource,
-            grant.permissions,
-            times.expiry,
+            self.grant.target.clone(),
+            self.grant.permissions.clone(),
+            Some(times.expiry),
         )
         .with_protocol(config.protocol.as_str())
-        .with_version(config.version.as_str());
+        .with_version(config.version.as_str())
+        .with_response_overrides(self.grant.response_overrides.clone());
+        if let Some(identifier) = &self.grant.identifier {
+            signer = signer.with_identifier(identifier);
+        }
         if let Some(start) = times.start {
             signer = signer.with_start(start);
         }
@@ -956,9 +1099,7 @@ impl GrantCredential for ServiceSasGranter {
             signer = signer.with_ip(ip);
         }
 
-        let pairs = signer
-            .token_with_decoded_key(provider, &decoded_key)
-            .expect("service SAS token must build");
+        let pairs = signer.token_with_decoded_key(provider, &decoded_key)?;
         let token = encode_query_pairs(&pairs);
         let after_generation = self.now_after_generation();
         if times.expiry <= after_generation {
@@ -1014,6 +1155,7 @@ pub(crate) fn ceil_to_wire_second(timestamp: Timestamp) -> Result<Timestamp> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sas_response_overrides::{TEST_RESPONSE_OVERRIDE_QUERY, test_response_overrides};
     use crate::{RequestSigner, StaticCredentialProvider};
     use reqsign_core::{ErrorKind, Granter, SignRequest, Signer};
     use std::str::FromStr;
@@ -1116,9 +1258,8 @@ mod tests {
             | ServiceSasContainerPermissions::OWNERSHIP
             | ServiceSasContainerPermissions::PERMISSIONS
             | ServiceSasContainerPermissions::SET_IMMUTABILITY_POLICY;
-        let container = ServiceSasGrant::for_container("container", container_permissions)
-            .validate()
-            .expect("container grant must be valid");
+        let container = ServiceSasGrant::for_container("container", container_permissions);
+        container.validate().expect("container grant must be valid");
         assert_eq!(container.permissions, "racwdxyltfmeopi");
         assert!(container_permissions.contains(ServiceSasContainerPermissions::LIST));
         assert!(container_permissions.contains(ServiceSasContainerPermissions::OWNERSHIP));
@@ -1137,9 +1278,8 @@ mod tests {
             | ServiceSasBlobPermissions::OWNERSHIP
             | ServiceSasBlobPermissions::PERMISSIONS
             | ServiceSasBlobPermissions::SET_IMMUTABILITY_POLICY;
-        let blob = ServiceSasGrant::for_blob("container", "blob", blob_permissions)
-            .validate()
-            .expect("blob grant must be valid");
+        let blob = ServiceSasGrant::for_blob("container", "blob", blob_permissions);
+        blob.validate().expect("blob grant must be valid");
         assert_eq!(blob.permissions, "racwdxytmeopi");
         assert!(blob_permissions.contains(ServiceSasBlobPermissions::TAGS));
         assert!(blob_permissions.contains(ServiceSasBlobPermissions::OWNERSHIP));
@@ -1317,6 +1457,159 @@ mod tests {
             ),
             token
         );
+    }
+
+    #[test]
+    fn signs_policy_owned_expiry_and_permissions_without_inventing_either() {
+        let signer = ServiceSharedAccessSignature::for_target(
+            "account".into(),
+            "a2V5".into(),
+            ServiceSasResource::Container {
+                container: "container".into(),
+            },
+            String::new(),
+            None,
+        )
+        .with_response_overrides(test_response_overrides());
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        assert_eq!(
+            signer.token(&provider).unwrap_err().kind(),
+            ErrorKind::RequestInvalid
+        );
+
+        let signer = signer.with_identifier("watch+policy/%");
+        assert_eq!(
+            signer.string_to_sign(),
+            concat!(
+                "\n\n\n/blob/account/container\nwatch+policy/%\n\n\n2020-12-06\nc\n\n\n",
+                "public, max-age=60\nattachment; filename=\"a+b.txt\"\ngzip\nen-US\ntext/plain; charset=utf-8",
+            ),
+        );
+        assert_eq!(
+            encode_query_pairs(&signer.token(&provider).unwrap()),
+            format!(
+                "sv=2020-12-06&sr=c&si=watch%2Bpolicy/%25&{TEST_RESPONSE_OVERRIDE_QUERY}&sig=kV3AFk3S3jacqX5X%2BOUWC2vSz%2BK/b4OzLIWRXPBnP8g%3D"
+            ),
+        );
+    }
+
+    #[test]
+    fn signs_the_initial_file_service_version_without_ip_or_protocol_fields() {
+        let signer = ServiceSharedAccessSignature::for_target(
+            "account".into(),
+            "a2V5".into(),
+            ServiceSasTarget::File {
+                share: "share".into(),
+                path: "a b.txt".into(),
+            },
+            "r".into(),
+            Some(timestamp("2022-03-01T08:17:34Z")),
+        )
+        .with_version("2015-02-21")
+        .with_response_overrides(test_response_overrides());
+        let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
+        assert_eq!(
+            signer.string_to_sign(),
+            concat!(
+                "r\n\n2022-03-01T08:17:34Z\n/file/account/share/a b.txt\n\n2015-02-21\n",
+                "public, max-age=60\nattachment; filename=\"a+b.txt\"\ngzip\nen-US\ntext/plain; charset=utf-8",
+            ),
+        );
+        assert_eq!(
+            encode_query_pairs(&signer.token(&provider).unwrap()),
+            format!(
+                "sv=2015-02-21&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=f&{TEST_RESPONSE_OVERRIDE_QUERY}&sig=SusgPhpt82QsC3Y%2BW9n1bEobHcl%2B9UZz/dk5ipRgYKM%3D"
+            ),
+        );
+        assert!(signer.with_protocol("https").token(&provider).is_err());
+    }
+
+    #[tokio::test]
+    async fn grants_service_specific_sas_vectors() {
+        let now = timestamp("2030-01-01T00:00:00Z");
+        let selector = "2019-12-15T00:05:33.1234567Z";
+        let blob_read = ServiceSasBlobPermissions::READ;
+        let file = ServiceSasFilePermissions::READ
+            | ServiceSasFilePermissions::CREATE
+            | ServiceSasFilePermissions::WRITE
+            | ServiceSasFilePermissions::DELETE
+            | ServiceSasFilePermissions::LIST;
+        let queue = ServiceSasQueuePermissions::READ
+            | ServiceSasQueuePermissions::ADD
+            | ServiceSasQueuePermissions::UPDATE
+            | ServiceSasQueuePermissions::PROCESS;
+        let file_suffix = format!(
+            "&sr=f&si=watch%2Bpolicy/%25&spr=https&{TEST_RESPONSE_OVERRIDE_QUERY}&sig=Dal68G8cuXq9XasEIE7duUC8p3pfN%2BKbTFWLGPUwaPc%3D"
+        );
+        // Python HMAC-SHA256 over the Microsoft REST strings for each service.
+        for (grant, version, suffix) in [
+            (
+                ServiceSasGrant::for_blob_snapshot("container", "path/blob", selector, blob_read),
+                "2018-11-09",
+                "&sp=r&sr=bs&spr=https&sig=i4RBo99HcwSrjp9psMVo3PSFUceOGwY3ZRQpSBqz5vU%3D",
+            ),
+            (
+                ServiceSasGrant::for_blob_version(
+                    "container",
+                    "path/blob",
+                    selector,
+                    blob_read | ServiceSasBlobPermissions::DELETE_VERSION,
+                ),
+                "2019-12-12",
+                "&sp=rx&sr=bv&spr=https&sig=j6ynhyKuubettPiH4kMWoT4JqEfKnkwY/rt7ilnr30E%3D",
+            ),
+            (
+                ServiceSasGrant::for_directory(
+                    "container",
+                    "nested/dir",
+                    ServiceSasContainerPermissions::LIST | ServiceSasContainerPermissions::READ,
+                ),
+                "2020-02-10",
+                "&sp=rl&sr=d&sdd=2&spr=https&sig=yAjYRLDFORIGtyaDT9/GKN3fBQUz%2BCxq635gadmjmwY%3D",
+            ),
+            (
+                ServiceSasGrant::for_file_share("share", file),
+                "2015-04-05",
+                "&sp=rcwdl&sr=s&spr=https&sig=co114dFgUyQYBTdnIuLEXcyQO/S4tLupCbWHmgrYD1o%3D",
+            ),
+            (
+                ServiceSasGrant::for_file(
+                    "share",
+                    "nested/a b.txt",
+                    ServiceSasFilePermissions::default(),
+                )
+                .with_identifier("watch+policy/%")
+                .with_response_overrides(test_response_overrides()),
+                "2020-12-06",
+                &file_suffix,
+            ),
+            (
+                ServiceSasGrant::for_queue("jobs", queue),
+                "2020-12-06",
+                "&sp=raup&spr=https&sig=RDSWTr9U3ujGA0DneJUTxU6wOoV3%2BcCIfiCC1foqsBY%3D",
+            ),
+        ] {
+            let version = ServiceSasVersion::new(version).unwrap();
+            let config = ServiceSasConfig::new("account").with_version(version.clone());
+            let granter = Granter::new(
+                crate::test_context(),
+                StaticCredentialProvider::new_shared_key(
+                    "account",
+                    &hash::base64_encode(VALID_ACCOUNT_KEY.as_bytes()),
+                ),
+                ServiceSasGranter::new(config, grant).with_time(now),
+            );
+            let granted = granter.grant(Some(Duration::from_secs(300))).await.unwrap();
+            let (token, expires_at) = output_parts(&granted);
+            assert_eq!(expires_at, timestamp("2030-01-01T00:05:00Z"));
+            assert_eq!(
+                token,
+                format!(
+                    "sv={}&se=2030-01-01T00%3A05%3A00Z{suffix}",
+                    version.as_str()
+                )
+            );
+        }
     }
 
     #[tokio::test]

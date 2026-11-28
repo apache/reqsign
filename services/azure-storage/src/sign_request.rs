@@ -17,7 +17,8 @@
 
 use crate::Credential;
 use crate::constants::*;
-use crate::service_sas::{ServiceSasResource, validate_account};
+use crate::sas_response_overrides::{SasResponseOverrides, sas_query_value};
+use crate::service_sas::{ServiceSasMode, ServiceSasResource, ServiceSasTarget, validate_account};
 use crate::user_delegation::{
     DEFAULT_USER_DELEGATION_KEY_API_VERSION, DEFAULT_USER_DELEGATION_SAS_VERSION,
     MAX_USER_DELEGATION_KEY_LIFETIME, UserDelegationKeyCache, ceil_to_wire_second,
@@ -117,6 +118,8 @@ pub struct RequestSigner {
     account_name: Option<String>,
     addressing_style: AddressingStyle,
     shared_key_mode: SharedKeyMode,
+    service_sas_mode: ServiceSasMode,
+    service_sas_identifier: Option<String>,
     service_sas_permissions: Option<String>,
     service_sas_start: Option<Timestamp>,
     service_sas_ip: Option<String>,
@@ -160,6 +163,8 @@ impl RequestSigner {
             account_name: None,
             addressing_style: AddressingStyle::default(),
             shared_key_mode: SharedKeyMode::default(),
+            service_sas_mode: ServiceSasMode::default(),
+            service_sas_identifier: None,
             service_sas_permissions: None,
             service_sas_start: None,
             service_sas_ip: None,
@@ -213,9 +218,30 @@ impl RequestSigner {
         }
     }
 
+    /// Select the resource interpretation for Shared Key Service SAS presigning.
+    ///
+    /// The default is Blob Storage. Select a different mode explicitly for
+    /// directory, Azure Files, or Queue Storage requests.
+    pub fn with_service_sas_mode(mut self, mode: ServiceSasMode) -> Self {
+        self.service_sas_mode = mode;
+        self
+    }
+
+    /// Associate the Service SAS with an existing stored access policy (`si`).
+    ///
+    /// A request can also carry `si` in its query. When both are present they
+    /// must match. The policy must leave expiry unspecified because presigning
+    /// signs an explicit expiry from `expires_in`. Set a start time or
+    /// permissions on only one side.
+    pub fn with_service_sas_identifier(mut self, identifier: impl Into<String>) -> Self {
+        self.service_sas_identifier = Some(identifier.into());
+        self
+    }
+
     /// Configure Service SAS presign permissions for Shared Key query signing.
     ///
-    /// This setting is required when `expires_in` is provided and credential is `SharedKey`.
+    /// The permissions must use Azure's order for the selected resource. Omit
+    /// them or pass an empty string when the stored access policy supplies them.
     pub fn with_service_sas_permissions(mut self, permissions: &str) -> Self {
         self.service_sas_permissions = Some(permissions.to_string());
         self
@@ -498,6 +524,14 @@ impl SignRequest for RequestSigner {
                                 DEFAULT_USER_DELEGATION_KEY_API_VERSION,
                             ),
                         };
+                        validate_presign_query(&sctx.query)?;
+                        if sas_query_value(&sctx.query, "si")?.is_some() {
+                            return Err(Error::request_invalid(
+                                "Azure User Delegation SAS does not support stored access policies",
+                            ));
+                        }
+                        let overrides = SasResponseOverrides::from_query(&sctx.query)?;
+                        overrides.validate()?;
                         let provider = context.crypto_provider()?;
                         let cache_key = UserDelegationPresignCacheKey {
                             account: account.to_owned(),
@@ -576,7 +610,8 @@ impl SignRequest for RequestSigner {
                                 cfg.permissions.to_string(),
                                 expiry,
                                 sas_version,
-                            );
+                            )
+                            .with_response_overrides(overrides);
                         if let Some(start) = start {
                             signer = signer.with_start(start);
                         }
@@ -593,7 +628,11 @@ impl SignRequest for RequestSigner {
                             )
                             .with_source(e)
                         })?;
-                        final_uri = Some(append_query_pairs(&original_uri, &signer_token)?);
+                        final_uri = Some(append_query_pairs(
+                            &original_uri,
+                            &sctx.query,
+                            signer_token,
+                        )?);
                     }
                     SigningMethod::Header => {
                         sctx.headers.insert(
@@ -623,13 +662,26 @@ impl SignRequest for RequestSigner {
                 let path = self.addressing_style.split_path(&sctx.path, account_name)?;
                 match method {
                     SigningMethod::Query(d) => {
-                        let Some(permissions) = &self.service_sas_permissions else {
-                            return Err(reqsign_core::Error::request_invalid(
-                                "Service SAS permissions are required for presign",
+                        validate_presign_query(&sctx.query)?;
+                        let query_identifier = sas_query_value(&sctx.query, "si")?;
+                        let configured_identifier = self.service_sas_identifier.as_deref();
+                        if query_identifier
+                            .zip(configured_identifier)
+                            .is_some_and(|(query, configured)| query != configured)
+                        {
+                            return Err(Error::request_invalid(
+                                "request stored access policy identifier does not match the configured identifier",
                             ));
-                        };
-
-                        let resource = ServiceSasResource::from_uri_resource_path(path.resource)?;
+                        }
+                        let identifier = configured_identifier.or(query_identifier);
+                        let permissions =
+                            self.service_sas_permissions.as_deref().unwrap_or_default();
+                        let target = ServiceSasTarget::from_request(
+                            self.service_sas_mode,
+                            path.resource,
+                            &sctx.query,
+                        )?;
+                        let overrides = SasResponseOverrides::from_query(&sctx.query)?;
                         let provider = context.crypto_provider()?;
                         let expiry = crate::service_sas::expiry_at_wire_second(signing_time, d)?;
                         if expiry <= signing_time {
@@ -644,13 +696,18 @@ impl SignRequest for RequestSigner {
                             ));
                         }
 
-                        let mut signer = crate::service_sas::ServiceSharedAccessSignature::new(
-                            account_name.clone(),
-                            account_key.clone(),
-                            resource,
-                            permissions.to_string(),
-                            expiry,
-                        );
+                        let mut signer =
+                            crate::service_sas::ServiceSharedAccessSignature::for_target(
+                                account_name.clone(),
+                                account_key.clone(),
+                                target,
+                                permissions.to_string(),
+                                Some(expiry),
+                            )
+                            .with_response_overrides(overrides);
+                        if let Some(identifier) = identifier {
+                            signer = signer.with_identifier(identifier);
+                        }
                         if let Some(start) = start {
                             signer = signer.with_start(start);
                         }
@@ -663,13 +720,6 @@ impl SignRequest for RequestSigner {
                         if let Some(version) = &self.service_sas_version {
                             signer = signer.with_version(version);
                         }
-                        // The working query view is decoded once. Azure requires the
-                        // URL-decoded response override value in the string-to-sign.
-                        if let Some((_, value)) = sctx.query.iter().find(|(name, _)| name == "rscd")
-                        {
-                            signer = signer.with_content_disposition(value.clone());
-                        }
-
                         let signer_token = signer.token(provider).map_err(|e| {
                             reqsign_core::Error::new(
                                 e.kind(),
@@ -677,7 +727,11 @@ impl SignRequest for RequestSigner {
                             )
                             .with_source(e)
                         })?;
-                        final_uri = Some(append_query_pairs(&original_uri, &signer_token)?);
+                        final_uri = Some(append_query_pairs(
+                            &original_uri,
+                            &sctx.query,
+                            signer_token,
+                        )?);
                     }
                     SigningMethod::Header => {
                         let provider = context.crypto_provider()?;
@@ -741,8 +795,39 @@ fn bearer_authorization(token: &str) -> Result<HeaderValue> {
     Ok(value)
 }
 
-fn append_query_pairs(uri: &Uri, pairs: &[(String, String)]) -> Result<Uri> {
-    let fragment = crate::service_sas::encode_query_pairs(pairs);
+fn validate_presign_query(query: &[(String, String)]) -> Result<()> {
+    // Existing SAS authorization fields would conflict with the new signature.
+    // Response overrides, si and snapshot/version selectors are handled separately.
+    const SAS_AUTH_FIELDS: &[&str] = &[
+        "sv", "st", "se", "sp", "sr", "sip", "spr", "sig", "sdd", "ses", "ss", "srt", "skoid",
+        "sktid", "skt", "ske", "sks", "skv", "saoid", "suoid", "scid", "sduoid", "skdutid", "srh",
+        "srq", "srch", "srcq",
+    ];
+    if query.iter().any(|(name, _)| {
+        SAS_AUTH_FIELDS
+            .iter()
+            .any(|field| name.eq_ignore_ascii_case(field))
+    }) {
+        return Err(Error::request_invalid(
+            "cannot generate an Azure SAS on a URI with existing SAS authorization parameters",
+        ));
+    }
+    Ok(())
+}
+
+fn append_query_pairs(
+    uri: &Uri,
+    original_query: &[(String, String)],
+    mut pairs: Vec<(String, String)>,
+) -> Result<Uri> {
+    // Values already read for signing are present in the original URI. Keep
+    // those bytes instead of re-encoding the value or adding another copy.
+    pairs.retain(|(name, _)| {
+        !original_query
+            .iter()
+            .any(|(original, _)| original.eq_ignore_ascii_case(name))
+    });
+    let fragment = crate::service_sas::encode_query_pairs(&pairs);
     append_query_fragment(uri, &fragment)
 }
 
@@ -2074,6 +2159,288 @@ mod tests {
                 .body(Bytes::from(body))
                 .unwrap())
         }
+    }
+
+    #[tokio::test]
+    async fn service_sas_presign_uses_service_scope_and_preserves_the_wire_uri() {
+        use crate::sas_response_overrides::TEST_RESPONSE_OVERRIDE_QUERY;
+
+        let context = crate::test_context();
+        let credential = Credential::with_shared_key("account", "a2V5");
+        let file = format!(
+            "https://storage.example/share/nested/a%20b.txt?si=watch%2bpolicy/%25&{TEST_RESPONSE_OVERRIDE_QUERY}&x=%2f&x=+"
+        );
+        // Python HMAC-SHA256 over the REST string-to-sign for each presigned URI.
+        for (uri, addressing, mode, version, permissions, suffix) in [
+            (
+                "https://storage.example/container/path%2fto/blob?x=%2f&x=+&snapshot=2019-12-15T00%3a05%3a33.1234567Z",
+                AddressingStyle::HostStyle,
+                ServiceSasMode::Blob,
+                "2018-11-09",
+                "r",
+                "&sp=r&sr=bs&sig=GKSrQX2ajzp627%2BM/lOT12IXDrIyDM1tTDcfChVG0jU%3D",
+            ),
+            (
+                "http://127.0.0.1:10000/%61ccount/container/item?versionid=2019-12-15T00%3a05%3a33.1234567Z",
+                AddressingStyle::PathStyle,
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "&sp=r&sr=bv&sig=rOHDWq/yN07X%2BNLmXsatRHntXmMxTtvLxTJ50tWKz48%3D",
+            ),
+            (
+                "https://storage.example/container/nested%2fdir/?x=%2f",
+                AddressingStyle::HostStyle,
+                ServiceSasMode::BlobDirectory,
+                "2020-02-10",
+                "r",
+                "&sp=r&sr=d&sdd=2&sig=z4l6/2MGZ5EghmRktgUZO7p5RgLqHD5ojZJDdOI6uXQ%3D",
+            ),
+            (
+                "https://storage.example/container/?restype=container",
+                AddressingStyle::HostStyle,
+                ServiceSasMode::BlobDirectory,
+                "2020-02-10",
+                "r",
+                "&sp=r&sr=d&sdd=0&sig=ZHOF1WcVNM8pDpKhSI8FxKlbn%2B7Gu1bBhGJbbpZrKmc%3D",
+            ),
+            (
+                file.as_str(),
+                AddressingStyle::HostStyle,
+                ServiceSasMode::File,
+                "2020-12-06",
+                "",
+                "&sr=f&sig=sP4aH/ozXZyxz1EPT2eydbUQfa6QwvzOrC8MPvE7UWs%3D",
+            ),
+            (
+                "https://storage.example/share/?restype=share",
+                AddressingStyle::HostStyle,
+                ServiceSasMode::File,
+                "2020-12-06",
+                "r",
+                "&sp=r&sr=s&sig=BiP0cdOhjvMcahoU9of1DyH9/cGWG5sQ/rGcYsepTMs%3D",
+            ),
+            (
+                "http://127.0.0.1:10001/account/jobs/messages/message-id?visibilitytimeout=30&x=%2f&x=+",
+                AddressingStyle::PathStyle,
+                ServiceSasMode::Queue,
+                "2020-12-06",
+                "raup",
+                "&sp=raup&sig=6cN15L8wm7VMHND5dt0kLjh0QsbCX767bfyTbyObRp0%3D",
+            ),
+        ] {
+            let mut signer = shared_key_request_signer()
+                .with_account_name("account")
+                .with_addressing_style(addressing)
+                .with_service_sas_mode(mode)
+                .with_service_sas_version(version);
+            signer = if permissions.is_empty() {
+                signer.with_service_sas_identifier("watch+policy/%")
+            } else {
+                signer.with_service_sas_permissions(permissions)
+            };
+            let mut parts = Request::get(uri).body(()).unwrap().into_parts().0;
+            signer
+                .sign_request(
+                    &context,
+                    &mut parts,
+                    Some(&credential),
+                    Some(Duration::from_secs(300)),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                parts.uri.to_string(),
+                format!("{uri}&sv={version}&se=2022-03-01T08%3A17%3A34Z{suffix}")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_service_sas_options_fail_before_changing_the_request() {
+        let context = crate::test_context();
+        let credential = Credential::with_shared_key("account", "a2V5");
+        let too_deep = format!("/container/{}dir", "dir/".repeat(61));
+        for (path, mode, version, permissions, expected_error) in [
+            (
+                "/container/a?snapshot=old",
+                ServiceSasMode::Blob,
+                "2018-03-28",
+                "r",
+                "snapshots and versions require version 2018-11-09",
+            ),
+            (
+                "/container/a?versionid=v",
+                ServiceSasMode::Blob,
+                "2018-03-28",
+                "r",
+                "snapshots and versions require version 2018-11-09",
+            ),
+            (
+                "/container/a?snapshot=old&versionid=v",
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "cannot combine snapshot and version selectors",
+            ),
+            (
+                "/container/a?versionid=",
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "invalid Azure blob snapshot or version selector",
+            ),
+            (
+                "/container/a",
+                ServiceSasMode::BlobDirectory,
+                "2019-12-12",
+                "r",
+                "directory scope requires version 2020-02-10",
+            ),
+            (
+                too_deep.as_str(),
+                ServiceSasMode::BlobDirectory,
+                "2020-12-06",
+                "r",
+                "invalid Azure Service SAS directory path",
+            ),
+            (
+                "/share/a//b",
+                ServiceSasMode::File,
+                "2020-12-06",
+                "r",
+                "invalid Azure Service SAS file path",
+            ),
+            (
+                "/share/a",
+                ServiceSasMode::File,
+                "2020-12-06",
+                "l",
+                "invalid permission or permission order",
+            ),
+            (
+                "/jobs/messages",
+                ServiceSasMode::Queue,
+                "2020-12-06",
+                "pa",
+                "invalid permission or permission order",
+            ),
+            (
+                "/jobs/not-messages",
+                ServiceSasMode::Queue,
+                "2020-12-06",
+                "r",
+                "requires a queue or queue message path",
+            ),
+            (
+                "/jobs?rsct=text/plain",
+                ServiceSasMode::Queue,
+                "2020-12-06",
+                "r",
+                "does not support response header overrides",
+            ),
+            (
+                "/container/a?rscc=one&%72scc=two",
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "duplicate signed Azure SAS query parameter",
+            ),
+            (
+                "/container/a?rsct=text/plain%0Aextra-line",
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "must not contain control characters",
+            ),
+            (
+                "/container/a?sig=stale",
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "existing SAS authorization parameters",
+            ),
+            (
+                "/container/a?si=wrong",
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "does not match the configured identifier",
+            ),
+        ] {
+            let signer = shared_key_request_signer()
+                .with_service_sas_mode(mode)
+                .with_service_sas_version(version)
+                .with_service_sas_identifier("policy")
+                .with_service_sas_permissions(permissions);
+            let uri = format!("https://storage.example{path}");
+            let mut parts = Request::get(&uri)
+                .header("x-test", "original")
+                .body(())
+                .unwrap()
+                .into_parts()
+                .0;
+            let headers = parts.headers.clone();
+            let error = signer
+                .sign_request(
+                    &context,
+                    &mut parts,
+                    Some(&credential),
+                    Some(Duration::from_secs(300)),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind(), reqsign_core::ErrorKind::RequestInvalid);
+            assert!(format!("{error:?}").contains(expected_error), "{error:?}");
+            assert_eq!(parts.uri.to_string(), uri);
+            assert_eq!(parts.headers, headers);
+        }
+    }
+
+    #[tokio::test]
+    async fn user_delegation_presign_signs_response_overrides_at_the_selected_account_root() {
+        use crate::sas_response_overrides::TEST_RESPONSE_OVERRIDE_QUERY;
+
+        let transport = MockUserDelegationHttpSend::new(
+            &["https://storage.example/%61ccount/?restype=service&comp=userdelegationkey"],
+            "2026-10-06",
+        );
+        let context = crate::test_context().with_http_send(transport.clone());
+        let signer = Signer::new(
+            context,
+            crate::StaticCredentialProvider::new_bearer_token("token"),
+            shared_key_request_signer()
+                .with_account_name("account")
+                .with_addressing_style(AddressingStyle::PathStyle)
+                .with_user_delegation_presign(SasResourceKind::Blob, "r"),
+        );
+        let uri = format!(
+            "https://storage.example/%61ccount/container/blob+file.txt?x=%2f&{TEST_RESPONSE_OVERRIDE_QUERY}&x=+"
+        );
+        let mut parts = Request::get(&uri).body(()).unwrap().into_parts().0;
+        signer
+            .sign(&mut parts, Some(Duration::from_secs(300)))
+            .await
+            .unwrap();
+        assert_eq!(
+            parts.uri.to_string(),
+            format!(
+                "{uri}&sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr=b&skoid=oid&sktid=tid&skt=2022-03-01T08%3A12%3A34Z&ske=2022-03-01T08%3A17%3A34Z&sks=b&skv=2026-10-06&sig=79e1Lzdff%2B8hUWF6206HvDwgZNVEctxYeCpNAV1UyY8%3D"
+            ),
+        );
+        let uri = format!("{uri}&si=stored-policy");
+        let mut parts = Request::get(&uri).body(()).unwrap().into_parts().0;
+        let error = signer
+            .sign(&mut parts, Some(Duration::from_secs(300)))
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("does not support stored access policies")
+        );
+        assert_eq!(parts.uri.to_string(), uri);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

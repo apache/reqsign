@@ -199,7 +199,7 @@ Use `AddressingStyle::PathStyle` when the first URI path segment contains
 the account, as in `http://127.0.0.1:10000/devstoreaccount1/container/blob`.
 Shared Key uses the account from the credential and includes the entire encoded
 path in the signature. Explicitly configured accounts must match the credential.
-Blob Service SAS and User Delegation SAS generation remove the matched account
+Service SAS and User Delegation SAS generation remove the matched account
 segment when deriving the SAS resource name. Both preserve the wire URI path.
 
 ```rust
@@ -270,7 +270,9 @@ See the [Account SAS example](src/account_sas.rs) for `Granter` setup.
 ## Grant a Service SAS
 
 Use a Shared Key source to mint an independently usable, expiration-aware SAS
-for one typed container or blob grant:
+for one typed resource. Blob Storage supports containers, blobs, snapshots,
+versions, and hierarchical-namespace directories. Azure Files supports shares
+and files. Queue Storage SAS grants apply to a queue and its messages.
 
 ```rust
 use reqsign_crypto_rustcrypto::RustCryptoProvider;
@@ -305,7 +307,37 @@ let credential = Granter::new(
 
 The configured account must match the Shared Key source. The returned
 `Credential::SasToken` can be supplied directly to the existing Azure
-`RequestSigner`.
+`RequestSigner`. For snapshot or version grants, place the corresponding
+`snapshot` or `versionid` selector on the request URI. Use the exact value that
+Azure returned, including any fractional seconds.
+
+Use `ServiceSasGrant::with_identifier` to associate a stored access policy. The
+policy must omit expiration when granting with `expires_in` because the SAS
+signs an explicit `se`. If the policy supplies permissions, pass an empty
+permission set. To let the policy supply expiry, generate raw query pairs via
+`ServiceSharedAccessSignature::for_target` with an absent expiry. Azure requires
+each of start, expiry, and permissions to appear on only one side.
+
+Use `SasResponseOverrides` with `ServiceSasGrant::with_response_overrides` for
+Blob Storage or Azure Files. `UserDelegationSasGrant::with_response_overrides`
+supports the same options for its Blob Storage resources.
+
+## Presign a Storage request
+
+Set `expires_in` to generate a Service SAS from a Shared Key. The default
+`ServiceSasMode::Blob` interprets the URI as a container or blob and signs an
+existing `snapshot` or `versionid` selector. Select `ServiceSasMode::BlobDirectory`,
+`ServiceSasMode::File`, or `ServiceSasMode::Queue` with
+`RequestSigner::with_service_sas_mode` to sign other resources. Use the
+resource's permission order with `with_service_sas_permissions`.
+
+Place response overrides on the URI for Blob Storage or Azure Files, including
+Blob Storage User Delegation SAS. Presigning signs the decoded values and
+keeps their original wire encoding. Service SAS presigning can also sign an
+existing `si` or add one configured with `with_service_sas_identifier`.
+Presign URIs with a fresh set of SAS authorization parameters.
+
+[Service SAS REST reference](https://learn.microsoft.com/en-us/rest/api/storageservices/create-service-sas) · [User Delegation SAS REST reference](https://learn.microsoft.com/en-us/rest/api/storageservices/create-user-delegation-sas)
 
 ## Examples
 

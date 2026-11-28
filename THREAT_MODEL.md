@@ -474,6 +474,11 @@ Examples:
   retains the requested key API version in its identity. The key response's
   valid `SignedVersion` can equal or be newer than the request version and is
   signed as `skv`. The configured SAS version (`sv`) selects the signature format.
+- Azure Service SAS signs the selected storage resource and the version-specific
+  fields, including a stored access policy identifier when supplied. Expiring
+  grants use the signed expiry. Raw SAS generation can leave expiry to the
+  stored policy. Blob Storage and Azure Files response overrides are signed
+  from the decoded values and retain their original encoding on presigned URIs.
 - Header-based signing must apply authorization data to headers without
   unintentionally moving authority to query parameters.
 - Query-based signing and presigning must apply expiry and signed query
