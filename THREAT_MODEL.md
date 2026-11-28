@@ -537,6 +537,11 @@ Reqsign can read local credential files and execute local credential-helper
 commands when the caller configures adapters and providers that require those
 features.
 
+The Azure Storage environment provider extracts Shared Key or SAS credentials
+from `AZURE_STORAGE_CONNECTION_STRING` after checking dedicated credential
+variables. The caller supplies the endpoint. The provider ignores endpoint
+settings and keeps connection string contents out of its diagnostics.
+
 Azure Storage providers use argument vectors for `az account get-access-token`
 and `azd auth token`. The context's `AZURE_TENANT_ID` supplies the Azure CLI
 tenant when the caller leaves it unset. The Azure Developer CLI provider is
