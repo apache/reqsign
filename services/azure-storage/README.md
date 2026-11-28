@@ -100,6 +100,23 @@ export AZURE_CLIENT_ID=client-id
 export AZURE_CLIENT_SECRET=client-secret
 ```
 
+### Connection string
+
+`EnvCredentialProvider` tries `AZURE_STORAGE_CONNECTION_STRING` after the
+existing Shared Key, SAS, and bearer token variables. Provide either
+`AccountName` and `AccountKey` or a `SharedAccessSignature`. A Shared Key
+pair comes entirely from the connection string when this fallback is selected.
+
+```bash
+export AZURE_STORAGE_CONNECTION_STRING='AccountName=mystorageaccount;AccountKey=<base64-encoded-account-key>'
+```
+
+Reqsign ignores endpoint fields such as `BlobEndpoint`,
+`DefaultEndpointsProtocol`, and `EndpointSuffix`. Your application supplies
+the endpoint in the request URI. A direct call to `EnvCredentialProvider`
+returns `ConfigInvalid` for malformed strings or `UseDevelopmentStorage=true`.
+The default credential chain continues to the next provider on an error.
+
 ### Client certificate
 
 On native targets, set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and
