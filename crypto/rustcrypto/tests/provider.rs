@@ -234,6 +234,34 @@ fn rsa_signs_both_pkcs8_and_pkcs1_pem() {
 
 #[cfg(feature = "rsa")]
 #[test]
+fn rsa_pss_signatures_with_fresh_salt_verify_for_both_pem_formats() {
+    use rsa::pss::{Signature, VerifyingKey};
+    use rsa::signature::Verifier;
+
+    let provider = provider();
+    let public_key = PrivateKey::from_pkcs8_pem(std::str::from_utf8(RSA_PKCS8).unwrap())
+        .expect("test key must parse")
+        .to_public_key();
+    let verifier = VerifyingKey::<RsaSha256>::new_with_salt_len(public_key, 32);
+    let message = b"PS256 interoperability test";
+    let sign = |pem| {
+        provider
+            .rsa_pss_sha256_sign(pem, message)
+            .expect("RSA-PSS signing must succeed")
+    };
+    let signatures = [sign(RSA_PKCS8), sign(RSA_PKCS1)];
+    assert_ne!(signatures[0], signatures[1]);
+    for bytes in signatures {
+        assert_eq!(bytes.len(), 256);
+        let signature = Signature::try_from(bytes.as_slice()).expect("signature must parse");
+        verifier
+            .verify(message, &signature)
+            .expect("PS256 signature must verify");
+    }
+}
+
+#[cfg(feature = "rsa")]
+#[test]
 fn rsa_signature_is_deterministic_for_both_pem_formats() {
     const EXPECTED: &str = "6be8116e69987bb4dd2048520ab3ac580e5f4f0c872d6f7b6223e24dc58d86037b524e8fadd8b608ef97f0f44ab6011c05275cefb2fb43deb0bb9569634aac7ff0ae3e019979a15c455a4c1bc6d0b722bb5d17bfb9e4d9886e32678afa048e3af03f5c37c33d9dfab9229edf5ae9140c2440ca18a92a8d47e3994e04e4171b375c556c3c14632642510c1b7f2e464b1bf765a1e795490391653d384f25ed7da415709197da7b81f3ba5d8c23b9594d7e420ee1142cefe70664bd63fa3c2f84ac97884d278a4c4ef5ee3e0427601a76fbe20880231a00771f997151ab77d2d8e3260e397ba4c1f08f697ae80cd8fab9ff4eeaa20d4424e4c9cc793a35041e526d";
 
@@ -250,20 +278,22 @@ fn rsa_signature_is_deterministic_for_both_pem_formats() {
 #[test]
 fn rsa_rejects_malformed_and_non_rsa_keys() {
     let provider = provider();
-    assert_eq!(
-        provider
-            .rsa_pkcs1v15_sha256_sign(b"not a private key", b"message")
-            .expect_err("malformed key must fail")
-            .kind(),
-        ErrorKind::CredentialInvalid
-    );
-    assert_eq!(
-        provider
-            .rsa_pkcs1v15_sha256_sign(EC_PKCS8, b"message")
-            .expect_err("non-RSA key must fail")
-            .kind(),
-        ErrorKind::CredentialInvalid
-    );
+    for key in [&b"not a private key"[..], EC_PKCS8] {
+        assert_eq!(
+            provider
+                .rsa_pkcs1v15_sha256_sign(key, b"message")
+                .expect_err("invalid key must fail RS256 signing")
+                .kind(),
+            ErrorKind::CredentialInvalid
+        );
+        assert_eq!(
+            provider
+                .rsa_pss_sha256_sign(key, b"message")
+                .expect_err("invalid key must fail PS256 signing")
+                .kind(),
+            ErrorKind::CredentialInvalid
+        );
+    }
 }
 
 #[cfg(feature = "p256")]
@@ -385,11 +415,15 @@ fn fill_random_produces_distinct_nonzero_bytes() {
 #[cfg(not(feature = "rsa"))]
 #[test]
 fn rsa_reports_the_missing_feature() {
-    let err = provider()
-        .rsa_pkcs1v15_sha256_sign(b"pem", b"message")
-        .expect_err("RSA must be unavailable without its feature");
-    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
-    assert!(err.to_string().contains("`rsa`"), "{err}");
+    let provider = provider();
+    for result in [
+        provider.rsa_pkcs1v15_sha256_sign(b"pem", b"message"),
+        provider.rsa_pss_sha256_sign(b"pem", b"message"),
+    ] {
+        let err = result.expect_err("RSA must be unavailable without its feature");
+        assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+        assert!(err.to_string().contains("`rsa`"), "{err}");
+    }
 }
 
 #[cfg(not(feature = "p256"))]
@@ -467,6 +501,14 @@ fn minimal_provider_reports_unsupported_operations_as_config_invalid() {
             .expect_err("RSA must be unsupported")
             .kind(),
         ErrorKind::ConfigInvalid
+    );
+    let err = provider
+        .rsa_pss_sha256_sign(b"pem", b"message")
+        .expect_err("RSA-PSS must be unsupported");
+    assert_eq!(err.kind(), ErrorKind::ConfigInvalid);
+    assert!(
+        err.to_string().contains("does not support RSA-PSS"),
+        "{err}"
     );
     assert_eq!(
         provider

@@ -107,6 +107,12 @@ On native targets, set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and
 PKCS#8 or PKCS#1 RSA private key and its certificate. Put the leaf certificate
 first, followed by any issuer certificates in chain order.
 
+The default assertion uses PS256 and the leaf certificate's SHA-256 thumbprint
+(`x5t#S256`). Use an RSA key of at least 2048 bits and a `CryptoProvider` that
+supports `rsa_pss_sha256_sign`. For legacy integrations,
+`ClientCertificateCredentialProvider::with_legacy_rs256()` explicitly selects
+RS256 with the SHA-1 thumbprint (`x5t`).
+
 For Microsoft Entra Subject Name/Issuer authentication, set
 `AZURE_CLIENT_SEND_CERTIFICATE_CHAIN=true` to include the public certificates
 in the assertion's `x5c` header. The header is omitted by default.

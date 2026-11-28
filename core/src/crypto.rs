@@ -105,6 +105,20 @@ pub trait CryptoProvider: Debug + Send + Sync + 'static {
         ))
     }
 
+    /// RSASSA-PSS with SHA-256 over `message`, using MGF1 with SHA-256
+    /// and a fresh 32-byte salt as required by PS256.
+    ///
+    /// `private_key_pem` is an unencrypted PKCS#8 (`PRIVATE KEY`) or PKCS#1
+    /// (`RSA PRIVATE KEY`) PEM document with a modulus of at least 2048 bits.
+    /// The result is the big-endian signature with the modulus width. A
+    /// provider without this operation returns [`crate::ErrorKind::ConfigInvalid`].
+    fn rsa_pss_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
+        let _ = (private_key_pem, message);
+        Err(Error::config_invalid(
+            "configured CryptoProvider does not support RSA-PSS SHA-256 signing",
+        ))
+    }
+
     /// ECDSA over NIST P-256 with SHA-256 over `message`.
     ///
     /// `private_key_scalar` is the big-endian 32-byte private scalar in the
@@ -176,6 +190,10 @@ impl<T: CryptoProvider + ?Sized> CryptoProvider for Arc<T> {
 
     fn rsa_pkcs1v15_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
         (**self).rsa_pkcs1v15_sha256_sign(private_key_pem, message)
+    }
+
+    fn rsa_pss_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
+        (**self).rsa_pss_sha256_sign(private_key_pem, message)
     }
 
     fn ecdsa_p256_sha256_sign(

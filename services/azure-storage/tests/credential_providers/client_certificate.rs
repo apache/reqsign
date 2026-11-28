@@ -28,7 +28,7 @@ fn is_test_enabled() -> bool {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
-async fn test_client_certificate_provider() -> anyhow::Result<()> {
+async fn ps256_client_certificate_assertion_reads_probe() -> anyhow::Result<()> {
     if !is_test_enabled() {
         eprintln!("Skipping test: REQSIGN_AZURE_STORAGE_TEST_CLIENT_CERTIFICATE is not enabled");
         return Ok(());

@@ -8,7 +8,7 @@ available. Three optional features add the remaining operations:
 
 | Feature | Default | Enables |
 | --- | --- | --- |
-| `rsa` | yes | RSA PKCS#1 v1.5 signing on native targets |
+| `rsa` | yes | RSA PKCS#1 v1.5 and RSA-PSS signing on native targets |
 | `p256` | yes | ECDSA P-256 signing on every target |
 | `aes-gcm` | yes | AES-128/256-GCM and secure random generation on native targets |
 

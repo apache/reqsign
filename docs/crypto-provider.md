@@ -62,6 +62,12 @@ pub trait CryptoProvider: Debug + Send + Sync + 'static {
         message: &[u8],
     ) -> Result<Vec<u8>>;
 
+    fn rsa_pss_sha256_sign(
+        &self,
+        private_key_pem: &[u8],
+        message: &[u8],
+    ) -> Result<Vec<u8>>;
+
     fn ecdsa_p256_sha256_sign(
         &self,
         private_key_scalar: &[u8; 32],
@@ -80,11 +86,10 @@ pub trait CryptoProvider: Debug + Send + Sync + 'static {
 }
 ```
 
-`sha1`, `sha256`, `hmac_sha1`, and `hmac_sha256` are mandatory. `md5`,
-`hmac_sha512`, and the remaining four operations have default implementations
-that return `ConfigInvalid`, so a minimal provider remains useful for services
-that only need the mandatory hashing and MAC operations. Adding an optional
-method does not require changes to existing providers.
+`sha1`, `sha256`, `hmac_sha1`, and `hmac_sha256` are mandatory. All other
+operations have default implementations that explicitly report unsupported
+operations as `ConfigInvalid`. Adding an optional method does not require
+changes to existing providers.
 
 `CryptoProvider` has a blanket implementation for `Arc<T>` where
 `T: CryptoProvider + ?Sized`. A caller that already holds an
@@ -105,6 +110,10 @@ operation, including optional methods, to the wrapped provider.
 - `rsa_pkcs1v15_sha256_sign` implements RSASSA-PKCS1-v1_5 with SHA-256. The key
   is an unencrypted PKCS#8 (`PRIVATE KEY`) or PKCS#1 (`RSA PRIVATE KEY`) PEM
   document. The result is the big-endian signature with the modulus width.
+- `rsa_pss_sha256_sign` implements PS256 using RSASSA-PSS with SHA-256,
+  MGF1 with SHA-256, and a fresh 32-byte salt. It accepts the same PEM
+  encodings with a modulus of at least 2048 bits and returns a big-endian
+  signature with the modulus width. [RFC 7518 §3.5](https://www.rfc-editor.org/rfc/rfc7518#section-3.5)
 - `ecdsa_p256_sha256_sign` implements ECDSA over NIST P-256 with SHA-256. The
   scalar is the big-endian 32-byte private key in `1 <= d < n`. The result is an
   ASN.1 DER signature.
@@ -232,12 +241,14 @@ Callers with a `Context` pass `ctx.crypto_provider()?`. These helpers never
 perform a context or global lookup themselves, so they cannot silently bypass
 the caller's selected provider.
 
-`reqsign-core` has no JWT module or `jwt` feature and does not depend on
-`serde` or `serde_json` for JWT formatting. Azure client-certificate
-authentication and Google service-account exchanges format their compact RS256
-JWS in their own crates using `serde_json`, URL-safe unpadded base64, and
-`CryptoProvider::rsa_pkcs1v15_sha256_sign`. The header and claims remain
-service-local and are not part of the core API.
+`reqsign-core` has no JWT module or `jwt` feature. Azure and Google own their
+compact JWS headers and claims and use the resolved provider to sign. Azure
+client-certificate authentication defaults to PS256 with `x5t#S256` and uses
+`CryptoProvider::rsa_pss_sha256_sign`. A custom provider must implement this
+operation to use the default assertion. `with_legacy_rs256()` selects the
+RS256 assertion with `x5t` explicitly and uses
+`CryptoProvider::rsa_pkcs1v15_sha256_sign`, which Google service-account
+exchanges also use.
 
 Standalone public crypto entry points follow the same rule. For example,
 Azure Storage's `ServiceSharedAccessSignature::token` takes
@@ -260,7 +271,7 @@ operations are selected by three additive features, all enabled by default:
 | --- | --- | --- | --- | --- |
 | — | — | MD5, SHA-1, SHA-256, HMAC-SHA-1/256/512 | yes | yes |
 | `p256` | yes | ECDSA P-256 with SHA-256 | yes | yes |
-| `rsa` | yes | RSA PKCS#1 v1.5 with SHA-256 | yes | unsupported (`ConfigInvalid`) |
+| `rsa` | yes | RSA PKCS#1 v1.5 and RSA-PSS with SHA-256 | yes | unsupported (`ConfigInvalid`) |
 | `aes-gcm` | yes | AES-128/256-GCM | yes | unsupported (`ConfigInvalid`) |
 | `aes-gcm` | yes | Secure random bytes (via `getrandom`) | yes | unsupported (`ConfigInvalid`) |
 
@@ -273,8 +284,8 @@ Consumers that only need hashes and MACs set `default-features = false`. The
 facade does this and weakly enables only the algorithms selected by its service
 features.
 
-The native RSA path accepts PKCS#8 and PKCS#1 PEM and uses OS randomness for
-blinding. The WASM subset matches the services reqsign supports on
+Native RSA signing accepts PKCS#8 and PKCS#1 PEM and uses OS randomness for
+blinding and PSS salts. The WASM subset matches the services reqsign supports on
 `wasm32-unknown-unknown` and avoids requiring a JavaScript random source.
 
 ### `reqsign-crypto-boring`
@@ -285,7 +296,7 @@ planning never require CMake or a C/C++ toolchain.
 
 `BoringCryptoProvider::new()`, `Default`, and
 `BoringCryptoProvider::install_default()` are the public entry points. The
-provider implements all ten operations through safe, stateless BoringSSL calls
+provider implements the operations through safe, stateless BoringSSL calls
 and contains no `unsafe` code. The optional `fips` feature forwards to
 `boring/fips`.
 
@@ -425,19 +436,19 @@ All former hash and MAC call sites propagate `?` and resolve the provider from
 the `Context` supplied to the signing, granting, or credential-loading entry
 point. Public signing, granting, and credential entry points already return
 `Result`, so this changes error propagation but not their success contracts.
-On-wire formats are unchanged: AWS SigV4/SigV4a, Azure Storage SAS/shared
-key/client certificate, Google signed URLs and CAB tokens, Oracle, Aliyun OSS,
-Huawei Cloud OBS, Tencent COS, and Volcengine TOS keep their existing
-canonicalization and encodings.
+AWS SigV4/SigV4a, Azure Storage SAS and Shared Key, Google signed URLs and CAB
+tokens, Oracle, Aliyun OSS, Huawei Cloud OBS, Tencent COS, and Volcengine TOS
+keep their existing canonicalization and encodings.
 
 Notable service-specific details:
 
 - AWS SigV4a derives the P-256 scalar in pure Rust, keeps the scalar in
   `Zeroizing<[u8; 32]>`, and performs the fixed-width range check against
   `n - 2` before incrementing. The signature is still DER-encoded hex.
-- Azure client certificate authentication keeps the certificate/key PEM
-  splitting and RS256 client-assertion formatting in `azure-storage`; the
-  thumbprint uses the provider's SHA-1.
+- `azure-storage` loads the certificate and key PEM and builds the client
+  assertion. It uses the provider's SHA-256 for `x5t#S256` and SHA-1 for `x5t`
+  when the caller selects legacy RS256. In both cases it hashes the first
+  certificate's DER bytes.
 - Azure `ServiceSharedAccessSignature::token` takes the resolved provider.
 - Google service-account signing encodes the provider's RSA signature as hex;
   its private JWT helper is shared by the signer and service-account token
@@ -487,8 +498,8 @@ default `aes-gcm` feature.
   removed. Use `reqsign-google` directly with
   `credential-access-boundary-client-side` and an AES-GCM-capable provider.
 - The public `reqsign_core::jwt` module and `jwt` feature are removed. Azure
-  and Google own their private RS256 JWS formatting and sign through the
-  resolved provider.
+  and Google own their private JWS formatting and sign through the resolved
+  provider.
 - Hash and MAC helpers take `&dyn CryptoProvider` and return `Result`.
 - `reqsign-core` no longer provides crypto implementations, so a context with no
   provider binding and no global provider fails with `ConfigInvalid` at the
@@ -509,8 +520,8 @@ The repository verifies this contract with:
   using its bound provider, and a signer whose explicitly selected provider is
   used.
 - RustCrypto provider tests for published MD5, SHA-1, SHA-256, and
-  HMAC-SHA-1/256/512 vectors, block-size key boundaries, both RSA PEM formats,
-  AES-128/256-GCM with and without AAD, ECDSA verification, invalid scalars,
+  HMAC-SHA-1/256/512 vectors, block-size key boundaries, PKCS#1 and PKCS#8 PEM
+  signing with both RSA algorithms, AES-128/256-GCM with and without AAD, ECDSA verification, invalid scalars,
   invalid AES key lengths, random output, and unsupported-operation defaults.
 - A backend feature matrix runs the provider tests with default features, no
   default features, each algorithm feature alone, and all three together. The
@@ -529,8 +540,8 @@ The repository verifies this contract with:
   `aes-gcm` operations. A runnable rustdoc example drives `Granter::grant(None)`
   against a mock STS with only the `aes-gcm` backend feature.
 - BoringSSL parity tests against `reqsign-crypto-rustcrypto` for byte-identical
-  hashes, HMACs, RSA signatures, and AES-GCM output; cross-backend ECDSA
-  verification; MD5 availability outside FIPS and `ConfigInvalid` in FIPS mode;
+  hashes, HMACs, RS256 signatures, and AES-GCM output, plus PS256 and ECDSA
+  verification, MD5 availability outside FIPS and `ConfigInvalid` in FIPS mode;
   error-kind checks; and an AWS SigV4 end-to-end signing test with an explicit
   BoringSSL context.
 - A per-root `cargo tree --all-features --target all --edges normal` check

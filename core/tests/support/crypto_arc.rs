@@ -78,6 +78,12 @@ impl CryptoProvider for MarkerProvider {
         Ok(vec![7; 32])
     }
 
+    fn rsa_pss_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
+        assert_eq!(private_key_pem, KEY, "RSA-PSS key must be forwarded");
+        assert_eq!(message, INPUT, "RSA-PSS message must be forwarded");
+        Ok(vec![10; 32])
+    }
+
     fn ecdsa_p256_sha256_sign(
         &self,
         private_key_scalar: &[u8; 32],
@@ -153,6 +159,12 @@ pub fn assert_all_forwarded<P: CryptoProvider + ?Sized>(provider: &P) {
             .rsa_pkcs1v15_sha256_sign(KEY, INPUT)
             .expect("RSA signing must succeed"),
         vec![7; 32]
+    );
+    assert_eq!(
+        provider
+            .rsa_pss_sha256_sign(KEY, INPUT)
+            .expect("RSA-PSS signing must succeed"),
+        vec![10; 32]
     );
     assert_eq!(
         provider

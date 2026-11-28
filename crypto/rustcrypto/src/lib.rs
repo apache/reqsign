@@ -19,10 +19,9 @@
 //!
 //! MD5, SHA-1, SHA-256, HMAC-SHA-1, HMAC-SHA-256, and HMAC-SHA-512 are always
 //! available. The optional `rsa`, `p256`, and `aes-gcm` features, all enabled
-//! by default, add RSA PKCS#1 v1.5 signing, ECDSA P-256 signing, and AES-GCM
-//! encryption plus secure random generation. An operation whose feature is
-//! disabled returns [`reqsign_core::ErrorKind::ConfigInvalid`] and names the
-//! missing feature. RSA, AES-GCM, and secure random generation are native-only;
+//! by default, add RSA PKCS#1 v1.5 and RSA-PSS signing, ECDSA P-256 signing,
+//! and AES-GCM encryption plus secure random generation. Disabled operations
+//! return [`reqsign_core::ErrorKind::ConfigInvalid`] and name the missing feature. RSA, AES-GCM, and secure random generation are native-only;
 //! on `wasm32` they return `ConfigInvalid` even when their feature is enabled.
 
 use std::sync::Arc;
@@ -50,6 +49,21 @@ fn unsupported_on_wasm32(operation: &str) -> Error {
     Error::config_invalid(format!(
         "{operation} is not supported on wasm32-unknown-unknown by reqsign-crypto-rustcrypto"
     ))
+}
+
+#[cfg(all(feature = "rsa", not(target_arch = "wasm32")))]
+fn rsa_private_key(private_key_pem: &[u8]) -> Result<rsa::PrivateKey> {
+    use rsa::pkcs1::DecodeRsaPrivateKey;
+    use rsa::pkcs8::DecodePrivateKey;
+
+    let pem = std::str::from_utf8(private_key_pem).map_err(|e| {
+        Error::credential_invalid("RSA private key PEM is not valid UTF-8").with_source(e)
+    })?;
+    rsa::PrivateKey::from_pkcs8_pem(pem)
+        .or_else(|_| rsa::PrivateKey::from_pkcs1_pem(pem))
+        .map_err(|e| {
+            Error::credential_invalid("failed to parse RSA private key PEM").with_source(e)
+        })
 }
 
 /// RustCrypto implementation of [`CryptoProvider`].
@@ -107,22 +121,11 @@ impl CryptoProvider for RustCryptoProvider {
 
     #[cfg(all(feature = "rsa", not(target_arch = "wasm32")))]
     fn rsa_pkcs1v15_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
-        use rsa::PrivateKey;
-        use rsa::pkcs1::DecodeRsaPrivateKey;
         use rsa::pkcs1v15::SigningKey as RsaSigningKey;
-        use rsa::pkcs8::DecodePrivateKey;
         use rsa::sha2::Sha256 as RsaSha256;
         use rsa::signature::{SignatureEncoding, Signer};
 
-        let pem = std::str::from_utf8(private_key_pem).map_err(|e| {
-            Error::credential_invalid("RSA private key PEM is not valid UTF-8").with_source(e)
-        })?;
-        let private_key = PrivateKey::from_pkcs8_pem(pem)
-            .or_else(|_| PrivateKey::from_pkcs1_pem(pem))
-            .map_err(|e| {
-                Error::credential_invalid("failed to parse RSA private key PEM").with_source(e)
-            })?;
-
+        let private_key = rsa_private_key(private_key_pem)?;
         let signing_key = RsaSigningKey::<RsaSha256>::new(private_key);
         let signature = signing_key.try_sign(message).map_err(|e| {
             Error::unexpected("RSA PKCS#1 v1.5 SHA-256 signing failed").with_source(e)
@@ -138,6 +141,36 @@ impl CryptoProvider for RustCryptoProvider {
     #[cfg(not(feature = "rsa"))]
     fn rsa_pkcs1v15_sha256_sign(&self, _: &[u8], _: &[u8]) -> Result<Vec<u8>> {
         Err(missing_feature("RSA PKCS#1 v1.5 SHA-256 signing", "rsa"))
+    }
+
+    #[cfg(all(feature = "rsa", not(target_arch = "wasm32")))]
+    fn rsa_pss_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
+        use rsa::pss::SigningKey as PssSigningKey;
+        use rsa::sha2::Sha256 as RsaSha256;
+        use rsa::signature::{SignatureEncoding, Signer};
+        use rsa::traits::PublicKeyParts;
+
+        let private_key = rsa_private_key(private_key_pem)?;
+        if private_key.n().bit_width() < 2048 {
+            return Err(Error::credential_invalid(
+                "RSA-PSS requires an RSA key of at least 2048 bits",
+            ));
+        }
+        let signing_key = PssSigningKey::<RsaSha256>::new_with_salt_len(private_key, 32);
+        let signature = signing_key
+            .try_sign(message)
+            .map_err(|e| Error::unexpected("RSA-PSS SHA-256 signing failed").with_source(e))?;
+        Ok(signature.to_bytes().to_vec())
+    }
+
+    #[cfg(all(feature = "rsa", target_arch = "wasm32"))]
+    fn rsa_pss_sha256_sign(&self, _: &[u8], _: &[u8]) -> Result<Vec<u8>> {
+        Err(unsupported_on_wasm32("RSA-PSS SHA-256 signing"))
+    }
+
+    #[cfg(not(feature = "rsa"))]
+    fn rsa_pss_sha256_sign(&self, _: &[u8], _: &[u8]) -> Result<Vec<u8>> {
+        Err(missing_feature("RSA-PSS SHA-256 signing", "rsa"))
     }
 
     #[cfg(feature = "p256")]

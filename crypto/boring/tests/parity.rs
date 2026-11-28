@@ -15,6 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use boring::hash::MessageDigest;
+use boring::pkey::PKey;
+use boring::rsa::Padding;
+use boring::sign::{RsaPssSaltlen, Verifier as RsaVerifier};
 use hmac::{Hmac, KeyInit, Mac};
 use p256::ecdsa::signature::Verifier;
 use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
@@ -120,9 +124,7 @@ fn md5_and_hmac_sha512_match_published_vectors() {
             "900150983cd24fb0d6963f7d28e17f72"
         );
         assert_eq!(
-            provider
-                .md5(b"abc")
-                .expect("BoringSSL MD5 must succeed"),
+            provider.md5(b"abc").expect("BoringSSL MD5 must succeed"),
             rustcrypto()
                 .md5(b"abc")
                 .expect("RustCrypto MD5 must succeed")
@@ -155,6 +157,29 @@ fn rsa_signatures_match_rustcrypto_for_both_pem_formats() {
                     .expect("RustCrypto RSA signing must succeed"),
                 "RSA PKCS#1 v1.5 signatures must be byte-identical"
             );
+        }
+    }
+}
+
+#[test]
+fn rsa_pss_signatures_from_both_backends_verify_as_ps256() {
+    let boring = boring();
+    let rustcrypto = rustcrypto();
+    let providers: [&dyn CryptoProvider; 2] = [&boring, &rustcrypto];
+    let key = PKey::private_key_from_pem(RSA_PKCS8).expect("test key must parse");
+    let message = b"PS256 interoperability test";
+    for provider in providers {
+        for pem in [RSA_PKCS8, RSA_PKCS1] {
+            let signature = provider
+                .rsa_pss_sha256_sign(pem, message)
+                .expect("RSA-PSS signing must succeed");
+            let mut verifier = RsaVerifier::new(MessageDigest::sha256(), &key).unwrap();
+            verifier.set_rsa_padding(Padding::PKCS1_PSS).unwrap();
+            verifier.set_rsa_mgf1_md(MessageDigest::sha256()).unwrap();
+            verifier
+                .set_rsa_pss_saltlen(RsaPssSaltlen::custom(32))
+                .unwrap();
+            assert!(verifier.verify_oneshot(&signature, message).unwrap());
         }
     }
 }
@@ -216,20 +241,22 @@ fn ecdsa_signature_verifies_across_backends() {
 fn invalid_key_material_maps_to_credential_invalid() {
     let provider = boring();
 
-    assert_eq!(
-        provider
-            .rsa_pkcs1v15_sha256_sign(b"not a private key", b"message")
-            .expect_err("malformed key must fail")
-            .kind(),
-        ErrorKind::CredentialInvalid
-    );
-    assert_eq!(
-        provider
-            .rsa_pkcs1v15_sha256_sign(EC_PKCS8, b"message")
-            .expect_err("non-RSA key must fail")
-            .kind(),
-        ErrorKind::CredentialInvalid
-    );
+    for key in [&b"not a private key"[..], EC_PKCS8] {
+        assert_eq!(
+            provider
+                .rsa_pkcs1v15_sha256_sign(key, b"message")
+                .expect_err("invalid key must fail RS256 signing")
+                .kind(),
+            ErrorKind::CredentialInvalid
+        );
+        assert_eq!(
+            provider
+                .rsa_pss_sha256_sign(key, b"message")
+                .expect_err("invalid key must fail PS256 signing")
+                .kind(),
+            ErrorKind::CredentialInvalid
+        );
+    }
 
     let order = hex::decode("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551")
         .expect("P-256 order must decode");
