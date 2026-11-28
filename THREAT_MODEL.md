@@ -460,12 +460,20 @@ Examples:
   credential scope, and signing key for each signed chunk and trailer. The
   signing state keeps the derived key private. The caller owns the upload
   framing, checksum calculation, and retries.
-- Azure Storage Shared Key header signing orders `x-ms-*` names using Azure's
-  character weights, normalizes their values, and groups decoded query
-  parameters in the signature input. It preserves the wire URI and caller
-  headers other than `x-ms-date` and `Authorization`.
-  A signed header value that cannot be read as text returns `RequestInvalid`
-  before any request changes are committed.
+- Azure Storage Shared Key header signing for Blob, Queue, and File orders
+  `x-ms-*` names using Azure's character weights, normalizes their values, and
+  groups decoded query parameters in the signature input. Table mode signs
+  the generated `x-ms-date` in the date field and includes only the `comp`
+  selector from the query. Both formats use the complete encoded request path
+  and preserve the wire URI and caller headers other than `x-ms-date` and
+  `Authorization`. A signed header value that cannot be read as text returns
+  `RequestInvalid` before any request changes are committed.
+- Azure Blob SAS generation for path-style endpoints removes the first segment
+  only after it matches the selected account. The User Delegation key request
+  and key cache use the same account root on the caller's endpoint. The cache
+  retains the requested key API version in its identity. The key response's
+  valid `SignedVersion` can equal or be newer than the request version and is
+  signed as `skv`. The configured SAS version (`sv`) selects the signature format.
 - Header-based signing must apply authorization data to headers without
   unintentionally moving authority to query parameters.
 - Query-based signing and presigning must apply expiry and signed query

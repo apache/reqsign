@@ -197,7 +197,7 @@ pub use user_delegation_sas::{
 };
 
 mod sign_request;
-pub use sign_request::RequestSigner;
+pub use sign_request::{AddressingStyle, RequestSigner, SasResourceKind, SharedKeyMode};
 
 mod provide_credential;
 pub use provide_credential::*;

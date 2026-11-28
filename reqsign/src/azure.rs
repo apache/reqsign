@@ -70,6 +70,25 @@
 //! # }
 //! ```
 //!
+//! ## Storage endpoints and Table Shared Key
+//!
+//! Use [`AddressingStyle::PathStyle`] for URIs such as
+//! `http://127.0.0.1:10000/devstoreaccount1/container/blob`. For User Delegation
+//! SAS on path-style endpoints and custom domains, set the account explicitly.
+//!
+//! ```no_run
+//! use reqsign::azure::{AddressingStyle, RequestSigner, SasResourceKind, SharedKeyMode};
+//!
+//! let blob_signer = RequestSigner::new()
+//!     .with_account_name("devstoreaccount1")
+//!     .with_addressing_style(AddressingStyle::PathStyle)
+//!     .with_user_delegation_presign(SasResourceKind::Blob, "r");
+//! let table_signer = RequestSigner::new().with_shared_key_mode(SharedKeyMode::Table);
+//! ```
+//!
+//! Pass the request signer to [`Signer::with_request_signer`] or [`Signer::new`].
+//! Table Shared Key uses the five-line format when signing with no expiry.
+//!
 //! ## Blob Storage Service SAS
 //!
 //! Shared Key credentials can grant a typed Blob Storage Service SAS.

@@ -18,6 +18,7 @@
 use crate::Credential;
 use crate::constants::AZURE_QUERY_ENCODE_SET;
 use crate::user_delegation::{
+    DEFAULT_USER_DELEGATION_KEY_API_VERSION, DEFAULT_USER_DELEGATION_SAS_VERSION,
     MAX_USER_DELEGATION_KEY_LIFETIME, UserDelegationKey, UserDelegationKeyCache,
     UserDelegationKeyRequest, UserDelegationSasResource, UserDelegationSharedAccessSignature,
     ceil_to_wire_second, floor_to_wire_second, get_user_delegation_key, user_delegation_key_covers,
@@ -35,7 +36,6 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const USER_DELEGATION_SERVICE_VERSION: &str = "2020-12-06";
 const MAX_USER_DELEGATION_LIFETIME: Duration = MAX_USER_DELEGATION_KEY_LIFETIME;
 const BEARER_TOKEN_OPERATION_HEADROOM: Duration = Duration::from_secs(20);
 
@@ -422,7 +422,7 @@ struct UserDelegationKeyCacheKey {
     account: String,
     endpoint: String,
     source_authority: String,
-    service_version: &'static str,
+    key_api_version: &'static str,
 }
 
 #[derive(PartialEq, Eq, Hash)]
@@ -430,13 +430,6 @@ struct UserDelegationKeyRequestKey {
     cache_key: UserDelegationKeyCacheKey,
     start: Timestamp,
     expiry: Timestamp,
-}
-
-#[derive(Clone)]
-struct ParsedEndpoint {
-    scheme: String,
-    authority: String,
-    identity: String,
 }
 
 struct OperationTimes {
@@ -452,8 +445,8 @@ struct OperationTimes {
 /// The source credential must be [`Credential::BearerToken`]. Clones and
 /// values produced with [`UserDelegationSasGranter::with_grant`] share a
 /// source-aware user delegation key cache. The cache is partitioned by account,
-/// endpoint, source bearer authority, and service version, and is bounded to a
-/// fixed number of live entries. Concurrent cache misses with the same cache
+/// endpoint, source bearer authority, and requested key API version, and is
+/// bounded to a fixed number of live entries. Concurrent cache misses with the same cache
 /// identity and requested key start and expiry share an in-flight key request.
 /// Failed or cancelled key requests allow a waiting caller to retry. Each grant
 /// checks that the shared key covers its own SAS interval after waiting.
@@ -573,7 +566,7 @@ impl UserDelegationSasGranter {
         Timestamp::now()
     }
 
-    fn parse_endpoint(&self) -> Result<ParsedEndpoint> {
+    fn parse_endpoint(&self) -> Result<String> {
         validate_account(&self.account)?;
         let uri: http::Uri = self.endpoint.parse().map_err(|e| {
             Error::config_invalid("invalid Azure Blob service endpoint").with_source(e)
@@ -600,11 +593,7 @@ impl UserDelegationSasGranter {
             ));
         }
 
-        Ok(ParsedEndpoint {
-            scheme: "https".to_string(),
-            authority: authority.as_str().to_string(),
-            identity: format!("https://{}", authority.as_str()),
-        })
+        Ok(format!("https://{authority}"))
     }
 
     fn operation_times(&self, expires_in: Option<Duration>) -> Result<OperationTimes> {
@@ -672,14 +661,14 @@ impl UserDelegationSasGranter {
     fn cache_key(
         &self,
         provider: &dyn CryptoProvider,
-        endpoint: &ParsedEndpoint,
+        account_endpoint: String,
         bearer_token: &str,
     ) -> Result<UserDelegationKeyCacheKey> {
         Ok(UserDelegationKeyCacheKey {
             account: self.account.clone(),
-            endpoint: endpoint.identity.clone(),
+            endpoint: account_endpoint,
             source_authority: hex_sha256(provider, bearer_token.as_bytes())?,
-            service_version: USER_DELEGATION_SERVICE_VERSION,
+            key_api_version: DEFAULT_USER_DELEGATION_KEY_API_VERSION,
         })
     }
 
@@ -689,13 +678,7 @@ impl UserDelegationSasGranter {
         current_time: Timestamp,
     ) -> bool {
         let effective_start = times.start.unwrap_or(times.now);
-        user_delegation_key_covers(
-            key,
-            effective_start,
-            times.expiry,
-            current_time,
-            USER_DELEGATION_SERVICE_VERSION,
-        )
+        user_delegation_key_covers(key, effective_start, times.expiry, current_time)
     }
 
     fn cached_key(
@@ -753,7 +736,7 @@ impl GrantCredential for UserDelegationSasGranter {
             ));
         }
 
-        let cache_key = self.cache_key(provider, &endpoint, token)?;
+        let cache_key = self.cache_key(provider, endpoint, token)?;
         let cached = self.cached_key(&cache_key, &times);
         let (key, fetched) = if let Some(key) = cached {
             (key, false)
@@ -778,12 +761,11 @@ impl GrantCredential for UserDelegationSasGranter {
                     get_user_delegation_key(
                         ctx,
                         UserDelegationKeyRequest {
-                            scheme: &endpoint.scheme,
-                            authority: &endpoint.authority,
+                            account_endpoint: &cache_key.endpoint,
                             bearer_token: token,
                             start: times.key_start,
                             expiry: times.key_expiry,
-                            service_version: USER_DELEGATION_SERVICE_VERSION,
+                            api_version: cache_key.key_api_version,
                             now: times.now,
                         },
                     )
@@ -815,6 +797,7 @@ impl GrantCredential for UserDelegationSasGranter {
             grant.resource,
             grant.permissions,
             times.expiry,
+            DEFAULT_USER_DELEGATION_SAS_VERSION,
         )
         .with_protocol(self.protocol.as_str());
         if let Some(start) = times.start {
@@ -1001,7 +984,7 @@ mod tests {
              <SignedStart>{}</SignedStart>\
              <SignedExpiry>{}</SignedExpiry>\
              <SignedService>b</SignedService>\
-             <SignedVersion>{USER_DELEGATION_SERVICE_VERSION}</SignedVersion>\
+             <SignedVersion>{DEFAULT_USER_DELEGATION_KEY_API_VERSION}</SignedVersion>\
              <Value>{value}</Value>\
              </UserDelegationKey>",
             signed_start.format_rfc3339_zulu(),
@@ -1858,7 +1841,7 @@ mod tests {
             signed_start: Timestamp::now(),
             signed_expiry: Timestamp::now() + Duration::from_secs(60),
             signed_service: "b".to_string(),
-            signed_version: USER_DELEGATION_SERVICE_VERSION.to_string(),
+            signed_version: DEFAULT_USER_DELEGATION_KEY_API_VERSION.to_string(),
             value: "sensitive-signing-key".to_string(),
         };
 

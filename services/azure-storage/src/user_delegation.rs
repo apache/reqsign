@@ -29,7 +29,9 @@ use std::time::Duration;
 
 use crate::service_sas::ServiceSasResource;
 
-const DEFAULT_USER_DELEGATION_SAS_VERSION: &str = "2020-12-06";
+pub(crate) const DEFAULT_USER_DELEGATION_KEY_API_VERSION: &str = "2020-12-06";
+pub(crate) const DEFAULT_USER_DELEGATION_SAS_VERSION: &str = "2020-12-06";
+const FIRST_USER_DELEGATION_VERSION: &str = "2018-11-09";
 pub(crate) const USER_DELEGATION_KEY_CACHE_CAPACITY: usize = 64;
 pub(crate) const MAX_USER_DELEGATION_KEY_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
@@ -120,18 +122,39 @@ pub(crate) fn ceil_to_wire_second(timestamp: Timestamp) -> Result<Timestamp> {
     Timestamp::from_second(second)
 }
 
+fn is_user_delegation_version(version: &str) -> bool {
+    let bytes = version.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && version >= FIRST_USER_DELEGATION_VERSION
+        && format!("{version}T00:00:00Z").parse::<Timestamp>().is_ok()
+}
+
+pub(crate) fn validate_user_delegation_sas_version(version: &str) -> Result<()> {
+    if !is_user_delegation_version(version) {
+        return Err(reqsign_core::Error::request_invalid(
+            "invalid Azure user delegation SAS version",
+        ));
+    }
+    if version >= "2025-07-05" {
+        return Err(reqsign_core::Error::request_invalid(
+            "user delegation SAS versions 2025-07-05 and later are not supported",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn user_delegation_key_covers(
     key: &UserDelegationKey,
     effective_start: Timestamp,
     expiry: Timestamp,
     current_time: Timestamp,
-    service_version: &str,
 ) -> bool {
     !key.signed_oid.is_empty()
         && !key.signed_tid.is_empty()
         && !key.value.is_empty()
         && key.signed_service == "b"
-        && key.signed_version == service_version
         && key.signed_start <= effective_start
         && key.signed_expiry >= expiry
         && key.signed_expiry > current_time
@@ -152,7 +175,7 @@ mod cache_tests {
             signed_start: timestamp("2030-01-01T00:00:00Z"),
             signed_expiry: expiry,
             signed_service: "b".to_string(),
-            signed_version: DEFAULT_USER_DELEGATION_SAS_VERSION.to_string(),
+            signed_version: DEFAULT_USER_DELEGATION_KEY_API_VERSION.to_string(),
             value: value.to_string(),
         }
     }
@@ -202,12 +225,12 @@ mod cache_tests {
 }
 
 pub(crate) struct UserDelegationKeyRequest<'a> {
-    pub scheme: &'a str,
-    pub authority: &'a str,
+    /// Encoded account root without a trailing slash.
+    pub account_endpoint: &'a str,
     pub bearer_token: &'a str,
     pub start: Timestamp,
     pub expiry: Timestamp,
-    pub service_version: &'a str,
+    pub api_version: &'a str,
     pub now: Timestamp,
 }
 
@@ -216,8 +239,8 @@ pub(crate) async fn get_user_delegation_key(
     request: UserDelegationKeyRequest<'_>,
 ) -> Result<UserDelegationKey> {
     let uri: http::Uri = format!(
-        "{}://{}/?restype=service&comp=userdelegationkey",
-        request.scheme, request.authority
+        "{}/?restype=service&comp=userdelegationkey",
+        request.account_endpoint
     )
     .parse()
     .map_err(|e| {
@@ -244,7 +267,7 @@ pub(crate) async fn get_user_delegation_key(
     authorization.set_sensitive(true);
 
     let req = http::Request::post(uri)
-        .header("x-ms-version", request.service_version)
+        .header("x-ms-version", request.api_version)
         .header("x-ms-date", request.now.format_http_date())
         .header(header::CONTENT_TYPE, "application/xml")
         .header(header::AUTHORIZATION, authorization)
@@ -271,6 +294,14 @@ pub(crate) async fn get_user_delegation_key(
     let signed_expiry = parse_timestamp(&extract_tag(&xml, "SignedExpiry")?)?;
     let signed_service = extract_tag(&xml, "SignedService")?;
     let signed_version = extract_tag(&xml, "SignedVersion")?;
+    // Azurite can issue a key using its own newer REST version. Use that
+    // metadata for skv, while retaining the version requested for cache identity.
+    if !is_user_delegation_version(&signed_version) || signed_version.as_str() < request.api_version
+    {
+        return Err(reqsign_core::Error::credential_invalid(
+            "Azure user delegation key has an invalid or older signed version",
+        ));
+    }
     let value = extract_tag(&xml, "Value")?;
 
     Ok(UserDelegationKey {
@@ -369,7 +400,7 @@ pub(crate) struct UserDelegationSharedAccessSignature {
     start: Option<Timestamp>,
     ip: Option<String>,
     protocol: Option<String>,
-    version: String,
+    sas_version: String,
 }
 
 impl UserDelegationSharedAccessSignature {
@@ -379,6 +410,7 @@ impl UserDelegationSharedAccessSignature {
         resource: UserDelegationSasResource,
         permissions: String,
         expiry: Timestamp,
+        sas_version: &str,
     ) -> Self {
         Self {
             account,
@@ -389,7 +421,7 @@ impl UserDelegationSharedAccessSignature {
             start: None,
             ip: None,
             protocol: None,
-            version: DEFAULT_USER_DELEGATION_SAS_VERSION.to_string(),
+            sas_version: sas_version.to_string(),
         }
     }
 
@@ -408,20 +440,8 @@ impl UserDelegationSharedAccessSignature {
         self
     }
 
-    pub(crate) fn with_version(mut self, version: impl Into<String>) -> Self {
-        self.version = version.into();
-        self
-    }
-
     fn signature(&self, provider: &dyn CryptoProvider) -> Result<String> {
         let canonicalized_resource = self.resource.canonicalized_resource(&self.account);
-
-        if self.version.as_str() >= "2025-07-05" {
-            return Err(reqsign_core::Error::request_invalid(
-                "user delegation SAS versions 2025-07-05 and later are not supported",
-            ));
-        }
-
         let start = self
             .start
             .as_ref()
@@ -439,19 +459,19 @@ impl UserDelegationSharedAccessSignature {
             self.key.signed_version.clone(),
         ];
 
-        if self.version.as_str() >= "2020-02-10" {
+        if self.sas_version.as_str() >= "2020-02-10" {
             fields.extend([String::new(), String::new(), String::new()]);
         }
 
         fields.extend([
             self.ip.clone().unwrap_or_default(),
             self.protocol.clone().unwrap_or_default(),
-            self.version.clone(),
+            self.sas_version.clone(),
             self.resource.signed_resource().to_string(),
             String::new(), // snapshot time
         ]);
 
-        if self.version.as_str() >= "2020-12-06" {
+        if self.sas_version.as_str() >= "2020-12-06" {
             fields.push(String::new()); // encryption scope
         }
 
@@ -471,7 +491,7 @@ impl UserDelegationSharedAccessSignature {
 
     pub(crate) fn token(&self, provider: &dyn CryptoProvider) -> Result<Vec<(String, String)>> {
         let mut elements: Vec<(String, String)> = vec![
-            ("sv".to_string(), self.version.to_string()),
+            ("sv".to_string(), self.sas_version.clone()),
             ("se".to_string(), self.expiry.format_rfc3339_zulu()),
             ("sp".to_string(), self.permissions.to_string()),
             (
