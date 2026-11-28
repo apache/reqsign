@@ -40,7 +40,7 @@ use boring::hmac::Hmac;
 use boring::nid::Nid;
 use boring::pkey::{Id, PKey, Private};
 use boring::rsa::Padding;
-use boring::sign::Signer;
+use boring::sign::{RsaPssSaltlen, Signer};
 use reqsign_core::crypto::{self, CryptoProvider};
 use reqsign_core::{Error, Result};
 
@@ -174,6 +174,30 @@ impl CryptoProvider for BoringCryptoProvider {
         signer
             .sign_oneshot_to_vec(message)
             .map_err(|e| unexpected("RSA PKCS#1 v1.5 SHA-256 signing failed", e))
+    }
+
+    fn rsa_pss_sha256_sign(&self, private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>> {
+        let private_key = rsa_private_key(private_key_pem)?;
+        if private_key.bits() < 2048 {
+            return Err(Error::credential_invalid(
+                "RSA-PSS requires an RSA key of at least 2048 bits",
+            ));
+        }
+        let sha256 = MessageDigest::sha256();
+        let mut signer = Signer::new(sha256, &private_key)
+            .map_err(|e| unexpected("failed to initialize RSA-PSS signing", e))?;
+        signer
+            .set_rsa_padding(Padding::PKCS1_PSS)
+            .map_err(|e| unexpected("failed to select RSA-PSS padding", e))?;
+        signer
+            .set_rsa_mgf1_md(sha256)
+            .map_err(|e| unexpected("failed to select the RSA-PSS MGF1 digest", e))?;
+        signer
+            .set_rsa_pss_saltlen(RsaPssSaltlen::DIGEST_LENGTH)
+            .map_err(|e| unexpected("failed to select the RSA-PSS salt length", e))?;
+        signer
+            .sign_oneshot_to_vec(message)
+            .map_err(|e| unexpected("RSA-PSS SHA-256 signing failed", e))
     }
 
     fn ecdsa_p256_sha256_sign(

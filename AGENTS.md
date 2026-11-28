@@ -50,8 +50,8 @@ security boundary and its relationship to OpenDAL and other host applications.
 All signing cryptography goes through a `reqsign_core::crypto::CryptoProvider`
 resolved by `Context` (explicit binding, then the process-wide registration).
 `reqsign-core` and every `services/*` crate carry no production cryptographic
-implementation. `reqsign-core` exposes no public JWT module or feature; Azure
-and Google own their private RS256 JWS formatting. `reqsign-crypto-rustcrypto`
+implementation. `reqsign-core` exposes no public JWT module or feature. Azure
+and Google own their private JWS formatting. `reqsign-crypto-rustcrypto`
 keeps hash and HMAC operations unconditional and exposes only the additive
 `rsa`, `p256`, and `aes-gcm` features, all enabled by default. The facade has no
 algorithm features; its service features weakly select only the backend

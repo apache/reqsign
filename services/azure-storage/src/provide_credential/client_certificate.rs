@@ -51,7 +51,8 @@ fn generate_jti(now: u64) -> String {
 ///
 /// The PEM file must contain an unencrypted PKCS#8 or PKCS#1 RSA private key
 /// and its certificate. Place the leaf certificate first, followed by any
-/// issuer certificates in chain order.
+/// issuer certificates in chain order. By default, the assertion uses PS256
+/// and a SHA-256 thumbprint of the leaf certificate (`x5t#S256`).
 #[derive(Clone)]
 pub struct ClientCertificateCredentialProvider {
     tenant_id: Option<String>,
@@ -59,6 +60,7 @@ pub struct ClientCertificateCredentialProvider {
     certificate_path: Option<String>,
     certificate_password: Option<String>,
     send_certificate_chain: Option<bool>,
+    assertion_algorithm: ClientAssertionAlgorithm,
     authority_host: Option<String>,
     scope: Option<String>,
 }
@@ -91,6 +93,7 @@ impl ClientCertificateCredentialProvider {
             certificate_path: None,
             certificate_password: None,
             send_certificate_chain: None,
+            assertion_algorithm: ClientAssertionAlgorithm::Ps256,
             authority_host: None,
             scope: None,
         }
@@ -130,6 +133,16 @@ impl ClientCertificateCredentialProvider {
     /// `true` in the context environment enables the header.
     pub fn with_send_certificate_chain(mut self, send_certificate_chain: bool) -> Self {
         self.send_certificate_chain = Some(send_certificate_chain);
+        self
+    }
+
+    /// Use RS256 with the SHA-1 certificate thumbprint (`x5t`).
+    ///
+    /// Select this explicitly for legacy configurations, including crypto
+    /// providers that only implement RSA PKCS#1 v1.5 signing. By default the
+    /// provider uses PS256 and propagates any error from that operation.
+    pub fn with_legacy_rs256(mut self) -> Self {
+        self.assertion_algorithm = ClientAssertionAlgorithm::Rs256;
         self
     }
 
@@ -198,17 +211,13 @@ impl ClientCertificateCredentialProvider {
         })
     }
 
-    /// Format a JWS compact JWT using RS256 and the selected provider.
-    fn encode_rs256_jws<H, C>(
+    /// Format and sign the compact JWS with the algorithm in its header.
+    fn encode_jws(
         provider: &dyn CryptoProvider,
-        header: &H,
-        claims: &C,
+        header: &ClientAssertionHeader,
+        claims: &ClientAssertionClaims,
         private_key_pem: &[u8],
-    ) -> Result<String, reqsign_core::Error>
-    where
-        H: Serialize,
-        C: Serialize,
-    {
+    ) -> Result<String, reqsign_core::Error> {
         let encoded_header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(header).map_err(|e| {
             reqsign_core::Error::unexpected("failed to serialize JWT JSON").with_source(e)
         })?);
@@ -216,23 +225,19 @@ impl ClientCertificateCredentialProvider {
             reqsign_core::Error::unexpected("failed to serialize JWT JSON").with_source(e)
         })?);
         let signing_input = format!("{encoded_header}.{encoded_claims}");
-        let signature =
-            provider.rsa_pkcs1v15_sha256_sign(private_key_pem, signing_input.as_bytes())?;
+        let signature = match header.alg {
+            ClientAssertionAlgorithm::Ps256 => {
+                provider.rsa_pss_sha256_sign(private_key_pem, signing_input.as_bytes())?
+            }
+            ClientAssertionAlgorithm::Rs256 => {
+                provider.rsa_pkcs1v15_sha256_sign(private_key_pem, signing_input.as_bytes())?
+            }
+        };
 
         Ok(format!(
             "{signing_input}.{}",
             URL_SAFE_NO_PAD.encode(signature)
         ))
-    }
-
-    /// Calculate certificate thumbprint (x5t)
-    /// Azure AD expects SHA1 thumbprint for x5t field
-    fn calculate_thumbprint(
-        &self,
-        provider: &dyn CryptoProvider,
-        cert_der: &[u8],
-    ) -> Result<String, reqsign_core::Error> {
-        Ok(URL_SAFE_NO_PAD.encode(hash::sha1(provider, cert_der)?))
     }
 
     /// Create JWT client assertion
@@ -260,10 +265,21 @@ impl ClientCertificateCredentialProvider {
             sub: client_id.to_string(),
         };
 
+        let (x5t, x5t_s256) = match self.assertion_algorithm {
+            ClientAssertionAlgorithm::Ps256 => (
+                None,
+                Some(URL_SAFE_NO_PAD.encode(hash::sha256(provider, &certificate.leaf_der)?)),
+            ),
+            ClientAssertionAlgorithm::Rs256 => (
+                Some(URL_SAFE_NO_PAD.encode(hash::sha1(provider, &certificate.leaf_der)?)),
+                None,
+            ),
+        };
         let header = ClientAssertionHeader {
-            alg: "RS256",
+            alg: self.assertion_algorithm,
             typ: "JWT",
-            x5t: self.calculate_thumbprint(provider, &certificate.leaf_der)?,
+            x5t,
+            x5t_s256,
             x5c: send_certificate_chain.then(|| {
                 std::iter::once(&certificate.leaf_der)
                     .chain(&certificate.issuer_chain_der)
@@ -272,7 +288,7 @@ impl ClientCertificateCredentialProvider {
             }),
         };
 
-        Self::encode_rs256_jws(provider, &header, &claims, &certificate.private_key_pem)
+        Self::encode_jws(provider, &header, &claims, &certificate.private_key_pem)
     }
 
     /// Exchange client assertion for access token
@@ -336,11 +352,22 @@ struct ClientAssertionClaims {
     sub: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+enum ClientAssertionAlgorithm {
+    #[serde(rename = "PS256")]
+    Ps256,
+    #[serde(rename = "RS256")]
+    Rs256,
+}
+
 #[derive(Debug, Serialize)]
 struct ClientAssertionHeader {
-    alg: &'static str,
+    alg: ClientAssertionAlgorithm,
     typ: &'static str,
-    x5t: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    x5t: Option<String>,
+    #[serde(rename = "x5t#S256", skip_serializing_if = "Option::is_none")]
+    x5t_s256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     x5c: Option<Vec<String>>,
 }
@@ -424,8 +451,9 @@ mod tests {
     const ISSUER_PEM: &[u8] = include_bytes!("../../tests/fixtures/client_cert_issuer.pem");
     const ROOT_PEM: &[u8] = include_bytes!("../../tests/fixtures/client_cert_root.pem");
     const RSA_PKCS8: &[u8] = include_bytes!("../../tests/fixtures/rsa_pkcs8.pem");
-    // SHA-1 of the leaf DER, computed independently using OpenSSL and Python.
-    const LEAF_THUMBPRINT: &str = "49Y8PKhJSB3Xrhw3Xl1ubzZbydY";
+    // Leaf DER thumbprints computed independently using OpenSSL and Python.
+    const LEAF_SHA1_THUMBPRINT: &str = "49Y8PKhJSB3Xrhw3Xl1ubzZbydY";
+    const LEAF_SHA256_THUMBPRINT: &str = "taSqlR5mGn8jo8b2egtzYP-eVvcHO9-AST0l8XpRL38";
     const CERTIFICATE_PATH: &str = "/test/client-certificate.pem";
     const PUBLIC_ENDPOINT: &str = "https://login.microsoftonline.com/test-tenant/oauth2/v2.0/token";
     const TEST_SCOPE: &str = "https://vault.azure.net/.default";
@@ -517,6 +545,10 @@ mod tests {
         );
     }
 
+    fn modern_assertion_header() -> Value {
+        json!({"alg": "PS256", "typ": "JWT", "x5t#S256": LEAF_SHA256_THUMBPRINT})
+    }
+
     #[tokio::test]
     async fn default_assertion_uses_first_certificate_in_pem() {
         for pem in [
@@ -527,7 +559,7 @@ mod tests {
                 ClientCertificateCredentialProvider::new(),
                 certificate_context(pem, &[]),
                 TokenEndpoint {
-                    expected_header: json!({"alg": "RS256", "typ": "JWT", "x5t": LEAF_THUMBPRINT}),
+                    expected_header: modern_assertion_header(),
                     expected_uri: PUBLIC_ENDPOINT,
                     expected_scope: "https://storage.azure.com/.default",
                 },
@@ -559,7 +591,7 @@ mod tests {
             if let Some(value) = configured {
                 provider = provider.with_send_certificate_chain(value);
             }
-            let mut expected_header = json!({"alg": "RS256", "typ": "JWT", "x5t": LEAF_THUMBPRINT});
+            let mut expected_header = modern_assertion_header();
             if send_chain {
                 expected_header["x5c"] = json!(expected_chain);
             }
@@ -591,7 +623,7 @@ mod tests {
             )
         };
         let endpoint = |expected_uri| TokenEndpoint {
-            expected_header: json!({"alg": "RS256", "typ": "JWT", "x5t": LEAF_THUMBPRINT}),
+            expected_header: modern_assertion_header(),
             expected_uri,
             expected_scope: TEST_SCOPE,
         };
@@ -644,39 +676,72 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_calculate_thumbprint() {
-        // Test certificate DER (simplified example)
-        let cert_der = b"test certificate";
-        let provider = ClientCertificateCredentialProvider::new();
-        let crypto = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
-        let thumbprint = provider
-            .calculate_thumbprint(&crypto, cert_der)
-            .expect("thumbprint calculation must succeed");
+    #[derive(Debug, Default)]
+    struct Rs256OnlyProvider(reqsign_crypto_rustcrypto::RustCryptoProvider);
 
-        // Should produce a valid base64url encoded hash
-        assert!(!thumbprint.is_empty());
-        assert!(!thumbprint.contains('+'));
-        assert!(!thumbprint.contains('/'));
-        assert!(!thumbprint.contains('='));
+    impl CryptoProvider for Rs256OnlyProvider {
+        fn sha1(&self, input: &[u8]) -> reqsign_core::Result<[u8; 20]> {
+            self.0.sha1(input)
+        }
+
+        fn sha256(&self, input: &[u8]) -> reqsign_core::Result<[u8; 32]> {
+            self.0.sha256(input)
+        }
+
+        fn hmac_sha1(&self, key: &[u8], input: &[u8]) -> reqsign_core::Result<[u8; 20]> {
+            self.0.hmac_sha1(key, input)
+        }
+
+        fn hmac_sha256(&self, key: &[u8], input: &[u8]) -> reqsign_core::Result<[u8; 32]> {
+            self.0.hmac_sha256(key, input)
+        }
+
+        fn rsa_pkcs1v15_sha256_sign(
+            &self,
+            private_key_pem: &[u8],
+            message: &[u8],
+        ) -> reqsign_core::Result<Vec<u8>> {
+            self.0.rsa_pkcs1v15_sha256_sign(private_key_pem, message)
+        }
+    }
+
+    #[tokio::test]
+    async fn rs256_only_provider_requires_explicit_legacy_selection() {
+        let ctx = certificate_context([LEAF_PEM, RSA_PKCS8, ISSUER_PEM, ROOT_PEM].concat(), &[])
+            .with_crypto(Rs256OnlyProvider::default());
+        let provider = ClientCertificateCredentialProvider::new();
+        let error = provider
+            .provide_credential(&ctx)
+            .await
+            .expect_err("default assertions must fail before exchange without RSA-PSS");
+        assert_eq!(error.kind(), reqsign_core::ErrorKind::ConfigInvalid);
+        assert!(error.to_string().contains("does not support RSA-PSS"));
+
+        assert_certificate_exchange(
+            provider.with_legacy_rs256(),
+            ctx,
+            TokenEndpoint {
+                expected_header: json!({"alg": "RS256", "typ": "JWT", "x5t": LEAF_SHA1_THUMBPRINT}),
+                expected_uri: PUBLIC_ENDPOINT,
+                expected_scope: "https://storage.azure.com/.default",
+            },
+        )
+        .await;
     }
 
     #[test]
-    fn client_assertion_is_three_unpadded_verifiable_segments_for_both_pem_formats() {
+    fn legacy_client_assertion_matches_the_rs256_vector_for_both_pem_formats() {
         const RSA_PKCS1: &[u8] = include_bytes!("../../tests/fixtures/rsa_pkcs1.pem");
         // Fixed RS256 vector for the fixture key. The signature was cross-checked
         // with an independent RSA implementation before being recorded here.
         const EXPECTED_JWT: &str = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsIng1dCI6Ijcxd3N5NGxsS0l6dFZyd25qa0U5RGMyVDY4YyJ9.eyJhdWQiOiJodHRwczovL2V4YW1wbGUuY29tL3Rva2VuIiwiZXhwIjoxLCJpc3MiOiJjbGllbnQiLCJqdGkiOiJqdGkiLCJuYmYiOjAsInN1YiI6ImNsaWVudCJ9.XrtIVf1jpj4EdPs4uEKh_MpYwk3ItE8ggsRe5ra4uTt4sRPIiKoNjGxG4FEJ_3Olo61tOhiBAxabdvq4Wo0JMEsrH2npV558kds9TYnsBdYKTPrWyqmJLRHAgDS5HW7shbCclHyKYPJUGbPCDmW14lCjZMWDP0ClJ6KoQjnkiO8R5RbhnqadxpDxPGJajQ1TMvlh55b8uTl8nY9MRJKCbZzFoGeYZOOET-Xasw73XKIlm0vb-Ke-GXvJMtjsfseMP5hP8RIRb8eKFHppta8FiAVEF_GJjLx7CmsRgoHjkl5UqwA86VW4NBwNj32XeSoVXtHQGBvXK3SV4aKgR9PWBg";
         let provider = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
-        let certificate_provider = ClientCertificateCredentialProvider::new();
-        let cert_der = b"test certificate";
-        let thumbprint = certificate_provider
-            .calculate_thumbprint(&provider, cert_der)
-            .expect("thumbprint calculation must succeed");
+        let thumbprint = "71wsy4llKIztVrwnjkE9Dc2T68c";
         let header = ClientAssertionHeader {
-            alg: "RS256",
+            alg: ClientAssertionAlgorithm::Rs256,
             typ: "JWT",
-            x5t: thumbprint.clone(),
+            x5t: Some(thumbprint.to_string()),
+            x5t_s256: None,
             x5c: None,
         };
         let claims = ClientAssertionClaims {
@@ -689,10 +754,9 @@ mod tests {
         };
 
         for pem in [RSA_PKCS8, RSA_PKCS1] {
-            let jwt = ClientCertificateCredentialProvider::encode_rs256_jws(
-                &provider, &header, &claims, pem,
-            )
-            .expect("JWT encoding must succeed");
+            let jwt =
+                ClientCertificateCredentialProvider::encode_jws(&provider, &header, &claims, pem)
+                    .expect("JWT encoding must succeed");
             assert_eq!(jwt, EXPECTED_JWT);
             let parts = jwt.split('.').collect::<Vec<_>>();
             assert_eq!(parts.len(), 3);
@@ -728,12 +792,13 @@ mod tests {
     #[test]
     fn malformed_client_certificate_private_key_is_credential_invalid() {
         let crypto = reqsign_crypto_rustcrypto::RustCryptoProvider::new();
-        let err = ClientCertificateCredentialProvider::encode_rs256_jws(
+        let err = ClientCertificateCredentialProvider::encode_jws(
             &crypto,
             &ClientAssertionHeader {
-                alg: "RS256",
+                alg: ClientAssertionAlgorithm::Ps256,
                 typ: "JWT",
-                x5t: "thumbprint".to_string(),
+                x5t: None,
+                x5t_s256: Some(LEAF_SHA256_THUMBPRINT.to_string()),
                 x5c: None,
             },
             &ClientAssertionClaims {
