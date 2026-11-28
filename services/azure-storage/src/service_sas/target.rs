@@ -29,12 +29,17 @@ const BLOB_DIRECTORY_SAS_VERSION: &str = "2020-02-10";
 #[non_exhaustive]
 pub enum ServiceSasMode {
     /// Infer a container, blob, snapshot, or version from the path and query.
+    /// A snapshot or version selector on a single resource segment addresses
+    /// a blob in the implicit `$root` container.
     #[default]
     Blob,
     /// Use the entire resource path as a Blob Storage directory.
     BlobDirectory,
     /// Infer a share or file from the Azure Files resource path.
     File,
+    /// Sign at share scope, including for requests to directories or files in
+    /// the share. The SAS grants the selected permissions across the share.
+    FileShare,
     /// Use the queue name, including when signing a message operation URI.
     Queue,
 }
@@ -103,12 +108,22 @@ impl ServiceSasTarget {
             ));
         }
         if let Some(selector) = snapshot.or(version_id) {
-            if mode != ServiceSasMode::Blob {
+            if mode != ServiceSasMode::Blob
+                || sas_query_value(query, "restype")?
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("container"))
+            {
                 return Err(Error::request_invalid(
                     "Azure Service SAS snapshot and version selectors require a blob path",
                 ));
             }
-            let (container, blob) = decode_resource_path(path)?;
+            let (first, remainder) = decode_resource_path(path)?;
+            // The selector identifies a blob. With one wire segment, Azure
+            // resolves it in the implicit $root container.
+            let (container, blob) = if !path.is_empty() && !path.contains('/') {
+                ("$root".to_owned(), first)
+            } else {
+                (first, remainder)
+            };
             return Ok(if snapshot.is_some() {
                 Self::BlobSnapshot {
                     container,
@@ -130,9 +145,9 @@ impl ServiceSasTarget {
                 let (container, path) = decode_resource_path(path)?;
                 Self::Directory { container, path }
             }
-            ServiceSasMode::File => {
+            ServiceSasMode::File | ServiceSasMode::FileShare => {
                 let (share, path) = decode_resource_path(path)?;
-                if path.is_empty() {
+                if mode == ServiceSasMode::FileShare || path.is_empty() {
                     Self::FileShare { share }
                 } else {
                     Self::File { share, path }
@@ -217,6 +232,11 @@ impl ServiceSasTarget {
             } => {
                 validate_container(container)?;
                 validate_blob(blob)?;
+                if container == "$root" && blob.contains('/') {
+                    return Err(Error::request_invalid(
+                        "Azure root container blob names must not contain slashes",
+                    ));
+                }
                 if version < BLOB_SNAPSHOT_SAS_VERSION {
                     return Err(Error::request_invalid(
                         "Azure Service SAS snapshots and versions require version 2018-11-09 or later",

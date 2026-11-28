@@ -326,10 +326,18 @@ supports the same options for its Blob Storage resources.
 
 Set `expires_in` to generate a Service SAS from a Shared Key. The default
 `ServiceSasMode::Blob` interprets the URI as a container or blob and signs an
-existing `snapshot` or `versionid` selector. Select `ServiceSasMode::BlobDirectory`,
-`ServiceSasMode::File`, or `ServiceSasMode::Queue` with
-`RequestSigner::with_service_sas_mode` to sign other resources. Use the
-resource's permission order with `with_service_sas_permissions`.
+existing `snapshot` or `versionid` selector. A URI such as
+`/intro.mov?snapshot=...` signs the blob in `$root` and keeps the original URI.
+Select `ServiceSasMode::BlobDirectory`, `ServiceSasMode::File`, or
+`ServiceSasMode::Queue` with `RequestSigner::with_service_sas_mode` to sign
+other resources. Use the resource's permission order with
+`with_service_sas_permissions`.
+
+To presign an Azure Files directory listing such as
+`/programs/clips?restype=directory&comp=list`, select
+`ServiceSasMode::FileShare` and permission `l`. The SAS authorizes listing
+across the share and the request URI still targets the selected directory.
+`ServiceSasMode::File` infers file scope for child paths.
 
 Place response overrides on the URI for Blob Storage or Azure Files, including
 Blob Storage User Delegation SAS. Presigning signs the decoded values and

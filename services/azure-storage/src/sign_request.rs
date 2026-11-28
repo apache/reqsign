@@ -221,7 +221,9 @@ impl RequestSigner {
     /// Select the resource interpretation for Shared Key Service SAS presigning.
     ///
     /// The default is Blob Storage. Select a different mode explicitly for
-    /// directory, Azure Files, or Queue Storage requests.
+    /// directory, Azure Files, or Queue Storage requests. Use
+    /// [`ServiceSasMode::FileShare`] to grant share-wide permissions on an
+    /// Azure Files request to a directory or file.
     pub fn with_service_sas_mode(mut self, mode: ServiceSasMode) -> Self {
         self.service_sas_mode = mode;
         self
@@ -2257,6 +2259,122 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn service_sas_presigns_files_directory_list_at_explicit_share_scope() {
+        for (addressing, uri) in [
+            (
+                AddressingStyle::HostStyle,
+                "https://storage.example/programs/clips?restype=directory&comp=list&marker=page%2b1",
+            ),
+            (
+                AddressingStyle::PathStyle,
+                "http://127.0.0.1:10002/%61ccount/programs/clips?restype=directory&comp=list&marker=page%2b1",
+            ),
+        ] {
+            let signer = Signer::new(
+                crate::test_context(),
+                crate::StaticCredentialProvider::new_shared_key("account", "a2V5"),
+                shared_key_request_signer()
+                    .with_account_name("account")
+                    .with_addressing_style(addressing)
+                    .with_service_sas_mode(ServiceSasMode::FileShare)
+                    .with_service_sas_permissions("l"),
+            );
+            let mut parts = Request::get(uri).body(()).unwrap().into_parts().0;
+            signer
+                .sign(&mut parts, Some(Duration::from_secs(300)))
+                .await
+                .unwrap();
+            // Python HMAC-SHA256 over the Files layout for /file/account/programs.
+            assert_eq!(
+                parts.uri.to_string(),
+                format!(
+                    "{uri}&sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=l&sr=s&sig=pXMDhnNBXbY3avI9C0HYTuQLHwbLD7q2wYHB/E4PsuY%3D"
+                )
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn service_sas_presigns_explicit_and_implicit_root_blob_selectors() {
+        let cases = [
+            (
+                AddressingStyle::HostStyle,
+                "https://storage.example/intro%2emov",
+                true,
+            ),
+            (
+                AddressingStyle::HostStyle,
+                "https://storage.example/%24root/intro.mov",
+                true,
+            ),
+            (
+                AddressingStyle::HostStyle,
+                "https://storage.example/container/intro.mov",
+                false,
+            ),
+            (
+                AddressingStyle::PathStyle,
+                "http://127.0.0.1:10000/%61ccount/intro%2emov",
+                true,
+            ),
+            (
+                AddressingStyle::PathStyle,
+                "http://127.0.0.1:10000/%61ccount/%24root/intro.mov",
+                true,
+            ),
+            (
+                AddressingStyle::PathStyle,
+                "http://127.0.0.1:10000/%61ccount/container/intro.mov",
+                false,
+            ),
+        ];
+        for (addressing, endpoint, root_container) in cases {
+            let signer = Signer::new(
+                crate::test_context(),
+                crate::StaticCredentialProvider::new_shared_key("account", "a2V5"),
+                shared_key_request_signer()
+                    .with_account_name("account")
+                    .with_addressing_style(addressing)
+                    .with_service_sas_permissions("r"),
+            );
+            // Python HMAC-SHA256 over /blob/account/$root/intro.mov and
+            // /blob/account/container/intro.mov with each full selector value.
+            for (selector, sr, root_signature, container_signature) in [
+                (
+                    "snapshot=2022-01-02T03%3a04%3A05.8934123Z",
+                    "bs",
+                    "0N1/eHwlnzxN%2BGalnW6Kl3GLzey9w%2BTNBOvgAHfOUok%3D",
+                    "0pQCK5eZYtVqrgoEt6FWbGT4yOVKYtfQgZI1Gsjyb30%3D",
+                ),
+                (
+                    "versionid=2022-09-08T07%3a06%3A05.1234567Z",
+                    "bv",
+                    "p5lPqJJzvomY37/8TQHh23IgDJ7H4SbXpHnsUqG9r6k%3D",
+                    "vU99tnV82%2B1rVr7G8gn7uJEW8DdcWXC0eoFx/1FVJgA%3D",
+                ),
+            ] {
+                let uri = format!("{endpoint}?tag=%2f&{selector}&tag=+");
+                let signature = if root_container {
+                    root_signature
+                } else {
+                    container_signature
+                };
+                let mut parts = Request::get(&uri).body(()).unwrap().into_parts().0;
+                signer
+                    .sign(&mut parts, Some(Duration::from_secs(300)))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    parts.uri.to_string(),
+                    format!(
+                        "{uri}&sv=2020-12-06&se=2022-03-01T08%3A17%3A34Z&sp=r&sr={sr}&sig={signature}"
+                    )
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn invalid_service_sas_options_fail_before_changing_the_request() {
         let context = crate::test_context();
         let credential = Credential::with_shared_key("account", "a2V5");
@@ -2291,6 +2409,27 @@ mod tests {
                 "invalid Azure blob snapshot or version selector",
             ),
             (
+                "/container?restype=container&snapshot=old",
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "snapshot and version selectors require a blob path",
+            ),
+            (
+                "/container/?snapshot=old",
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "blob name must be a non-empty",
+            ),
+            (
+                "/nested%2fblob?versionid=v",
+                ServiceSasMode::Blob,
+                "2020-12-06",
+                "r",
+                "root container blob names must not contain slashes",
+            ),
+            (
                 "/container/a",
                 ServiceSasMode::BlobDirectory,
                 "2019-12-12",
@@ -2312,7 +2451,7 @@ mod tests {
                 "invalid Azure Service SAS file path",
             ),
             (
-                "/share/a",
+                "/share/a?restype=directory&comp=list",
                 ServiceSasMode::File,
                 "2020-12-06",
                 "l",
