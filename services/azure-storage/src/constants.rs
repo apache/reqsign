@@ -31,6 +31,27 @@ pub static AZURE_QUERY_ENCODE_SET: AsciiSet = NON_ALPHANUMERIC
 pub(crate) const STORAGE_ACCOUNT_KEY_LENGTH: usize = 64;
 pub(crate) const SAS_ENCRYPTION_SCOPE_VERSION: &str = "2020-12-06";
 
+// Versions with signed IP and protocol that predate Blob SAS encryption scopes.
+pub(crate) const LEGACY_SAS_VERSIONS_WITH_IP_AND_PROTOCOL: &[&str] = &[
+    "2015-04-05",
+    "2015-07-08",
+    "2015-12-11",
+    "2016-05-31",
+    "2017-04-17",
+    "2017-07-29",
+    "2017-11-09",
+    "2018-03-28",
+    "2018-11-09",
+    "2019-02-02",
+    "2019-07-07",
+    "2019-12-12",
+    "2020-02-10",
+    "2020-04-08",
+    "2020-06-12",
+    "2020-08-04",
+    "2020-10-02",
+];
+
 // Azure Storage versions supported by the SAS string-to-sign with encryption scope.
 pub(crate) const SAS_VERSIONS_WITH_ENCRYPTION_SCOPE: &[&str] = &[
     SAS_ENCRYPTION_SCOPE_VERSION,

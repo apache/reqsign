@@ -176,6 +176,7 @@ pub mod api_key;
 
 mod account_sas;
 mod constants;
+mod sas_response_overrides;
 mod service_sas;
 mod user_delegation;
 mod user_delegation_sas;
@@ -186,10 +187,11 @@ pub use account_sas::{
     AccountSasResourceTypes, AccountSasServices, AccountSasVersion,
 };
 pub use credential::Credential;
-
+pub use sas_response_overrides::SasResponseOverrides;
 pub use service_sas::{
     SasIpRange, ServiceSasBlobPermissions, ServiceSasConfig, ServiceSasContainerPermissions,
-    ServiceSasGrant, ServiceSasGranter, ServiceSasResource, ServiceSasVersion,
+    ServiceSasFilePermissions, ServiceSasGrant, ServiceSasGranter, ServiceSasMode,
+    ServiceSasQueuePermissions, ServiceSasResource, ServiceSasTarget, ServiceSasVersion,
     ServiceSharedAccessSignature,
 };
 pub use user_delegation_sas::{
